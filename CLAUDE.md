@@ -1,0 +1,103 @@
+# Orion III / Omni 8 SDR Console
+
+Qt6/C++20 Flex-style console for Ten-Tec Orion (565/566) and Omni VII
+radios with an SDRplay RSP2 panadapter. One binary, two personalities
+(`TTC_RADIO=orion|omni8`, or the `radio/model` setting). Linux only.
+
+## Build & run
+
+    cmake -B build -DBUILD_SDRPLAY=ON && cmake --build build -j8
+    ./build/tentec-console
+
+ccache is used automatically when installed. Headless verification (also
+releases the SDR cleanly on exit):
+
+    QT_QPA_PLATFORM=offscreen TTC_SELFTEST=<secs> TTC_RIGCTLD_PORT=14599 \
+      TTC_RADIO=orion TTC_RADIO_DEV=/dev/null ./build/tentec-console
+
+`TTC_SCREENSHOT=<png>` grabs the window before quitting; `TTC_MAXIMIZED=1`
+forces full-screen geometry (headless has no WM). For layout review use
+`xvfb-run -a -s "-screen 0 1920x1080x24"` — the offscreen platform's
+default screen distorts grabs.
+
+## The width budget (do not break the maximize button)
+
+The selftest prints `[layout] window WxH layout-min WxH`. The layout
+minimum must stay ≤ **1808 px** wide on the offscreen platform (the
+operator's screen is 1920; past that the window manager loses the
+maximize button — happened twice). **New toolbar buttons go on the second
+deck (`topLay2_`), never the first (`topLay`).** Each tool is built by its
+own `setup*Ui()` in `src/app/MainWindowTools.cpp`; add a new function
+there plus one call in the constructor.
+
+## Tests (all EXCLUDE_FROM_ALL; build the target explicitly)
+
+| target | what | pairs with |
+|---|---|---|
+| `cwtest` | decoder quality matrix, prints % (full ~8 min, `--quick` ~90 s) | — |
+| `skimtest` | 10-station synthetic segment through the skimmer | — |
+| `skimsrvtest` | RBN telnet protocol/format/throttle | — |
+| `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
+| `rotortest` | rotctld client | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
+| `watchtest` | DX-watch pattern matching | — |
+
+Run the relevant tests plus a selftest sizing check before every commit.
+`cwtest` full matrix currently scores 96% — treat any drop as a
+regression. Decoder changes must keep "dead channel" quiet (noise babble
+was a real on-air bug, twice).
+
+## Architecture in 60 seconds
+
+- **Offset LO**: the SDR always tunes `kLoOffsetHz` (60 kHz) *above* the
+  dial (PowerSDR if_freq idea) so the zero-IF DC hump never lands on the
+  tuned signal. Everything mapping bins↔frequency goes through this:
+  `absHz = dial + kLoOffsetHz + (bin - n/2) * binHz`, span 500 kHz,
+  n=8192 (~61 Hz/bin). Constants + `edgesFromRig()` passband math live in
+  `src/app/MainWindowInternal.h`.
+- **MainWindow** is several translation units, same class:
+  `MainWindow.cpp` (constructor: layout, menus, radio polling wiring),
+  `MainWindowTools.cpp` (second-deck tools), `MainWindowTuning.cpp`
+  (tune/zap/filters/notch), `MainWindowOps.cpp` (band stack, TX profiles,
+  DVR, 60 m channels).
+- **Interop pattern — the console is the single master of each shared
+  resource**, everything else connects to a service it exposes:
+  rig = rigctld server `:4532` (fldigi/cqrlog/wsjt-x point here);
+  WinKeyer = cwdaemon server `:6789` (cqrlog keys through us);
+  skimmer finds = DX-cluster telnet `:7300`;
+  QSO logging = UDP ADIF datagram to cqrlog's bridge on `:2334`.
+  New integrations should follow this pattern, not grab devices.
+- **Spot pipeline**: sources (cluster telnet, POTA API, own skimmer) →
+  `pushSpots` lambda in MainWindow.cpp → `PanadapterWidget::setSpots`.
+  Kinds: 'D' DX yellow, 'P' POTA green, 'F' FT8 cyan, 'S' skimmer violet;
+  call text is colored by cqrlog worked-before status (LogbookIndex),
+  watch-list hits get an orange ring.
+- **CW decoding** (`src/cw/CwDecoder`): IQ-fed, one recurrence-phasor
+  mixer per instance, so banks are cheap (SkimmerEngine runs 24). The
+  slicer/clock logic is battle-tuned — every threshold has an on-air
+  story in a comment; run the full `cwtest` matrix on any change.
+- **Radios**: both are carrier-at-dial in CW (no pitch math anywhere).
+  Orion = ASCII CAT, dual RX; Omni VII = binary CAT ("omni8"
+  personality). Quirks are documented where they're handled — grep
+  `live-verified` / `live-found`.
+
+## Hard rules
+
+  never appear in this repo (code, comments, docs, commits) — run
+  pattern is split so this file itself stays clean). Ideas from public
+  manuals are fine; the name is not. KE9NS/PowerSDR/Thetis attribution
+  in comments is OK.
+- Never key the transmitter or send CW in unattended tests. RX-only use
+  of the real SDR/cluster is fine.
+- The repo is private; the operator (Jon, N8EM) pushes happen only after
+  his on-air test — build, test, commit, then *wait*.
+- Settings are QSettings (`n8mus/tentec-console`) — running the binary
+  uses the real config; for tests that must write settings, redirect
+  with `XDG_CONFIG_HOME`.
+- Never renumber stored enums (meter styles etc.) — append only.
+
+## Station facts the code assumes
+
+Operator callsign N8EM, grid EN83al. WinKeyer USB on the FTDI A904QF5Z
+by-id path; radios on the FT4232H quad (Orion port 0, Omni port 3);
+SignaLink = "USB AUDIO CODEC" in PipeWire. cqrlog runs the fork at
+`/mnt/storage/Claude/CQRLog` (bridge :2334, embedded MariaDB).

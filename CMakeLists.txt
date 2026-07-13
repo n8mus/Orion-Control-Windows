@@ -10,6 +10,15 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
+# Compile cache if available (sudo pacman -S ccache) — MainWindow's split
+# translation units all pull the big Qt headers, ccache makes re-configure
+# and branch-switch rebuilds near-free.
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+  set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+  message(STATUS "ccache: enabled")
+endif()
+
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort)
 
 # SDRplay RSP source is optional so the core app always builds. Turn on with
@@ -19,6 +28,9 @@ option(BUILD_SDRPLAY "Build the SDRplay RSP IQ source (needs sdrplay_api)" OFF)
 add_executable(tentec-console
   src/app/main.cpp
   src/app/MainWindow.cpp        src/app/MainWindow.h
+  src/app/MainWindowTuning.cpp  src/app/MainWindowOps.cpp
+  src/app/MainWindowTools.cpp
+  src/app/MainWindowInternal.h
   src/app/Bands.h
   src/radio/RadioController.h
   src/radio/SerialPort.cpp      src/radio/SerialPort.h

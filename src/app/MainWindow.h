@@ -12,6 +12,7 @@ class QToolButton;
 class QLineEdit;
 class QUdpSocket;
 class QAction;
+class QHBoxLayout;
 #include "radio/TenTecOrion.h"
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
@@ -52,6 +53,14 @@ private slots:
     void onPassbandChanged(int loHz, int hiHz);
 
 private:
+    // Second-deck tool builders (MainWindowTools.cpp) — one per feature,
+    // called once from the constructor. New tools: add a function there
+    // and a call in the constructor; buttons go on topLay2_.
+    void setupLogUi();
+    void setupCwUi();
+    void setupSkimUi(const QString& stationCall);
+    void setupDigiUi();
+    void setupRotorUi();
     int  snapToCwPeak(int offsetHz, int windowHz) const; // CW zap peak finder
     void zeroBeat();                   // Z: zap strongest signal in the passband
     void zeroBeatPass();               // refinement passes (fresh FFT each time)
@@ -87,6 +96,8 @@ private:
     LogbookIndex     logbook_;                     // cqrlog worked-before data
     QHash<QString, QPair<double, double>> ctyMemo_; // per-call resolution cache
     PanadapterWidget* pan_ = nullptr;
+    QWidget*     topStrip_ = nullptr;          // top bar (tool buttons' parent)
+    QHBoxLayout* topLay2_  = nullptr;          // second menu deck (new buttons!)
     SMeterWidget*     smeter_ = nullptr;
     ControlPanel*     panel_  = nullptr;
     FrequencyDisplay* freqDisp_  = nullptr;   // VFO A (main RX, the panadapter dial)
