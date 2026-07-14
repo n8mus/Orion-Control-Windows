@@ -59,8 +59,7 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         lo_ = {1.0, 0.0};
         acc_ = {0.0, 0.0};
         accN_ = 0;
-        for (auto& v : ma_) v = {};
-        maLen_ = 8;
+        lp1_ = lp2_ = {0.0f, 0.0f};
         afcPrevZ_ = {0.0f, 0.0f};
         afcErrAvg_ = 0.0;
         afcTicks_ = 0;
@@ -69,6 +68,8 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         peak_ = 0.0f;
         floor_ = 1e-3f;
         key_ = false;
+        pendKey_ = false;
+        pendTicks_ = 0;
         runMs_ = 0.0;
         ditMs_ = 60.0;
         gapMin_ = 60.0;
@@ -76,6 +77,9 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         sym_.clear();
         wordGapSent_ = true;
         lastWpm_ = 0;
+        for (auto& m : markHist_) m = 0.0f;
+        markHistN_ = 0;
+        locked_ = false;
     }
     for (size_t i = 0; i < n; ++i) {
         acc_ += std::complex<double>(d[i]) * lo_;
@@ -90,13 +94,14 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
                               float(acc_.imag() / decim_));
         acc_ = {0.0, 0.0};
         accN_ = 0;
-        ma_[maIdx_] = z;
-        maIdx_ = (maIdx_ + 1) & 7;
-        maLen_ = gapMin_ < 35.0 ? 4 : 8;   // wide open for 40+ WPM
-        std::complex<float> s{0.0f, 0.0f};
-        for (int k = 0; k < maLen_; ++k)
-            s += ma_[(maIdx_ - 1 - k) & 7];
-        s /= float(maLen_);
+        // Matched-filter bandwidth from the sender's speed: keying
+        // fundamental is 1000/(2*dit) Hz; pass ~2.5x that, each pole at
+        // fc, cascaded for ~12 dB/oct skirts.
+        const float fc = std::clamp(2400.0f / float(gapMin_), 40.0f, 150.0f);
+        const float a = 1.0f - std::exp(-2.0f * float(M_PI) * fc / 2000.0f);
+        lp1_ += a * (z - lp1_);
+        lp2_ += a * (lp1_ - lp2_);
+        const std::complex<float> s = lp2_;
         // AFC: while the key is down the filtered sample is a carrier;
         // successive-sample phase advance IS the residual frequency error.
         if (key_) {
@@ -157,7 +162,7 @@ void CwDecoder::tick(float mag) {
         // as R, every time). Plausible = well clear of the noise floor —
         // otherwise ordinary noise wiggle pumps the peak up and the gate
         // opens on a dead frequency (live test: an empty spot babbled E's).
-        if (env_ > peak_ && env_ > 3.0f * floor_)
+        if (env_ > peak_ && env_ > 5.0f * floor_)
             peak_ += 0.20f * (env_ - peak_);
         else
             peak_ += 0.001f * (env_ - peak_);  // QSB: stale peaks let go
@@ -165,10 +170,13 @@ void CwDecoder::tick(float mag) {
     if (floor_ < 1e-6f) floor_ = 1e-6f;
 
     bool key = key_;
-    if (peak_ > 3.0f * floor_) {           // usable SNR only
+    if (peak_ > 5.0f * floor_) {           // usable SNR only
         const float span = peak_ - floor_;
         const float on  = floor_ + 0.55f * span;
-        const float off = floor_ + 0.35f * span;
+        // Deep off-hysteresis: ionospheric flutter dips the envelope
+        // mid-element on real signals (replay: dahs split into dit-pairs)
+        // — the off threshold sits well below on.
+        const float off = floor_ + 0.28f * span;
         if (!key_ && env_ > on)  key = true;
         if (key_  && env_ < off) key = false;
     } else {
@@ -181,9 +189,27 @@ void CwDecoder::tick(float mag) {
     // it is a static crash, not a returning station, and keying on QRN
     // impulses is exactly the babble v1 was cured of (live-found: every
     // hunting skimmer channel "decoding" 30-55 WPM noise).
-    if (!key_ && env_ > 8.0f * floor_ && env_ < 1.1f * peak_
-        && peak_ > 8.0f * floor_)
+    // (env must also reach a fair fraction of the known signal level —
+    // 8x a clean channel's tiny noise floor is ~2% of the signal, and
+    // that fired on every element's rise/decay tail, chattering against
+    // the hysteresis slicer at each edge. The blip guard used to mask it;
+    // the debounce exposed it as 0% on the whole matrix.)
+    if (!key_ && env_ > 8.0f * floor_ && env_ > 0.25f * peak_
+        && env_ < 1.1f * peak_ && peak_ > 8.0f * floor_)
         key = true;
+
+    // Debounce: the tentative state must hold ~6 ms (but never more than
+    // a third of a dit) before it becomes an edge. Chatter pips and dips
+    // shorter than that are absorbed into the run they interrupted.
+    if (key != key_) {
+        if (key != pendKey_) { pendKey_ = key; pendTicks_ = 0; }
+        const int need = std::max(
+            4, std::min(12, int(0.3 * ditMs_ / tickMs_)));
+        if (++pendTicks_ < need) key = key_;   // not yet: hold state
+    } else {
+        pendKey_ = key_;
+        pendTicks_ = 0;
+    }
 
     if (key == key_) {
         runMs_ += tickMs_;
@@ -229,6 +255,21 @@ void CwDecoder::tick(float mag) {
         runMs_ = lastSpaceMs_ + ms;
         return;
     }
+    // Consistency squelch bookkeeping (see header). Lock acquires at 3/4
+    // of recent marks fitting the clock and only lets go below half —
+    // without the hysteresis, borderline real signals (flutter, QSB)
+    // dropped characters mid-copy (replay: "K4MW" fragmenting to "4MW").
+    markHist_[markHistN_++ & 7] = float(ms);
+    const int hn = std::min(markHistN_, 8);
+    if (hn >= 4) {
+        int fits = 0;
+        for (int k = 0; k < hn; ++k) {
+            const float m = markHist_[k];
+            if (std::abs(m - ditMs_) < 0.35 * ditMs_) ++fits;
+            else if (std::abs(m - 3.0 * ditMs_) < 1.05 * ditMs_) ++fits;
+        }
+        locked_ = locked_ ? (fits > hn / 2) : (fits >= (3 * hn) / 4);
+    }
     if (ms < 2.0 * ditMs_) {
         sym_ += '.';
         if (ms > 0.4 * ditMs_) {           // too short to trust for timing
@@ -249,6 +290,7 @@ void CwDecoder::tick(float mag) {
 void CwDecoder::emitSymbol() {
     const auto it = morseTable().constFind(sym_);
     sym_.clear();
+    if (!locked_) return;                  // consistency squelch closed
     wordGapSent_ = false;
     if (it != morseTable().constEnd())
         emit textDecoded(QString(it.value()));

@@ -97,12 +97,23 @@ void SkimmerEngine::updateFromSpectrum(const std::vector<float>& db,
     }
 
     // Expire channels: 90 s without a decoded character means the station
-    // is gone (or was never real).
+    // is gone (or was never real). A channel still trickling junk after
+    // 45 s (mostly E/T/*, no call) is parked on noise the consistency
+    // squelch couldn't fully silence — free it for a real peak.
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     for (auto& c : ch_) {
         if (!c.active) continue;
         const qint64 idleSince = std::max(c.lastCharMs, c.assignedMs);
-        if (nowMs - idleSince > 90000) freeChannel(c);
+        if (nowMs - idleSince > 90000) { freeChannel(c); continue; }
+        if (c.call.isEmpty() && nowMs - c.assignedMs > 45000
+            && c.text.size() > 8) {
+            int junk = 0;
+            for (const QChar ch : c.text)
+                if (ch == 'E' || ch == 'T' || ch == ' ' || ch == '*'
+                    || ch == 'I')
+                    ++junk;
+            if (junk * 10 >= c.text.size() * 8) freeChannel(c);
+        }
     }
 
     if (segLo == 0) return;
@@ -114,8 +125,17 @@ void SkimmerEngine::updateFromSpectrum(const std::vector<float>& db,
     int i1 = std::min(binOf(segHi), n - 33);
     if (i1 - i0 < 32) return;
 
+    // Average the spectrum across assignment passes: single-frame noise
+    // spikes look exactly like weak carriers (replay-found: half the bank
+    // parked on QRM), a 3-frame EMA keeps only what persists.
+    if (int(specAvg_.size()) != n) specAvg_.assign(db.begin(), db.end());
+    else
+        for (int i = 0; i < n; ++i)
+            specAvg_[i] += 0.4f * (db[i] - specAvg_[i]);
+
     // Noise floor: median of the segment.
-    std::vector<float> sorted(db.begin() + i0, db.begin() + i1 + 1);
+    std::vector<float> sorted(specAvg_.begin() + i0,
+                              specAvg_.begin() + i1 + 1);
     std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2,
                      sorted.end());
     const float floorDb = sorted[sorted.size() / 2];
@@ -124,13 +144,14 @@ void SkimmerEngine::updateFromSpectrum(const std::vector<float>& db,
     // LO's DC artifact.
     struct Peak { int bin; float db; };
     std::vector<Peak> peaks;
+    const std::vector<float>& sp = specAvg_;
     for (int i = i0; i <= i1; ++i) {
-        if (db[i] < floorDb + 12.0f) continue;
+        if (sp[i] < floorDb + 15.0f) continue;
         if (std::abs(i - n / 2) * binHz < 1500.0) continue;   // DC hump
         bool best = true;
         for (int k = -3; k <= 3 && best; ++k)
-            if (k != 0 && db[i + k] > db[i]) best = false;
-        if (best) peaks.push_back({i, db[i]});
+            if (k != 0 && sp[i + k] > sp[i]) best = false;
+        if (best) peaks.push_back({i, sp[i]});
     }
     std::sort(peaks.begin(), peaks.end(),
               [](const Peak& a, const Peak& b) { return a.db > b.db; });
@@ -139,8 +160,8 @@ void SkimmerEngine::updateFromSpectrum(const std::vector<float>& db,
         // Parabolic interpolation on the peak and its neighbors: the true
         // carrier is rarely at a bin center, and ±30 Hz of assignment
         // error is exactly the kind of thing AFC then has to claw back.
-        const double ym = db[pk.bin - 1], y0 = db[pk.bin],
-                     yp = db[pk.bin + 1];
+        const double ym = specAvg_[pk.bin - 1], y0 = specAvg_[pk.bin],
+                     yp = specAvg_[pk.bin + 1];
         const double den = ym - 2.0 * y0 + yp;
         const double d =
             (std::abs(den) > 1e-9) ? std::clamp(0.5 * (ym - yp) / den,

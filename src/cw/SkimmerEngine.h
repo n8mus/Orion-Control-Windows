@@ -99,6 +99,7 @@ private:
     std::vector<Chan> ch_;                 // fixed size after construction
     QVector<SkimSpot> spots_;
     std::function<bool(const QString&)> validate_;
+    std::vector<float> specAvg_;           // EMA across assignment passes
     qint64 lastDial_ = 0;
 };
 

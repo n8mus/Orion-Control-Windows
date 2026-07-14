@@ -62,12 +62,14 @@ private:
     int renorm_ = 0;
     std::complex<double> acc_{0.0, 0.0};
     int accN_ = 0, decim_ = 250;
-    // Post-decimation moving average: 8 taps (~±110 Hz) normally, dropped
-    // to 4 (~±220 Hz) at high speed — 27 ms elements at 45 WPM disappear
-    // into an 8 ms filter+envelope smear otherwise.
-    std::complex<float> ma_[8] = {};
-    int maIdx_ = 0;
-    int maLen_ = 8;
+    // Post-decimation matched filter: two cascaded complex one-pole
+    // low-passes centered at DC (AFC holds the carrier there). Bandwidth
+    // adapts to the sender's speed via the gap bootstrap — ±40 Hz for a
+    // 20 WPM ragchewer, opening to ±100 Hz at 50 WPM. The old ±110 Hz
+    // moving average let neighbors and band noise ride inside the
+    // passband on a crowded 40 m (replay-found: garbled copy on every
+    // otherwise-readable channel).
+    std::complex<float> lp1_{0.0f, 0.0f}, lp2_{0.0f, 0.0f};
 
     // AFC (SDR thread): quadrature discriminator on the decimated samples,
     // measured only while the key is down (that's when there's a carrier
@@ -84,8 +86,24 @@ private:
     float env_ = 0.0f;                     // smoothed magnitude
     float peak_ = 0.0f, floor_ = 1e-3f;    // adaptive signal/noise trackers
     bool  key_ = false;
+    // Debounce: a slicer state change must persist this many ticks before
+    // it becomes a mark/space edge. Real-band noise (QRN pips, adjacent
+    // splatter) chatters the threshold and floods the text with E/T —
+    // replay-found on the first real capture; white noise never did it.
+    bool  pendKey_ = false;
+    int   pendTicks_ = 0;
     double runMs_ = 0.0;                   // current mark/space duration
     double tickMs_ = 0.5;                  // 2 kHz envelope rate
+
+    // Consistency squelch: characters are only EMITTED while the recent
+    // mark durations actually fit a dit/dah clock. Narrowband noise
+    // through the tight matched filter has CW-like envelope rhythms (25 ms
+    // correlation at 40 Hz bandwidth) that no SNR gate can reject — but
+    // its durations are random, and random durations don't cluster on
+    // {1, 3} x dit. Real CW locks within a couple of characters.
+    float markHist_[8] = {};
+    int   markHistN_ = 0;
+    bool  locked_ = false;
 
     // Morse timing. ditMs_ is the adaptive dit clock; gapMin_ is a
     // decaying minimum of observed space lengths — the element gap IS one
