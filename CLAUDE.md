@@ -32,6 +32,19 @@ there plus one call in the constructor.
 
 ## Tests (all EXCLUDE_FROM_ALL; build the target explicitly)
 
+For the record→replay decoder loop use an optimized build — Debug runs
+slower than real time on long captures:
+
+    cmake -B build-rel -DBUILD_SDRPLAY=ON -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-rel --target skimreplay cwtest -j8
+
+Ground-truth captures live in `~/.local/share/n8mus/tentec-console/iq/`
+(the operator records via SDR ▾ while working stations he can copy by
+ear and tells you the calls). W1AW code practice (7047.5 / 14047.5,
+machine-perfect sending) is the clean decoder benchmark; sloppy human
+senders and weak-signal cases are the hard set.
+
+
 | target | what | pairs with |
 |---|---|---|
 | `cwtest` | decoder quality matrix, prints % (full ~8 min, `--quick` ~90 s) | — |
@@ -42,7 +55,7 @@ there plus one call in the constructor.
 | `watchtest` | DX-watch pattern matching | — |
 
 Run the relevant tests plus a selftest sizing check before every commit.
-`cwtest` full matrix currently scores 96% — treat any drop as a
+`cwtest` full matrix currently scores 94% — treat any drop as a
 regression. Decoder changes must keep "dead channel" quiet (noise babble
 was a real on-air bug, twice).
 
