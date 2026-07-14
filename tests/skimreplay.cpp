@@ -124,6 +124,54 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (QString(argv[1]) == "--gen" && argc > 2) return generate(argv[2]);
+    // --peek <file> <offsetHzFromDial>: dump the narrowband envelope at
+    // one frequency, 100 ms per line — keying rhythm and SNR by eye.
+    if (QString(argv[1]) == "--peek" && argc > 3) {
+        QFile pf(QString::fromLocal8Bit(argv[2]));
+        char ph[32];
+        if (!pf.open(QIODevice::ReadOnly) || pf.read(ph, 32) != 32) return 2;
+        double pRate = 0.0;
+        std::memcpy(&pRate, ph + 8, 8);
+        const double off = atof(argv[3]) - 60000.0;   // rel. to the LO
+        const double inc = -2.0 * M_PI * off / pRate;
+        const std::complex<double> step(std::cos(inc), std::sin(inc));
+        std::complex<double> lo(1.0, 0.0), acc(0.0, 0.0);
+        std::complex<float> lp1{0, 0}, lp2{0, 0};
+        const float a = 1.0f - std::exp(-2.0f * float(M_PI) * 60.0f / 2000.0f);
+        std::vector<int16_t> raw(16384 * 2);
+        int accN = 0, col = 0;
+        double t = 0.0;
+        float mx = 0.0f;
+        printf("100 ms per char: '.'<0.002 ':'<0.01 '+'<0.05 '#'>=0.05\n");
+        while (pf.read(reinterpret_cast<char*>(raw.data()),
+                       qint64(raw.size() * 2)) == qint64(raw.size() * 2)) {
+            for (size_t i = 0; i < raw.size() / 2; ++i) {
+                const std::complex<double> z(raw[2 * i] / 32767.0,
+                                             raw[2 * i + 1] / 32767.0);
+                acc += z * lo;
+                lo *= step;
+                if (++accN < 250) continue;
+                std::complex<float> zz(float(acc.real() / 250),
+                                       float(acc.imag() / 250));
+                acc = {0, 0};
+                accN = 0;
+                lp1 += a * (zz - lp1);
+                lp2 += a * (lp1 - lp2);
+                mx = std::max(mx, std::abs(lp2));
+                t += 0.5;
+                if (t >= 100.0) {
+                    t = 0.0;
+                    putchar(mx < 0.002f ? '.' : mx < 0.01f ? ':'
+                            : mx < 0.05f ? '+' : '#');
+                    mx = 0.0f;
+                    if (++col % 100 == 0) putchar('\n');
+                }
+            }
+            lo /= std::abs(lo);
+        }
+        putchar('\n');
+        return 0;
+    }
     QFile f(QString::fromLocal8Bit(argv[1]));
     char hdr[32];
     if (!f.open(QIODevice::ReadOnly) || f.read(hdr, 32) != 32

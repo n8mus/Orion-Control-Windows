@@ -146,7 +146,7 @@ void SkimmerEngine::updateFromSpectrum(const std::vector<float>& db,
     std::vector<Peak> peaks;
     const std::vector<float>& sp = specAvg_;
     for (int i = i0; i <= i1; ++i) {
-        if (sp[i] < floorDb + 15.0f) continue;
+        if (sp[i] < floorDb + 12.0f) continue;
         if (std::abs(i - n / 2) * binHz < 1500.0) continue;   // DC hump
         bool best = true;
         for (int k = -3; k <= 3 && best; ++k)
