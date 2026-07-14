@@ -153,7 +153,11 @@ void CwDecoder::tick(float mag) {
     // floor climbed to half the signal within 300 ms of key-down).
     if (key_) {
         if (env_ > peak_) peak_ += 0.20f * (env_ - peak_);
-        else              peak_ += 0.01f * (env_ - peak_);
+        else              peak_ += 0.04f * (env_ - peak_);   // re-train fast:
+        // two stations sharing a frequency alternate at different levels,
+        // and thresholds trained on the loud one mush the quiet one into
+        // E/T (ground truth: the W0 sign-off both the operator and fldigi
+        // struggled with).
     } else {
         if (env_ < floor_) floor_ += 0.20f * (env_ - floor_);
         else               floor_ += 0.01f * (env_ - floor_);
@@ -165,7 +169,7 @@ void CwDecoder::tick(float mag) {
         if (env_ > peak_ && env_ > 5.0f * floor_)
             peak_ += 0.20f * (env_ - peak_);
         else
-            peak_ += 0.001f * (env_ - peak_);  // QSB: stale peaks let go
+            peak_ += 0.002f * (env_ - peak_);  // QSB/handover: stale peaks let go
     }
     if (floor_ < 1e-6f) floor_ = 1e-6f;
 
