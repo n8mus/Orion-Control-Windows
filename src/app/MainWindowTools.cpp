@@ -14,6 +14,8 @@
 #include "ui/SkimmerWindow.h"
 
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHostAddress>
@@ -31,6 +33,26 @@
 #include <algorithm>
 
 namespace ttc {
+
+// MASTER.SCP loader (shared logic): cqrlog ships the contest super-check
+// list; the user's own copy wins if present.
+static QSet<QString> loadMasterScp() {
+    QSet<QString> out;
+    for (const QString& p :
+         {QDir::homePath() + "/.config/cqrlog/MASTER.SCP",
+          QStringLiteral("/usr/share/cqrlog/ctyfiles/MASTER.SCP")}) {
+        QFile f(p);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) continue;
+        while (!f.atEnd()) {
+            const QByteArray line = f.readLine().trimmed();
+            if (line.isEmpty() || line.startsWith('#')) continue;
+            out.insert(QString::fromLatin1(line).toUpper());
+        }
+        break;
+    }
+    return out;
+}
+
 
 void MainWindow::setupLogUi() {
     // "LOG" dropdown: one-click QSO logging into cqrlog. Sends the finished
@@ -212,6 +234,7 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
         double la = 0.0, lo = 0.0;                 // decode artifacts have
         return cty_.lookup(call, la, lo);          // no country prefix
     });
+    skim_->setKnownCalls(loadMasterScp());
     auto* skimBtn = new QToolButton(topStrip_);
     skimBtn->setText("SKIM ▾");
     skimBtn->setPopupMode(QToolButton::InstantPopup);

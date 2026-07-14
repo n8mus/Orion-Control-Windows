@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVector>
 #include <atomic>
@@ -45,6 +46,11 @@ public:
         validate_ = std::move(v);
     }
 
+    // Optional known-call list (MASTER.SCP): listed calls confirm on 2
+    // sightings, unlisted need 3 — casual operators aren't in a contest
+    // super-check file, so this is a confidence tier, not a whitelist.
+    void setKnownCalls(QSet<QString> calls) { known_ = std::move(calls); }
+
     // SDR streaming thread: fan the block out to the active channels.
     void processIq(const std::complex<float>* d, size_t n);
 
@@ -84,6 +90,8 @@ private:
         qint64  hz = 0;                    // absolute assigned frequency
         int     wpm = 0;
         QString call;
+        QString candidate;                 // current unconfirmed call
+        int     candCount = 0;             // distinct sightings of it
         QString text;                      // rolling decode buffer
         qint64  lastCharMs = 0;            // activity clock (ms epoch)
         qint64  assignedMs = 0;
@@ -99,6 +107,7 @@ private:
     std::vector<Chan> ch_;                 // fixed size after construction
     QVector<SkimSpot> spots_;
     std::function<bool(const QString&)> validate_;
+    QSet<QString> known_;                  // MASTER.SCP (empty = all known)
     std::vector<float> specAvg_;           // EMA across assignment passes
     qint64 lastDial_ = 0;
 };

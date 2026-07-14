@@ -197,6 +197,8 @@ void SkimmerEngine::freeChannel(Chan& c) {
     c.dec->setEnabled(false);
     c.active = false;
     c.call.clear();
+    c.candidate.clear();
+    c.candCount = 0;
     c.text.clear();
     c.wpm = 0;
 }
@@ -223,16 +225,51 @@ void SkimmerEngine::extractCall(Chan& c) {
     QStringList toks = c.text.split(' ', Qt::SkipEmptyParts);
     if (!c.text.endsWith(' ') && !toks.isEmpty()) toks.removeLast();
     for (int i = toks.size() - 1; i >= 0; --i) {
-        const QString& tok = toks[i];
+        QString tok = toks[i];
+        bool fullToken = true;                     // vs fished from a merge
         if (tok.contains('*')) continue;           // unreadable char inside
-        if (tok.size() < 3 || tok.size() > 8) continue;
-        if (!callRe().match(tok).hasMatch()) continue;
+        if (tok.size() < 3) continue;
+        if (!callRe().match(tok).hasMatch()) {
+            fullToken = false;
+            // Copy often merges neighbors ("RICKWB4IT") — fish a valid
+            // call out of the tail of a long token.
+            QString found;
+            for (int st = 1; st + 3 <= tok.size() && st <= 6; ++st) {
+                const QString sub = tok.mid(st);
+                if (sub.size() > 8) continue;
+                if (callRe().match(sub).hasMatch()
+                    && (!validate_ || validate_(sub))) {
+                    found = sub;
+                    break;
+                }
+            }
+            if (found.isEmpty()) continue;
+            tok = found;
+        }
+        if (tok.size() > 8) continue;
         if (validate_ && !validate_(tok)) continue;
         const bool afterDe = i > 0 && toks[i - 1] == QLatin1String("DE");
-        int count = 0;
-        for (const QString& u : toks)
-            if (u == toks[i]) ++count;
-        if (!afterDe && count < 2) continue;
+        // Sighting bookkeeping: a sighting only counts when this token is
+        // the freshest completed word (otherwise the same buffered copy
+        // re-counts on every decoded character). Candidacy persists across
+        // buffer scroll — ragchewers ID once per over, minutes apart
+        // (ground truth: WB4IT copied cleanly once per 45 s window and
+        // never spotted before this). Only a clean full word of 4+ chars
+        // may OPEN a candidacy; fragments/merges only confirm.
+        const bool fresh = (i == toks.size() - 1);
+        if (tok == c.candidate) {
+            if (fresh) ++c.candCount;
+        } else if (fresh && fullToken && tok.size() >= 4) {
+            c.candidate = tok;
+            c.candCount = 1;
+        }
+        // Confidence: DE spots at once; MASTER.SCP calls need 2 distinct
+        // sightings; unlisted calls need 3 (recurring garbage can shape
+        // itself into a plausible call — NE3INE/TS9BL were spotted from
+        // busts of weak real QSOs before this tier).
+        const bool listed = known_.isEmpty() || known_.contains(tok);
+        if (!afterDe && c.candCount < (listed ? 2 : 3)) continue;
+        if (tok != c.candidate && !afterDe) continue;
         // Duplicate listener: a strong station's keying sidebands raise
         // peaks of their own, and several channels end up copying the SAME
         // station (replay-found: one CQ, three channels, spot frequency

@@ -9,6 +9,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QFile>
+#include <QSet>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -200,6 +201,19 @@ int main(int argc, char** argv) {
         return cty.lookup(c, la, lo);
     });
     skim.setEnabled(true);
+    {
+        QSet<QString> scp;
+        QFile mf(QStringLiteral("/usr/share/cqrlog/ctyfiles/MASTER.SCP"));
+        if (mf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            while (!mf.atEnd()) {
+                const QByteArray line = mf.readLine().trimmed();
+                if (!line.isEmpty() && !line.startsWith('#'))
+                    scp.insert(QString::fromLatin1(line).toUpper());
+            }
+        }
+        printf("master.scp: %d calls\n", scp.size());
+        skim.setKnownCalls(std::move(scp));
+    }
     QObject::connect(&skim, &SkimmerEngine::spotFound, &skim,
                      [](const QString& call, qint64 hz, int wpm) {
                          printf("  SPOT %-10s %9.1f kHz  %2d WPM\n",
