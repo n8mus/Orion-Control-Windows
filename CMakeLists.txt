@@ -65,6 +65,7 @@ add_executable(tentec-console
   src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
   src/sdr/SdrSource.h
   src/sdr/IqRecorder.cpp        src/sdr/IqRecorder.h
+  src/sdr/AutoGain.h
   resources/resources.qrc
 )
 target_include_directories(tentec-console PRIVATE src)
@@ -110,6 +111,11 @@ add_executable(cwtest EXCLUDE_FROM_ALL
   src/cw/CwDecoder.cpp)
 target_include_directories(cwtest PRIVATE src)
 target_link_libraries(cwtest PRIVATE Qt6::Core)
+
+add_executable(autogaintest EXCLUDE_FROM_ALL
+  tests/autogaintest.cpp)
+target_include_directories(autogaintest PRIVATE src)
+target_link_libraries(autogaintest PRIVATE Qt6::Core)
 
 add_executable(watchtest EXCLUDE_FROM_ALL
   tests/watchtest.cpp

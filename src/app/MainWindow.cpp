@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QGridLayout>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QWidget>
 #include <QTimer>
@@ -1011,6 +1012,18 @@ MainWindow::MainWindow(QWidget* parent)
         lna->addItem(QString("%1%2").arg(i).arg(i == 0 ? "  (max gain)"
                                               : i == 8 ? "  (max attn)" : ""));
     gg->addWidget(lna, 1, 1, 1, 2);
+    // Auto LNA: the RF AGC that keeps ADC peaks in the sweet spot found
+    // by hand (LNA 6 = deaf, LNA 2 = clipping mutants, LNA 3 = three
+    // skimmed calls a minute). Touching the LNA box takes manual control
+    // back and switches this off.
+    auto* autoLnaBox = new QCheckBox("Auto LNA (holds best skimmer level)",
+                                     gainW);
+    autoLnaBox->setToolTip(
+        "Steps the LNA to keep wideband ADC peaks between -16 and -4 dBFS:\n"
+        "up fast near clipping, down after 30 s of unused headroom.\n"
+        "The S-meter compensates automatically. Manual LNA changes turn "
+        "this off.");
+    gg->addWidget(autoLnaBox, 2, 0, 1, 3);
     auto* gainAction = new QWidgetAction(sdrMenu);
     gainAction->setDefaultWidget(gainW);
     sdrMenu->addAction(gainAction);
@@ -1046,6 +1059,51 @@ MainWindow::MainWindow(QWidget* parent)
     };
     connect(ifGain, &QSlider::valueChanged, this, applySdrGain);
     connect(lna, &QComboBox::currentIndexChanged, this, applySdrGain);
+    // --- Auto LNA wiring ---
+    autoLnaBox->setChecked(QSettings().value("sdr/autoLna", true).toBool());
+    autoLna_.reset(lna->currentIndex(), QDateTime::currentMSecsSinceEpoch());
+    connect(autoLnaBox, &QCheckBox::toggled, this, [this, lna](bool on) {
+        QSettings().setValue("sdr/autoLna", on);
+        if (on)
+            autoLna_.reset(lna->currentIndex(),
+                           QDateTime::currentMSecsSinceEpoch());
+        statusBar()->showMessage(on ? "Auto LNA ON" : "Auto LNA off (manual)",
+                                 4000);
+    });
+    connect(lna, &QComboBox::currentIndexChanged, this,
+            [this, autoLnaBox](int) {
+                // The operator's hand wins: a manual LNA change takes the
+                // loop out (re-check the box to hand it back).
+                if (autoLnaBox->isChecked()) {
+                    const QSignalBlocker b(autoLnaBox);
+                    autoLnaBox->setChecked(false);
+                    QSettings().setValue("sdr/autoLna", false);
+                    statusBar()->showMessage(
+                        "Auto LNA off — manual control", 5000);
+                }
+            });
+    auto* agcTick = new QTimer(this);
+    agcTick->setInterval(1000);
+    connect(agcTick, &QTimer::timeout, this,
+            [this, lna, ifGain, autoLnaBox] {
+                const float pk = iqPeak_.exchange(0.0f);
+                if (pk <= 0.0f || replayThread_) return;   // no live stream
+                if (!autoLnaBox->isChecked()) return;
+                const double dbfs = 20.0 * std::log10(double(pk));
+                const auto d = autoLna_.tick(
+                    dbfs, QDateTime::currentMSecsSinceEpoch());
+                if (!d.step) return;
+                sdr_.setGainLive(ifGain->value(), d.lna);
+                QSettings().setValue("sdr/lna", d.lna);
+                {
+                    const QSignalBlocker b(lna);   // don't trip manual-off
+                    lna->setCurrentIndex(d.lna);
+                }
+                statusBar()->showMessage(
+                    QString("auto LNA -> %1  (%2, peaks %3 dBFS)")
+                        .arg(d.lna).arg(d.why).arg(dbfs, 0, 'f', 1), 6000);
+            });
+    agcTick->start();
     connect(antA, &QAction::triggered, this, [this] {
         sdr_.setAntennaB(false);
         QSettings().setValue("sdr/antennaB", false);
@@ -2046,6 +2104,13 @@ MainWindow::MainWindow(QWidget* parent)
         cwDec_->processIq(iq.data(), iq.size());
         skim_->processIq(iq.data(), iq.size());
         iqRec_->feed(iq);
+        // Wideband peak for the Auto LNA loop (read+reset by a GUI timer).
+        float m = 0.0f;
+        for (const auto& z : iq)
+            m = std::max({m, std::abs(z.real()), std::abs(z.imag())});
+        float cur = iqPeak_.load(std::memory_order_relaxed);
+        while (m > cur && !iqPeak_.compare_exchange_weak(
+                              cur, m, std::memory_order_relaxed)) {}
     };
     // Replay mode: TTC_IQFILE feeds a band recording through the exact
     // pipeline the RSP2 would (paced to real time; TTC_IQFAST=1 free-runs).

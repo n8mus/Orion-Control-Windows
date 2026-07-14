@@ -40,6 +40,7 @@ namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
 #include "dsp/SpectrumComputer.h"
 #endif
 #include "sdr/IqRecorder.h"
+#include "sdr/AutoGain.h"
 #include <atomic>
 class QThread;
 
@@ -231,6 +232,8 @@ private:
     QLineEdit* logPark_ = nullptr;
     QUdpSocket* logUdp_ = nullptr;
     QDateTime qsoStartUtc_;                    // when the call landed in the field
+    AutoGain autoLna_;                         // RF AGC policy (skimmer)
+    std::atomic<float> iqPeak_{0.0f};          // wideband |peak| since last read
     IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)
     QAction* recIqAct_ = nullptr;              // SDR-menu toggle
     QThread* replayThread_ = nullptr;          // TTC_IQFILE feeder
