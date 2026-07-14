@@ -39,6 +39,9 @@ namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
 #include "sdr/SdrPlaySource.h"
 #include "dsp/SpectrumComputer.h"
 #endif
+#include "sdr/IqRecorder.h"
+#include <atomic>
+class QThread;
 
 namespace ttc {
 
@@ -228,6 +231,10 @@ private:
     QLineEdit* logPark_ = nullptr;
     QUdpSocket* logUdp_ = nullptr;
     QDateTime qsoStartUtc_;                    // when the call landed in the field
+    IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)
+    QAction* recIqAct_ = nullptr;              // SDR-menu toggle
+    QThread* replayThread_ = nullptr;          // TTC_IQFILE feeder
+    std::atomic<bool> replayStop_{false};
     CwWindow* cwWin_ = nullptr;                // WinKeyer CW sender (lazy)
     CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
     SkimmerEngine* skim_ = nullptr;            // CW skimmer decoder bank

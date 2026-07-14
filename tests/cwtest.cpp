@@ -39,6 +39,8 @@ struct Case {
     double qsbHz;       // 0 = no fade
     double qsbDepth;    // 0..1
     double qrnPerSec;   // static-crash rate (impulses, 1-15 ms, strong)
+    double freqOffHz;   // station sits this far off the assigned freq
+    double driftHzSec;  // and drifts (AFC must follow)
 };
 
 // Element-timed keying with optional per-element jitter.
@@ -95,6 +97,9 @@ int main(int argc, char** argv) {
         // decoder must stay quiet instead of babbling noise copy.
         {"20 wpm + qrn",   20, 0.05, 0.10, 0.0, 0.0, 2.0},
         {"dead channel (quiet?)", 0, 0.0, 0.0, 0.0, 0.0, 1.0},
+        // AFC cases: assignment error and sender drift.
+        {"25 wpm +70 Hz off",  25, 0.00, 0.15, 0.0, 0.0, 0.0, 70.0, 0.0},
+        {"25 wpm drift 1.5Hz/s",25, 0.00, 0.15, 0.0, 0.0, 0.0, 10.0, 1.5},
     };
 
     int overallScore = 0, overallMax = 0;
@@ -116,13 +121,15 @@ int main(int argc, char** argv) {
         const int expected =
             c.wpm > 0 ? int(total / key.size()) * 2 : 0;  // 2 calls/cycle
         std::complex<double> lo(1.0, 0.0);
-        const double inc = 2.0 * M_PI * kOffset / kRate;
-        const std::complex<double> step(std::cos(inc), std::sin(inc));
+        std::complex<double> step;         // recomputed per block (drift)
         std::vector<std::complex<float>> iq(16384);
         std::uniform_real_distribution<double> uni(0.0, 1.0);
         size_t pos = 0, qrnLeft = 0;
         double t = 0.0, qrnAmp = 0.0;
         for (size_t done = 0; done < total; done += iq.size()) {
+            const double f = kOffset + c.freqOffHz + c.driftHzSec * t;
+            const double inc = 2.0 * M_PI * f / kRate;
+            step = {std::cos(inc), std::sin(inc)};
             for (size_t i = 0; i < iq.size(); ++i) {
                 double amp = c.snrAmp;
                 if (c.qsbHz > 0.0) {

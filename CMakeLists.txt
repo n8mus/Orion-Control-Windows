@@ -64,6 +64,7 @@ add_executable(tentec-console
   src/dsp/Fft.cpp               src/dsp/Fft.h
   src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
   src/sdr/SdrSource.h
+  src/sdr/IqRecorder.cpp        src/sdr/IqRecorder.h
   resources/resources.qrc
 )
 target_include_directories(tentec-console PRIVATE src)
@@ -94,6 +95,15 @@ add_executable(skimsrvtest EXCLUDE_FROM_ALL
   src/cw/SkimServer.cpp)
 target_include_directories(skimsrvtest PRIVATE src)
 target_link_libraries(skimsrvtest PRIVATE Qt6::Core Qt6::Network)
+
+add_executable(skimreplay EXCLUDE_FROM_ALL
+  tests/skimreplay.cpp
+  src/cw/CwDecoder.cpp src/cw/SkimmerEngine.cpp
+  src/dsp/SpectrumComputer.cpp src/dsp/Fft.cpp
+  src/util/CtyLookup.cpp
+  resources/resources.qrc)
+target_include_directories(skimreplay PRIVATE src)
+target_link_libraries(skimreplay PRIVATE Qt6::Core Qt6::Gui)
 
 add_executable(cwtest EXCLUDE_FROM_ALL
   tests/cwtest.cpp

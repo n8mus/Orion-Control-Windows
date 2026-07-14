@@ -8,6 +8,7 @@
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QLineEdit>
 #include <QSettings>
@@ -156,6 +157,9 @@ void MainWindow::tuneAbsolute(uint64_t f) {
         statusBar()->showMessage("VFO A is LOCKED");  // here: one guard covers all
         return;
     }
+    // A band recording's header freezes the capture LO — a retune would
+    // silently corrupt the file's frequency mapping, so close it out.
+    if (recIqAct_ && recIqAct_->isChecked()) recIqAct_->setChecked(false);
     f = std::clamp<uint64_t>(f, 100000, 60000000);
     radio_->setFrequencyHz(Rx::Main, f);
     rigctld_.cacheFrequency(f);

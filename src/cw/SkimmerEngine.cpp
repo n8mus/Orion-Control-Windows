@@ -136,8 +136,17 @@ void SkimmerEngine::updateFromSpectrum(const std::vector<float>& db,
               [](const Peak& a, const Peak& b) { return a.db > b.db; });
 
     for (const Peak& pk : peaks) {
+        // Parabolic interpolation on the peak and its neighbors: the true
+        // carrier is rarely at a bin center, and ±30 Hz of assignment
+        // error is exactly the kind of thing AFC then has to claw back.
+        const double ym = db[pk.bin - 1], y0 = db[pk.bin],
+                     yp = db[pk.bin + 1];
+        const double den = ym - 2.0 * y0 + yp;
+        const double d =
+            (std::abs(den) > 1e-9) ? std::clamp(0.5 * (ym - yp) / den,
+                                                -0.5, 0.5) : 0.0;
         const qint64 hz = loAbs
-            + qint64(std::lround((pk.bin - n / 2) * binHz));
+            + qint64(std::lround((pk.bin - n / 2 + d) * binHz));
         // Already covered? (Assigned channels hold their frequency; CW
         // stations don't wander.)
         bool covered = false;
@@ -203,6 +212,16 @@ void SkimmerEngine::extractCall(Chan& c) {
         for (const QString& u : toks)
             if (u == toks[i]) ++count;
         if (!afterDe && count < 2) continue;
+        // Duplicate listener: a strong station's keying sidebands raise
+        // peaks of their own, and several channels end up copying the SAME
+        // station (replay-found: one CQ, three channels, spot frequency
+        // thrashing between them). Channels are assigned strongest-first,
+        // so the first holder has the true carrier — later ones fold.
+        for (auto& other : ch_)
+            if (&other != &c && other.active && other.call == tok) {
+                freeChannel(c);
+                return;
+            }
         if (tok == c.call) {                       // same station, refresh
             for (auto& s : spots_)
                 if (s.call == tok) {

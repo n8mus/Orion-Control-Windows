@@ -34,6 +34,10 @@ public:
     // applies it at the next block and resets all demod state.
     void retune(double offsetHz);
 
+    // AFC: how far the mixer has been steered off the assigned offset to
+    // stay centered on the station (Hz; reads from any thread).
+    double afcHz() const { return afcTotal_.load(std::memory_order_relaxed); }
+
     // SDR streaming thread.
     void processIq(const std::complex<float>* d, size_t n);
 
@@ -64,6 +68,17 @@ private:
     std::complex<float> ma_[8] = {};
     int maIdx_ = 0;
     int maLen_ = 8;
+
+    // AFC (SDR thread): quadrature discriminator on the decimated samples,
+    // measured only while the key is down (that's when there's a carrier
+    // to measure). The mixer is nudged every ~100 ms, bounded to ±80 Hz
+    // total so a channel can never wander onto its neighbor. This is what
+    // keeps a slightly-off assignment (or a drifting sender) centered in
+    // the ±110 Hz matched filter instead of sliding down its skirt.
+    std::complex<float> afcPrevZ_{0.0f, 0.0f};
+    double afcErrAvg_ = 0.0;               // EMA of measured error, Hz
+    int    afcTicks_ = 0;                  // key-down ticks since last nudge
+    std::atomic<double> afcTotal_{0.0};    // applied correction, Hz
 
     // envelope + slicer
     float env_ = 0.0f;                     // smoothed magnitude

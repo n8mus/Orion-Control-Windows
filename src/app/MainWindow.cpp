@@ -29,6 +29,9 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QUdpSocket>
+#include <QFile>
+#include <QThread>
+#include <cstring>
 #include "ui/DisplayPanel.h"
 #include "cw/CwDecoder.h"
 #include "cw/SkimmerEngine.h"
@@ -927,6 +930,49 @@ MainWindow::MainWindow(QWidget* parent)
     sdrMenu->addSeparator();
     auto* bcNotch = sdrMenu->addAction("Broadcast (MW) notch");
     bcNotch->setCheckable(true);
+    sdrMenu->addSeparator();
+    // Band recorder: raw capture to disk so the whole pipeline (skimmer
+    // included) can be re-run on a real recording. Park on the band first
+    // — the recording stops itself if the dial moves.
+    iqRec_ = new IqRecorder(this);
+    recIqAct_ = sdrMenu->addAction("Record band IQ (~2 MB/s)");
+    recIqAct_->setCheckable(true);
+    recIqAct_->setToolTip(
+        "Write the raw 500 kHz capture to disk (.tciq). Everything the "
+        "panadapter\nsees, replayable through the skimmer/decoder later. "
+        "Park on the band first;\ntuning stops the recording.");
+    connect(recIqAct_, &QAction::toggled, this, [this](bool on) {
+        if (on) {
+            const QString path = IqRecorder::defaultDir()
+                + QString("/%1-%2kHz.tciq")
+                      .arg(QDateTime::currentDateTimeUtc()
+                               .toString("yyyyMMdd-hhmmss"))
+                      .arg(centerHz_ / 1000);
+            if (iqRec_->start(path, 500000.0,
+                              double(centerHz_ + kLoOffsetHz)))
+                statusBar()->showMessage("IQ recording -> " + path);
+            else {
+                statusBar()->showMessage("IQ record: cannot open " + path,
+                                         6000);
+                const QSignalBlocker b(recIqAct_);
+                recIqAct_->setChecked(false);
+            }
+        } else if (iqRec_->active()) {
+            iqRec_->stop();
+            statusBar()->showMessage(
+                QString("IQ recording saved (%1 MB): %2")
+                    .arg(iqRec_->bytesWritten() / 1048576)
+                    .arg(iqRec_->path()), 10000);
+        }
+    });
+    connect(iqRec_, &IqRecorder::progress, this,
+            [this](qint64 bytes, double secs) {
+                static int n = 0;
+                if (++n % 25 == 0)         // every ~5 s, not every drain
+                    statusBar()->showMessage(
+                        QString("IQ recording  %1 s   %2 MB")
+                            .arg(int(secs)).arg(bytes / 1048576));
+            });
     sdrMenu->addSeparator();
 
     // Front-end gain, live-adjustable: too much gain = ADC overload warnings
@@ -1995,17 +2041,69 @@ MainWindow::MainWindow(QWidget* parent)
     // the SDR LO, so the decoder's mixer never moves.
     cwDec_ = new CwDecoder(double(spanHz), -double(kLoOffsetHz), this);
     Q_ASSERT(spanHz == 500000);            // skim_ was built for this rate
-    sdr_.setIqCallback([this](const IqBlock& iq) {
+    const auto iqHandler = [this](const IqBlock& iq) {
         spectrum_.addSamples(iq);
         cwDec_->processIq(iq.data(), iq.size());
         skim_->processIq(iq.data(), iq.size());
-    });
+        iqRec_->feed(iq);
+    };
+    // Replay mode: TTC_IQFILE feeds a band recording through the exact
+    // pipeline the RSP2 would (paced to real time; TTC_IQFAST=1 free-runs).
+    if (const char* rf = std::getenv("TTC_IQFILE")) {
+        QFile* f = new QFile(QString::fromLocal8Bit(rf), this);
+        char hdr[32];
+        double fRate = 0.0, fCenter = 0.0;
+        if (f->open(QIODevice::ReadOnly) && f->read(hdr, 32) == 32
+            && std::memcmp(hdr, "TTCIQ01", 7) == 0) {
+            std::memcpy(&fRate, hdr + 8, 8);
+            std::memcpy(&fCenter, hdr + 16, 8);
+            centerHz_ = uint64_t(fCenter) - kLoOffsetHz;
+            freqDisp_->setFrequency(centerHz_);
+            pan_->setCenterHz(centerHz_);
+            const bool fast = std::getenv("TTC_IQFAST") != nullptr;
+            replayThread_ = QThread::create([this, f, fast] {
+                std::vector<int16_t> raw(16384 * 2);
+                IqBlock blk(16384);
+                while (!replayStop_.load(std::memory_order_relaxed)) {
+                    const qint64 got = f->read(
+                        reinterpret_cast<char*>(raw.data()),
+                        qint64(raw.size() * 2));
+                    if (got < qint64(raw.size() * 2)) break;   // EOF
+                    for (size_t i = 0; i < blk.size(); ++i)
+                        blk[i] = {raw[2 * i] / 32767.0f,
+                                  raw[2 * i + 1] / 32767.0f};
+                    spectrum_.addSamples(blk);
+                    cwDec_->processIq(blk.data(), blk.size());
+                    skim_->processIq(blk.data(), blk.size());
+                    if (!fast) QThread::usleep(32768);         // real time
+                }
+                std::fprintf(stderr, "[replay] end of file\n");
+            });
+            replayThread_->start();
+            statusBar()->showMessage(
+                QString("REPLAY %1 (%2 MHz)").arg(rf)
+                    .arg(centerHz_ / 1e6, 0, 'f', 4));
+        } else {
+            statusBar()->showMessage(QString("replay: bad file %1").arg(rf));
+        }
+    } else {
+        sdr_.setIqCallback(iqHandler);
+    }
     sdr_.setDecimation(kDecim);
-    if (sdr_.apiOk()
+    if (!replayThread_ && sdr_.apiOk()
         && sdr_.start(static_cast<double>(centerHz_ + kLoOffsetHz), kSampleRate)) {
         statusBar()->showMessage(QString("RSP2 panadapter %1 MHz, span %2 kHz  |  rigctld :4532")
                                      .arg(centerHz_ / 1e6, 0, 'f', 4).arg(spanHz / 1000));
-    } else {
+        // Unattended capture: TTC_RECIQ=<secs> records from startup (pair
+        // with TTC_SELFTEST a little longer to quit cleanly after).
+        if (const char* rs = std::getenv("TTC_RECIQ")) {
+            const int secs = atoi(rs);
+            recIqAct_->setChecked(true);
+            QTimer::singleShot(secs * 1000, this, [this] {
+                if (recIqAct_->isChecked()) recIqAct_->setChecked(false);
+            });
+        }
+    } else if (!replayThread_) {
         statusBar()->showMessage("SDR unavailable: " + QString::fromStdString(sdr_.lastError()));
     }
 #endif
@@ -2144,6 +2242,11 @@ MainWindow::~MainWindow() {
         if (dvrAutoDig_) setDigitalMode(false);  // nor on line-in with mic parked
     }
     saveBandMemory();                            // remember this band across runs
+    if (iqRec_ && iqRec_->active()) iqRec_->stop();  // finalize the file
+    if (replayThread_) {                         // same teardown-order rule
+        replayStop_.store(true, std::memory_order_relaxed);
+        replayThread_->wait(2000);
+    }
 #ifdef HAVE_SDRPLAY
     // Stop the SDRplay streaming thread (Uninit drains callbacks) BEFORE the
     // spectrum_/dsp members it references are destroyed. Without this, member

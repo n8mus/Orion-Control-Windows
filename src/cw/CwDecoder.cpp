@@ -61,6 +61,10 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         accN_ = 0;
         for (auto& v : ma_) v = {};
         maLen_ = 8;
+        afcPrevZ_ = {0.0f, 0.0f};
+        afcErrAvg_ = 0.0;
+        afcTicks_ = 0;
+        afcTotal_.store(0.0, std::memory_order_relaxed);
         env_ = 0.0f;
         peak_ = 0.0f;
         floor_ = 1e-3f;
@@ -92,7 +96,35 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         std::complex<float> s{0.0f, 0.0f};
         for (int k = 0; k < maLen_; ++k)
             s += ma_[(maIdx_ - 1 - k) & 7];
-        tick(std::abs(s) / float(maLen_));
+        s /= float(maLen_);
+        // AFC: while the key is down the filtered sample is a carrier;
+        // successive-sample phase advance IS the residual frequency error.
+        if (key_) {
+            const std::complex<float> d = s * std::conj(afcPrevZ_);
+            if (std::abs(d) > 1e-9f) {
+                const double errHz =
+                    std::arg(d) * (inputRate_ / decim_) / (2.0 * M_PI);
+                if (std::abs(errHz) < 150.0)       // in-band only
+                    afcErrAvg_ += 0.05 * (errHz - afcErrAvg_);
+            }
+            if (++afcTicks_ >= 200) {              // nudge every ~100 ms
+                afcTicks_ = 0;
+                double total =
+                    afcTotal_.load(std::memory_order_relaxed);
+                double step = std::clamp(afcErrAvg_, -20.0, 20.0);
+                step = std::clamp(step, -80.0 - total, 80.0 - total);
+                if (std::abs(step) > 0.5) {
+                    const double inc = -2.0 * M_PI * step / inputRate_;
+                    loStep_ *= std::complex<double>(std::cos(inc),
+                                                    std::sin(inc));
+                    afcTotal_.store(total + step,
+                                    std::memory_order_relaxed);
+                    afcErrAvg_ = 0.0;
+                }
+            }
+        }
+        afcPrevZ_ = s;
+        tick(std::abs(s));
     }
 }
 
