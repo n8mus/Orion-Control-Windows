@@ -293,6 +293,26 @@ void SkimmerEngine::extractCall(Chan& c) {
             emit spotsChanged();
             return;
         }
+        // One spot per channel: a marginal station's wobbling decode can
+        // self-confirm a NEW junk variant every few minutes (ground truth:
+        // one station at 7029.7 accumulated T4EE, AM4I, M4FG and W4FT).
+        // When this channel's confirmed call changes, its previous spot —
+        // its own earlier bust — goes with it (unless another channel
+        // legitimately holds that call).
+        if (!c.call.isEmpty() && c.call != tok) {
+            bool held = false;
+            for (const auto& other : ch_)
+                if (&other != &c && other.active && other.call == c.call)
+                    held = true;
+            if (!held) {
+                const QString old = c.call;
+                spots_.erase(std::remove_if(spots_.begin(), spots_.end(),
+                                            [&old](const SkimSpot& s) {
+                                                return s.call == old;
+                                            }),
+                             spots_.end());
+            }
+        }
         c.call = tok;
         const qint64 now = QDateTime::currentSecsSinceEpoch();
         bool known = false;
