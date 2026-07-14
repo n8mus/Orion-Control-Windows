@@ -7,10 +7,18 @@
 #include "app/Bands.h"
 
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QLabel>
 #include <QSettings>
+#include <QSpinBox>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTimeEdit>
+#include <QTimeZone>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -360,6 +368,92 @@ void MainWindow::recall60m(int chan) {
     statusBar()->showMessage(QString("60m %1  %2 MHz  ->  pwr %3, TX bw %4 (locked)")
                                  .arg(c.name).arg(c.dialHz / 1e6, 0, 'f', 4)
                                  .arg(c.txPwrPct).arg(c.txBwHz));
+}
+
+void MainWindow::saveMarkers() {
+    QStringList out;
+    for (const auto& m : markers_)
+        out << QString("%1|%2").arg(m.hz).arg(m.label);
+    QSettings().setValue("panadapter/markers", out);
+    pan_->setMarkers(markers_);
+}
+
+// Scheduled IQ recording (SDR Console's recording scheduler): arm a start
+// time, duration and dial, walk away — the capture lands in the usual iq/
+// directory for skimreplay. RX only, nothing here can key the radio. One
+// schedule at a time; invoking again while armed cancels it. The use case
+// that asked for it: W1AW code practice runs at fixed UTC slots.
+void MainWindow::scheduleIqRecordingDialog() {
+    if (schedStartTmr_ && schedStartTmr_->isActive()) {    // armed -> cancel
+        schedStartTmr_->stop();
+        schedIqAct_->setText("Schedule IQ recording…");
+        statusBar()->showMessage("scheduled IQ recording canceled");
+        return;
+    }
+    QDialog dlg(this);
+    dlg.setWindowTitle("Schedule IQ recording");
+    auto* form = new QFormLayout(&dlg);
+    auto* when = new QTimeEdit(&dlg);
+    when->setDisplayFormat("HH:mm");
+    when->setTime(QDateTime::currentDateTimeUtc().time().addSecs(300));
+    form->addRow("Start (UTC):", when);
+    auto* mins = new QSpinBox(&dlg);
+    mins->setRange(1, 180);
+    mins->setValue(10);
+    mins->setSuffix(" min");
+    form->addRow("Duration:", mins);
+    auto* dial = new QDoubleSpinBox(&dlg);
+    dial->setRange(100.0, 60000.0);
+    dial->setDecimals(1);
+    dial->setSuffix(" kHz");
+    dial->setValue(centerHz_ / 1000.0);
+    form->addRow("Dial:", dial);
+    auto* note = new QLabel(&dlg);
+    const auto updNote = [note, mins] {
+        note->setText(QString("≈ %1 MB on disk (2 MB/s)")
+                          .arg(mins->value() * 120));
+    };
+    updNote();
+    connect(mins, &QSpinBox::valueChanged, &dlg, updNote);
+    form->addRow(note);
+    auto* bb = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(bb);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    schedHz_   = static_cast<uint64_t>(dial->value() * 1000.0 + 0.5);
+    schedSecs_ = mins->value() * 60;
+    QDateTime at(QDate::currentDate(), when->time(), QTimeZone::utc());
+    if (at <= QDateTime::currentDateTimeUtc()) at = at.addDays(1);
+    if (!schedStartTmr_) {
+        schedStartTmr_ = new QTimer(this);
+        schedStartTmr_->setSingleShot(true);
+        connect(schedStartTmr_, &QTimer::timeout, this, [this] {
+            schedIqAct_->setText("Schedule IQ recording…");
+            tuneAbsolute(schedHz_);
+            // Let the SDR retune settle before opening the file — and the
+            // tune must come FIRST, because tuning auto-stops a recording.
+            QTimer::singleShot(1500, this, [this] {
+                recIqAct_->setChecked(true);
+                QTimer::singleShot(schedSecs_ * 1000, this, [this] {
+                    recIqAct_->setChecked(false);  // no-op if already stopped
+                });
+            });
+        });
+    }
+    schedStartTmr_->start(
+        int(QDateTime::currentDateTimeUtc().msecsTo(at)));
+    schedIqAct_->setText(QString("Cancel scheduled IQ recording (%1 UTC · "
+                                 "%2 kHz · %3 min)")
+                             .arg(when->time().toString("HH:mm"))
+                             .arg(schedHz_ / 1000.0, 0, 'f', 1)
+                             .arg(mins->value()));
+    statusBar()->showMessage(
+        QString("IQ recording armed for %1 UTC at %2 kHz")
+            .arg(when->time().toString("HH:mm"))
+            .arg(schedHz_ / 1000.0, 0, 'f', 1), 8000);
 }
 
 } // namespace ttc

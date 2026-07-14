@@ -398,6 +398,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/trace",      d.traceColor);
         s.setValue("display/bigVfo",     d.bigVfo);
         s.setValue("display/clock",      d.showClock);
+        s.setValue("display/wfTime",     d.showWfTime);
         s.setValue("display/cwZap",      d.cwZap);
     };
     // Station callsign: drives the watermark and defaults the cluster login.
@@ -467,6 +468,7 @@ MainWindow::MainWindow(QWidget* parent)
         d.traceColor = s.value("display/trace",      d.traceColor).toInt();
         d.bigVfo     = s.value("display/bigVfo",     d.bigVfo).toBool();
         d.showClock  = s.value("display/clock",      d.showClock).toBool();
+        d.showWfTime = s.value("display/wfTime",     d.showWfTime).toBool();
         d.cwZap      = s.value("display/cwZap",      d.cwZap).toBool();
         cwZap_       = d.cwZap;
         dispPanel->setSettings(d);
@@ -502,6 +504,50 @@ MainWindow::MainWindow(QWidget* parent)
                 statusBar()->showMessage(
                     QString("display: REF %1 dB  RANGE %2 dB")
                         .arg(d.refDb, 0, 'f', 0).arg(d.rangeDb, 0, 'f', 0));
+            });
+
+    // Pinned frequency markers: Shift+right-click on the panadapter toggles
+    // one (label prompt on create). The list lives in QSettings as
+    // "hz|label" strings and survives restarts — that permanence is what
+    // separates a marker from a spot.
+    {
+        QVector<FreqMarker> mk;
+        for (const QString& e :
+             QSettings().value("panadapter/markers").toStringList()) {
+            const int bar = e.indexOf('|');
+            FreqMarker m;
+            m.hz = e.left(bar < 0 ? e.size() : bar).toLongLong();
+            if (bar >= 0) m.label = e.mid(bar + 1);
+            if (m.hz > 0) mk.append(m);
+        }
+        markers_ = mk;
+        pan_->setMarkers(markers_);
+    }
+    connect(pan_, &PanadapterWidget::markerToggleRequested, this,
+            [this](qint64 hz) {
+                // Near an existing marker (a few pixels at the current
+                // zoom) = remove it; otherwise create one here.
+                const qint64 tol =
+                    std::max<qint64>(300, pan_->viewSpanHz() / 250);
+                for (int i = 0; i < markers_.size(); ++i) {
+                    if (std::llabs(markers_[i].hz - hz) <= tol) {
+                        statusBar()->showMessage(
+                            QString("marker removed: %1 kHz")
+                                .arg(markers_[i].hz / 1000.0, 0, 'f', 1));
+                        markers_.removeAt(i);
+                        saveMarkers();
+                        return;
+                    }
+                }
+                bool ok = false;
+                const QString label = QInputDialog::getText(
+                    this, "Pin frequency marker",
+                    QString("Label for %1 kHz (empty shows the frequency):")
+                        .arg(hz / 1000.0, 0, 'f', 1),
+                    QLineEdit::Normal, QString(), &ok);
+                if (!ok) return;                   // canceled: no marker
+                markers_.append({hz, label.trimmed()});
+                saveMarkers();
             });
 
     // "SPOTS" dropdown: DX-cluster callsign labels on the panadapter. The feed
@@ -974,6 +1020,14 @@ MainWindow::MainWindow(QWidget* parent)
                         QString("IQ recording  %1 s   %2 MB")
                             .arg(int(secs)).arg(bytes / 1048576));
             });
+    // Timed unattended capture (RX only): tune + record at a UTC time.
+    schedIqAct_ = sdrMenu->addAction("Schedule IQ recording…");
+    schedIqAct_->setToolTip(
+        "Arm a one-shot recording: at the set UTC time the console tunes\n"
+        "to the chosen dial and records band IQ for the duration (W1AW\n"
+        "code practice, overnight opening studies). Select again to cancel.");
+    connect(schedIqAct_, &QAction::triggered, this,
+            &MainWindow::scheduleIqRecordingDialog);
     sdrMenu->addSeparator();
 
     // Front-end gain, live-adjustable: too much gain = ADC overload warnings

@@ -550,6 +550,72 @@ void PanadapterWidget::setSpots(const QVector<SpotLabel>& s) {
     update();
 }
 
+void PanadapterWidget::setMarkers(const QVector<FreqMarker>& m) {
+    markers_ = m;
+    update();
+}
+
+// Pinned frequency markers (SDR-Console/Thetis style): a dashed amber line
+// through the spectrum with its label flag at the top — visually distinct
+// from spot markers (solid, colored by source) and from the notch. They
+// never move or expire; that permanence is the point (skeds, nets, W1AW).
+void PanadapterWidget::drawMarkers(QPainter& p, int hSpec) {
+    if (markers_.isEmpty() || centerHz_ == 0 || hSpec < 40) return;
+    QFont f = p.font();
+    f.setPixelSize(11);
+    f.setBold(true);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+    const qint64 c = static_cast<qint64>(centerHz_);
+    for (const auto& m : markers_) {
+        const qint64 off = m.hz - c;
+        if (std::llabs(off) > viewSpanHz_ / 2) continue;
+        const int x = hzToX(static_cast<int>(off));
+        QPen pen(QColor(255, 176, 64, 200), 1, Qt::DashLine);
+        p.setPen(pen);
+        p.drawLine(x, 14, x, hSpec - 2);
+        const QString text = m.label.isEmpty()
+            ? QString("%1").arg(m.hz / 1000.0, 0, 'f', 1)
+            : m.label;
+        const int tw = fm.horizontalAdvance(text);
+        QRect box(x - tw / 2 - 4, 1, tw + 8, 13);
+        box.moveLeft(std::clamp(box.left(), 0, width() - box.width()));
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(60, 42, 12, 215));
+        p.drawRoundedRect(box, 2, 2);
+        p.setPen(QColor(255, 190, 90));
+        p.drawText(box, Qt::AlignCenter, text);
+    }
+    p.setBrush(Qt::NoBrush);
+}
+
+// UTC timestamps down the waterfall's left edge, one every ~48 px: history
+// depth at a glance, and a scroll-back capture ("who called at :05?") reads
+// like a log. Uses each ROW's recorded time, so speed changes and stalls
+// stay honest instead of assuming a constant scroll rate.
+void PanadapterWidget::drawWfTimes(QPainter& p, int wfTop) {
+    const int wfH = height() - wfTop;
+    if (!ds_.showWfTime || wfH < 40 || wfTimes_.empty() || wfCount_ < 2)
+        return;
+    QFont f = p.font();
+    f.setPixelSize(10);
+    f.setBold(false);
+    p.setFont(f);
+    for (int y = 12; y < std::min(wfH, wfCount_); y += 48) {
+        const qint64 t = wfTimes_[static_cast<size_t>(
+            ((wfHead_ - 1 - y) % kWfHistRows + kWfHistRows) % kWfHistRows)];
+        if (t <= 0) continue;
+        const QString s =
+            QDateTime::fromMSecsSinceEpoch(t).toUTC().toString("hh:mm:ss");
+        p.setPen(QColor(220, 230, 240, 130));
+        p.drawLine(0, wfTop + y, 3, wfTop + y);
+        p.setPen(QColor(0, 0, 0, 170));
+        p.drawText(7, wfTop + y + 4, s);           // soft shadow
+        p.setPen(QColor(215, 225, 235, 175));
+        p.drawText(6, wfTop + y + 3, s);
+    }
+}
+
 void PanadapterWidget::setCallsign(const QString& call) {
     callsign_ = call;
     update();
@@ -766,11 +832,13 @@ void PanadapterWidget::pushWaterfallRow(const std::vector<float>& db) {
     if (wfBins_ != n) {                            // bin-count change: reset history
         wfBins_ = n;
         wfHist_.assign(static_cast<size_t>(kWfHistRows) * n, kNoRow);
+        wfTimes_.assign(kWfHistRows, 0);
         wfHead_ = wfCount_ = wfPending_ = 0;
         wfDirty_ = true;
     }
     std::memcpy(&wfHist_[static_cast<size_t>(wfHead_) * n], db.data(),
                 sizeof(float) * n);
+    wfTimes_[static_cast<size_t>(wfHead_)] = QDateTime::currentMSecsSinceEpoch();
     wfHead_ = (wfHead_ + 1) % kWfHistRows;
     wfCount_ = std::min(wfCount_ + 1, kWfHistRows);
     ++wfPending_;
@@ -1068,6 +1136,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     if (wfBins_ >= 2 && n >= 2 && height() > wfTop) {
         ensureWaterfallImage(width(), height() - wfTop, binLo, binHi);
         if (!wfImg_.isNull()) p.drawImage(0, wfTop, wfImg_);
+        drawWfTimes(p, wfTop);
     }
 
     // Per-pixel-column signal level (0..1 of the scale): max of the column's
@@ -1242,6 +1311,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         };
         p.setPen(kTraceColors[std::clamp(ds_.traceColor, 0, 4)]);
         p.drawPath(tracePath);
+        drawMarkers(p, hSpec);                     // pinned frequencies
         drawSpots(p, hSpec);                       // cluster spots, on top
         drawSolarPanel(p, hSpec);                  // space-weather corner box
         drawCompassRose(p, hSpec);                 // bearing rose, bottom-left
@@ -1312,6 +1382,14 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
             return;
         }
         if (!inScaleBand(y) && !inDbAxis(x, y)) {
+            // Shift+right-click = pin/unpin a frequency marker here; plain
+            // right-click keeps its VFO B meaning.
+            if (e->modifiers() & Qt::ShiftModifier) {
+                if (centerHz_)
+                    emit markerToggleRequested(static_cast<qint64>(centerHz_)
+                                               + xToHz(x));
+                return;
+            }
             wheelVfo_ = 'B';                        // wheel now nudges B
             emit vfoBTuneRequested(xToHz(x));
         }

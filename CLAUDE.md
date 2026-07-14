@@ -88,6 +88,13 @@ was a real on-air bug, twice).
   mixer per instance, so banks are cheap (SkimmerEngine runs 24). The
   slicer/clock logic is battle-tuned — every threshold has an on-air
   story in a comment; run the full `cwtest` matrix on any change.
+  Tried and rejected (2026-07-14): an fldigi-style per-element release
+  threshold (`off = 0.35 × this element's own peak`). The fast in-key
+  peak re-training already collapses the tracker to the current
+  element within ~10 ms, so the guarded variant replayed byte-identical
+  on every ground-truth capture, and unguarded it merged shallow
+  inter-element gaps on clean W1AW (DISPLAYED→DISPLAYEB). Weak-station
+  copy is gated by the antenna feed SNR, not element release.
 - **Radios**: both are carrier-at-dial in CW (no pitch math anywhere).
   Orion = ASCII CAT, dual RX; Omni VII = binary CAT ("omni8"
   personality). Quirks are documented where they're handled — grep

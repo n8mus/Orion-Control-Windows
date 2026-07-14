@@ -90,6 +90,8 @@ private:
     void dvrPlayOverAir(const QString& wav, int slot); // line-in + PTT + play
     QString dvrDir() const;            // ~/.local/share/n8mus/tentec-console/dvr
     QString vkPath(int slot) const;    // voice keyer message file for a slot
+    void saveMarkers();                // persist + repaint pinned freq markers
+    void scheduleIqRecordingDialog();  // arm/cancel a timed IQ recording
     RadioController* radio_;                  // owned (QObject child); see makeRadio
     RigctldServer    rigctld_;
     SpotClient       spotClient_;                  // DX-cluster telnet feed
@@ -236,6 +238,11 @@ private:
     std::atomic<float> iqPeak_{0.0f};          // wideband |peak| since last read
     IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)
     QAction* recIqAct_ = nullptr;              // SDR-menu toggle
+    QAction* schedIqAct_ = nullptr;            // SDR-menu schedule/cancel entry
+    QTimer*  schedStartTmr_ = nullptr;         // armed: fire = tune + record
+    uint64_t schedHz_ = 0;                     // scheduled dial frequency
+    int      schedSecs_ = 0;                   // scheduled recording length
+    QVector<FreqMarker> markers_;              // pinned panadapter frequencies
     QThread* replayThread_ = nullptr;          // TTC_IQFILE feeder
     std::atomic<bool> replayStop_{false};
     CwWindow* cwWin_ = nullptr;                // WinKeyer CW sender (lazy)

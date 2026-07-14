@@ -136,6 +136,9 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
                       "green = phone (US allocations)");
     bigVfo_ = new QCheckBox("Large VFO digits", this);
     clock_ = new QCheckBox("Clock (radio panel)", this);
+    wfTime_ = new QCheckBox("Waterfall timestamps", this);
+    wfTime_->setToolTip("UTC time labels down the waterfall's left edge —\n"
+                        "read scrolled-back history like a log");
     zap_ = new QCheckBox("CW zap (snap to carrier)", this);
     zap_->setToolTip(
         "In CW modes a panadapter click snaps to the strongest signal\n"
@@ -154,21 +157,22 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     g->addWidget(plan_, 13, 0, 1, 3);
     g->addWidget(bigVfo_, 14, 0, 1, 3);
     g->addWidget(clock_, 15, 0, 1, 3);
-    g->addWidget(zap_, 16, 0, 1, 3);
-    g->addWidget(call_, 17, 0, 1, 3);
+    g->addWidget(wfTime_, 16, 0, 1, 3);
+    g->addWidget(zap_, 17, 0, 1, 3);
+    g->addWidget(call_, 18, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 18, 0);
+    g->addWidget(makeCaption("CALL", this), 19, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 18, 1, 1, 2);
+    g->addWidget(callEdit_, 19, 1, 1, 2);
 
     // Station grid square: centers the compass rose (and any future
     // bearing/distance math). 4 or 6 characters.
-    g->addWidget(makeCaption("GRID", this), 19, 0);
+    g->addWidget(makeCaption("GRID", this), 20, 0);
     gridEdit_ = new QLineEdit(this);
     gridEdit_->setMaxLength(6);
     gridEdit_->setToolTip("Your Maidenhead grid square (4 or 6 chars), e.g. EN82fq");
-    g->addWidget(gridEdit_, 19, 1, 1, 2);
+    g->addWidget(gridEdit_, 20, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
@@ -229,6 +233,7 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(plan_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(bigVfo_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(clock_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(wfTime_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(zap_,   &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(trace_, &QComboBox::currentIndexChanged, this,
             &DisplayPanel::emitChanged);
@@ -263,6 +268,7 @@ DisplaySettings DisplayPanel::settings() const {
     s.traceColor = trace_->currentIndex();
     s.bigVfo     = bigVfo_->isChecked();
     s.showClock  = clock_->isChecked();
+    s.showWfTime = wfTime_->isChecked();
     s.cwZap      = zap_->isChecked();
     s.split      = split_;
     return s;
@@ -273,7 +279,8 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     const QSignalBlocker b1(ref_), b2(range_), b3(avg_), b4(speed_), b5(pal_),
         b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_),
         b11(mapDay_), b12(mapNight_), b13(solar_), b14(rose_),
-        b15(plan_), b16(bigVfo_), b17(trace_), b18(clock_), b19(zap_);
+        b15(plan_), b16(bigVfo_), b17(trace_), b18(clock_), b19(zap_),
+        b20(wfTime_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -295,6 +302,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     plan_->setChecked(s.showBandPlan);
     bigVfo_->setChecked(s.bigVfo);
     clock_->setChecked(s.showClock);
+    wfTime_->setChecked(s.showWfTime);
     zap_->setChecked(s.cwZap);
     trace_->setCurrentIndex(std::clamp(s.traceColor, 0, trace_->count() - 1));
     refVal_->setText(QString("%1 dB").arg(ref_->value()));

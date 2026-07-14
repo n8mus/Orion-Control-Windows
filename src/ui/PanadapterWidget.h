@@ -36,6 +36,16 @@ struct DisplaySettings {
     bool  bigVfo     = false;   // ~25 % larger VFO digits (applied by owner)
     bool  showClock  = true;    // UTC/local clock (radio panel bottom)
     bool  cwZap      = true;    // CW click snaps to the carrier peak (owner)
+    bool  showWfTime = true;    // UTC timestamps down the waterfall edge
+};
+
+// A user-pinned frequency marker (SDR-Console/Thetis style): a labeled
+// line the operator drops on a spot worth remembering — a sked, a net,
+// W1AW code practice. Shift+right-click toggles one; the owner persists
+// the set.
+struct FreqMarker {
+    qint64  hz = 0;
+    QString label;              // empty = the frequency itself is shown
 };
 
 // A DX-cluster spot to mark on the display (absolute frequency). atSecs
@@ -98,6 +108,7 @@ public:
     void setSpectrum(const std::vector<float>& magsDb);
     void setCenterHz(uint64_t hz);                 // dial freq, for grid labels
     void setSpots(const QVector<SpotLabel>& s);    // empty = feature off
+    void setMarkers(const QVector<FreqMarker>& m); // pinned frequency lines
     void setCallsign(const QString& call);         // watermark text (ds_.showCall)
     // Space weather for the sun marker (on map backdrops) + the green
     // corner panel (ds_.showSolar). Values < 0 / empty = unknown, not drawn.
@@ -142,6 +153,10 @@ signals:
     // A spot label was clicked: call + source kind ('D'/'P'/'F') + tag (park
     // ref for POTA). Prefills the LOG panel.
     void spotClicked(const QString& call, QChar kind, const QString& tag);
+    // Shift+right-click: add a marker here / remove the one already here.
+    // The owner keeps the list (label prompt, persistence) and pushes it
+    // back via setMarkers.
+    void markerToggleRequested(qint64 absHz);
     // The rose pointer moved (spot click or manual heading; -1 = cleared).
     // The ROT panel uses this as its turn target.
     void roseBearingChanged(double bearingDeg, const QString& label);
@@ -184,6 +199,8 @@ private:
     void   drawScaleBand(QPainter& p, int hSpec);  // freq scale strip on the divider
     void   drawDbScale(QPainter& p, int hSpec);    // horizontal dB lines + labels
     void   drawSpots(QPainter& p, int hSpec);      // cluster spot lines + callsigns
+    void   drawMarkers(QPainter& p, int hSpec);    // pinned frequency lines
+    void   drawWfTimes(QPainter& p, int wfTop);    // UTC labels down the waterfall
 
     bool   overNotch(int x) const;                 // cursor within the grab zone
     bool   overVfoB(int x) const;                  // over B's line or passband
@@ -221,6 +238,7 @@ private:
     // Waterfall: ring buffer of raw dB rows + a pixel-resolution rendered image.
     // New rows render incrementally; zoom/resize/settings force a full rebuild.
     std::vector<float> wfHist_;                    // kWfHistRows x wfBins_, ring
+    std::vector<qint64> wfTimes_;                  // epoch ms per row, same ring
     int  wfBins_ = 0, wfHead_ = 0, wfCount_ = 0;
     int  wfPending_ = 0;                           // rows added since last render
     std::vector<float> wfAccum_;                   // max-merge across wfSpeed frames
@@ -236,6 +254,7 @@ private:
     // (rebuilt each paint) make the labels click-to-tune targets.
     QVector<SpotLabel> spots_;
     QVector<SpotHit>   spotHits_;                  // label rect -> freq + call
+    QVector<FreqMarker> markers_;                  // pinned frequency lines
 
     QString callsign_;                             // watermark (empty = off)
 
