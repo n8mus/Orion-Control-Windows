@@ -117,6 +117,12 @@ add_executable(autogaintest EXCLUDE_FROM_ALL
 target_include_directories(autogaintest PRIVATE src)
 target_link_libraries(autogaintest PRIVATE Qt6::Core)
 
+add_executable(cohtest EXCLUDE_FROM_ALL
+  tests/cohtest.cpp
+  src/cw/CwDecoder.cpp src/dsp/Fft.cpp)
+target_include_directories(cohtest PRIVATE src)
+target_link_libraries(cohtest PRIVATE Qt6::Core)
+
 add_executable(watchtest EXCLUDE_FROM_ALL
   tests/watchtest.cpp
   src/util/WatchList.cpp)
