@@ -93,9 +93,12 @@ was a real on-air bug, twice).
   window's tuned reader with FLD/SOM/DEEP/ATK/DCY controls. Full matrix:
   engine 95%, legacy 94% (engine wins sloppy timing via SOM, loses a
   little at 45+ WPM; quick-tier QSB rows under-read the engine — its
-  trackers need the full-length runs to warm up). `TTC_CWENGINE=1` /
-  `TTC_CWLEGACY=1` force either path in tests. Flip the skimmer default
-  only after the engine beats legacy on real-air replays too. If the
+  trackers need the full-length runs to warm up, so the quick sentinel
+  is `TTC_CWLEGACY=1 cwtest --quick` = 100%; the engine gate is the
+  full matrix ≥95%). `TTC_CWENGINE=1` / `TTC_CWLEGACY=1` force either
+  path in tests. The ENGINE is the default everywhere (flipped
+  2026-07-15 after it out-copied real fldigi on the same live signal —
+  operator-verified). If the
   repo ever goes public it ships GPL-3 because of this file (fine), and
   binaries must not bundle the proprietary SDRplay lib.
   Tried and rejected (2026-07-14): an fldigi-style per-element release

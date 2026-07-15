@@ -77,7 +77,11 @@ private:
     // FldigiCwEngine.h); TTC_CWLEGACY=1 selects the original tick() path
     // for A/B comparison in cwtest/skimreplay.
     FldigiCwEngine eng_;
-    bool legacy_ = true;                   // skimmer default; CW window opts in
+    // Engine default flipped after the live A/B (2026-07-15): on the same
+    // air the ported engine out-copied real fldigi (VP2MAA session) while
+    // the legacy path produced mush — skimmer channels now run it too.
+    // Legacy stays reachable (TTC_CWLEGACY / the CW window's FLD box).
+    bool legacy_ = false;
     std::atomic<bool> deep_{false};
     int engWpm_ = 0;
     // Engine-path FIR lowpass (see processIq): windowed sinc, recomputed
