@@ -245,6 +245,7 @@ private:
     bool     radioTx_ = false;
     int      txSaveGr_ = 45, txSaveLna_ = 3;
     qint64   lastTxMs_ = 0;
+    int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns
     unsigned lastOverloads_ = 0;
     IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)
     QAction* recIqAct_ = nullptr;              // SDR-menu toggle

@@ -1182,6 +1182,28 @@ MainWindow::MainWindow(QWidget* parent)
             sdr_.setGainLive(txSaveGr_, txSaveLna_);
         }
     });
+    // Hang time before RX gain returns. QSK CW unkeys between elements
+    // and the Orion's meter poll flaps TX/RX with it — the SDR must NOT
+    // chase that (live-found: gain bouncing during QSK strings). Longer
+    // hang = calmer QSK at the cost of a deafer beat after the over.
+    txMonHangMs_ = QSettings().value("sdr/txMonHangS", 1).toInt() * 1000;
+    auto* hangMenu = sdrMenu->addMenu("TX monitor hang");
+    styleMenu(hangMenu);
+    auto* hangGrp = new QActionGroup(this);
+    for (int secs : {1, 2, 3}) {
+        auto* a = hangMenu->addAction(QString("%1 s").arg(secs));
+        a->setCheckable(true);
+        a->setActionGroup(hangGrp);
+        a->setChecked(txMonHangMs_ == secs * 1000);
+        connect(a, &QAction::triggered, this, [this, secs] {
+            txMonHangMs_ = secs * 1000;
+            QSettings().setValue("sdr/txMonHangS", secs);
+            statusBar()->showMessage(
+                QString("TX monitor hang %1 s").arg(secs), 4000);
+        });
+    }
+    if (!hangGrp->checkedAction())         // stale setting: default 1 s
+        hangGrp->actions().first()->setChecked(true);
     auto* txTick = new QTimer(this);
     txTick->setInterval(100);
     connect(txTick, &QTimer::timeout, this, [this, ifGain, lna] {
@@ -1199,7 +1221,7 @@ MainWindow::MainWindow(QWidget* parent)
             txSaveLna_ = sdr_.lnaState();
             sdr_.setGainLive(59, 8);
             statusBar()->showMessage("TX monitor: gain dropped");
-        } else if (txMonOn_ && now - lastTxMs_ > 1000) {
+        } else if (txMonOn_ && now - lastTxMs_ > txMonHangMs_) {
             txMonOn_ = false;
             sdr_.setGainLive(txSaveGr_, txSaveLna_);
             iqPeak_.exchange(0.0f);        // don't feed TX peaks to Auto LNA
