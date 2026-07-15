@@ -50,6 +50,7 @@ add_executable(tentec-console
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
   src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
   src/cw/FldigiCwEngine.cpp     src/cw/FldigiCwEngine.h
+  src/cw/AudioCwSource.cpp      src/cw/AudioCwSource.h
   src/cw/SkimmerEngine.cpp      src/cw/SkimmerEngine.h
   src/cw/SkimServer.cpp         src/cw/SkimServer.h
   src/ui/SkimmerWindow.cpp      src/ui/SkimmerWindow.h

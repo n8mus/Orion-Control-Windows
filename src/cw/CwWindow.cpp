@@ -140,6 +140,19 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     rxWpm_ = new QLabel(this);
     rxWpm_->setStyleSheet("color: #6aa5d8;");
     g->addWidget(rxWpm_, 4, 1);
+    radioSrc_ = new QCheckBox("RADIO src", this);
+    radioSrc_->setChecked(QSettings().value("cw/rxRadio", false).toBool());
+    radioSrc_->setToolTip(
+        "Decode from the RADIO's audio (SignaLink) instead of the SDR.\n"
+        "The radio's antenna, crystal filter and AGC feed the decoder —\n"
+        "the same input fldigi gets, best for weak signals. Needs the\n"
+        "AF path alive (the radio tuned on the station, sidetone 550).\n"
+        "Unchecked: decode from the SDR at the dial (AF can be zero).");
+    g->addWidget(radioSrc_, 4, 2);
+    connect(radioSrc_, &QCheckBox::toggled, this, [this](bool on) {
+        QSettings().setValue("cw/rxRadio", on);
+        emit rxSourceChanged(on);
+    });
     auto* rxClear = new QPushButton("Clear", this);
     g->addWidget(rxClear, 4, 3);
     // Row 5: decode-engine adjustments. FLD = the ported fldigi decode

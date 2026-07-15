@@ -47,6 +47,7 @@ signals:
     // True while the window is visible with RX decode checked — gates the
     // IQ-side decoder so it costs nothing when the window is closed.
     void rxDecodeWanted(bool on);
+    void rxSourceChanged(bool radioAudio);  // RADIO src box toggled
     // Decode-engine adjustments changed (engine, som, deep, attack, decay).
     void rxDecodeConfigChanged(bool eng, bool som, bool deep, int atk,
                                int dcy);
@@ -75,6 +76,7 @@ private:
     QCheckBox* fldEng_ = nullptr;        // fldigi decode engine on/off
     QCheckBox* som_ = nullptr;           // fuzzy character matching
     QCheckBox* deep_ = nullptr;          // weak-signal narrow filter
+    QCheckBox* radioSrc_ = nullptr;      // decode from SignaLink audio
     QComboBox* atk_ = nullptr;           // tracker attack speed
     QComboBox* dcy_ = nullptr;           // tracker decay speed
     QPlainTextEdit* rx_ = nullptr;       // decoded-CW readout

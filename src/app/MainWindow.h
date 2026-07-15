@@ -25,6 +25,7 @@ class QHBoxLayout;
 #include <QHash>
 #include "cw/CwWindow.h"
 namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
+                class AudioCwSource;
                 class DigiWindow; class SkimServer; class SkimmerWindow; }
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
@@ -247,6 +248,10 @@ private:
     std::atomic<bool> replayStop_{false};
     CwWindow* cwWin_ = nullptr;                // WinKeyer CW sender (lazy)
     CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
+    CwDecoder* audioDec_ = nullptr;            // radio-audio CW reader (lazy)
+    AudioCwSource* audioSrc_ = nullptr;        // SignaLink capture for it
+    bool rxWanted_ = false;                    // CW window wants decode
+    bool rxRadio_ = false;                     // source: radio audio vs SDR
     SkimmerEngine* skim_ = nullptr;            // CW skimmer decoder bank
     QAction* skimEnable_ = nullptr;            // SKIM menu on/off toggle
     QLabel*  skimStatus_ = nullptr;            // live channel readout (menu)

@@ -4,6 +4,7 @@
 // function here (and a one-line call there) — buttons go on topLay2_,
 // never the first deck, or the window minimum outgrows the screen.
 #include "app/MainWindow.h"
+#include "cw/AudioCwSource.h"
 #include "app/MainWindowInternal.h"
 #include "app/Bands.h"
 #include "cw/CwDecoder.h"
@@ -209,19 +210,53 @@ void MainWindow::setupCwUi() {
                         cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
                 connect(cwDec_, &CwDecoder::wpmEstimated,
                         cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
+                // Two selectable ears for the same reader: the SDR at
+                // the dial (default; AF can be zero) or the RADIO's audio
+                // via the SignaLink — the input real fldigi gets, and the
+                // weak-signal winner while the SDR rides the passive tap.
+                // One decoder instance per source; exactly one enabled.
+                const int pitch =
+                    QSettings().value("cw/pitchHz", 550).toInt();
+                audioDec_ = new CwDecoder(48000.0, double(pitch), this);
+                audioSrc_ = new AudioCwSource(audioDec_, this);
+                connect(audioDec_, &CwDecoder::textDecoded,
+                        cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
+                connect(audioDec_, &CwDecoder::wpmEstimated,
+                        cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
+                connect(audioSrc_, &AudioCwSource::statusChanged, this,
+                        [this](const QString& t) {
+                            statusBar()->showMessage(t, 6000);
+                        });
+                rxRadio_ = QSettings().value("cw/rxRadio", false).toBool();
+                const auto applyRouting = [this] {
+                    cwDec_->setEnabled(rxWanted_ && !rxRadio_);
+                    audioDec_->setEnabled(rxWanted_ && rxRadio_);
+                    if (rxWanted_ && rxRadio_) audioSrc_->start();
+                    else audioSrc_->stop();
+                };
                 connect(cwWin_, &CwWindow::rxDecodeWanted, this,
-                        [this](bool on) { cwDec_->setEnabled(on); });
+                        [this, applyRouting](bool on) {
+                            rxWanted_ = on;
+                            applyRouting();
+                        });
+                connect(cwWin_, &CwWindow::rxSourceChanged, this,
+                        [this, applyRouting](bool radio) {
+                            rxRadio_ = radio;
+                            applyRouting();
+                        });
                 // Decode-engine adjustments: apply the persisted state now,
                 // then live-follow the window's controls. This tuned reader
                 // is the only instance that runs the fldigi engine — the
                 // skimmer's channels stay on the legacy path.
                 const auto applyCfg = [this](bool eng, bool som, bool deep,
                                              int atk, int dcy) {
-                    cwDec_->setEngineMode(eng);
-                    cwDec_->setSom(som);
-                    cwDec_->setDeep(deep);
-                    cwDec_->setAttack(atk);
-                    cwDec_->setDecay(dcy);
+                    for (CwDecoder* d : {cwDec_, audioDec_}) {
+                        d->setEngineMode(eng);
+                        d->setSom(som);
+                        d->setDeep(deep);
+                        d->setAttack(atk);
+                        d->setDecay(dcy);
+                    }
                 };
                 QSettings cs;
                 applyCfg(cs.value("cw/engine", true).toBool(),
