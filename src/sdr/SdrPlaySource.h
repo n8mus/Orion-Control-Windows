@@ -2,6 +2,7 @@
 #pragma once
 #include "sdr/SdrSource.h"
 #include <sdrplay_api.h>
+#include <atomic>
 #include <string>
 
 namespace ttc {
@@ -48,6 +49,13 @@ public:
 
     std::string lastError() const { return err_; }
 
+    // ADC overload events since start (the API repeats them while the
+    // condition persists, so a 100 W carrier at the tap produces a rapid
+    // burst — the TX monitor's fastest trigger). Any thread.
+    unsigned overloadCount() const {
+        return overloads_.load(std::memory_order_relaxed);
+    }
+
 private:
     static void streamCb(short* xi, short* xq, sdrplay_api_StreamCbParamsT* params,
                          unsigned int numSamples, unsigned int reset, void* ctx);
@@ -64,6 +72,7 @@ private:
     int  gRdB_      = 40;   // tuned for the hot shared-antenna feed (see docs/phase0-sdr.md)
     int  lnaState_  = 6;
     int  decim_     = 1;
+    std::atomic<unsigned> overloads_{0};
 
     sdrplay_api_DeviceT       device_{};
     sdrplay_api_DeviceParamsT* params_ = nullptr;

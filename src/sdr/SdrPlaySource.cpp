@@ -161,6 +161,7 @@ void SdrPlaySource::eventCb(sdrplay_api_EventT eventId, sdrplay_api_TunerSelectT
                             sdrplay_api_EventParamsT*, void* ctx) {
     auto* self = static_cast<SdrPlaySource*>(ctx);
     if (eventId == sdrplay_api_PowerOverloadChange) {
+        if (self) self->overloads_.fetch_add(1, std::memory_order_relaxed);
         // Expected whenever the shared-antenna feed goes hot (own TX): the API
         // repeats the event until acknowledged, so ack it and log only rarely.
         if (self)

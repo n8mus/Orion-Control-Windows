@@ -237,6 +237,15 @@ private:
     QDateTime qsoStartUtc_;                    // when the call landed in the field
     AutoGain autoLna_;                         // RF AGC policy (skimmer)
     std::atomic<float> iqPeak_{0.0f};          // wideband |peak| since last read
+    // TX monitor (Option A): gain slam while transmitting; see the
+    // txTick timer in MainWindow.cpp. Ant-B coupler switch lands here
+    // when the RF sampler hardware arrives (Option C).
+    QAction* txMonAct_ = nullptr;
+    bool     txMonOn_ = false;
+    bool     radioTx_ = false;
+    int      txSaveGr_ = 45, txSaveLna_ = 3;
+    qint64   lastTxMs_ = 0;
+    unsigned lastOverloads_ = 0;
     IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)
     QAction* recIqAct_ = nullptr;              // SDR-menu toggle
     QAction* schedIqAct_ = nullptr;            // SDR-menu schedule/cancel entry

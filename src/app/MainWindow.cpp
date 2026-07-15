@@ -1142,6 +1142,7 @@ MainWindow::MainWindow(QWidget* parent)
             [this, lna, ifGain, autoLnaBox] {
                 const float pk = iqPeak_.exchange(0.0f);
                 if (pk <= 0.0f || replayThread_) return;   // no live stream
+                if (txMonOn_ || radioTx_) return;  // TX peaks aren't band state
                 if (!autoLnaBox->isChecked()) return;
                 const double dbfs = 20.0 * std::log10(double(pk));
                 const auto d = autoLna_.tick(
@@ -1158,6 +1159,59 @@ MainWindow::MainWindow(QWidget* parent)
                         .arg(d.lna).arg(d.why).arg(dbfs, 0, 'f', 1), 6000);
             });
     agcTick->start();
+    // TX monitor (Option A): while transmitting, slam the RSP2 to maximum
+    // attenuation so the panadapter shows the operator's own signal at the
+    // "0.9 W look" instead of ADC-clipped garbage — the tap runs ~20-25 dB
+    // past clipping at 100 W. Triggers, OR'd: the radio's TX-format meter
+    // reply (paddle/mic PTT, ~a poll cycle), console-keyed PTT (manual
+    // tune, DVR — instant), and a BURST of ADC overload events within one
+    // 100 ms tick (milliseconds; a burst is required so a single RX
+    // overload from a broadcaster stays Auto LNA's business). A 1 s hang
+    // keeps the gain from flapping between CW elements and SSB syllables.
+    txMonAct_ = sdrMenu->addAction("TX monitor (gain drop on transmit)");
+    txMonAct_->setCheckable(true);
+    txMonAct_->setChecked(QSettings().value("sdr/txMon", true).toBool());
+    txMonAct_->setToolTip(
+        "While transmitting, drop the RSP2 gain hard so your own signal\n"
+        "shows cleanly on the panadapter (keying envelope, speech width)\n"
+        "instead of overload hash. Restores receive gain ~1 s after unkey.");
+    connect(txMonAct_, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("sdr/txMon", on);
+        if (!on && txMonOn_) {
+            txMonOn_ = false;
+            sdr_.setGainLive(txSaveGr_, txSaveLna_);
+        }
+    });
+    auto* txTick = new QTimer(this);
+    txTick->setInterval(100);
+    connect(txTick, &QTimer::timeout, this, [this, ifGain, lna] {
+        if (replayThread_) return;
+        const unsigned ov = sdr_.overloadCount();
+        const unsigned burst = ov - lastOverloads_;
+        lastOverloads_ = ov;
+        const bool tx = radioTx_ || tuning_ || dvrTxPlayback_ || burst >= 3;
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (tx) lastTxMs_ = now;
+        if (!txMonAct_->isChecked()) return;
+        if (tx && !txMonOn_) {
+            txMonOn_ = true;
+            txSaveGr_ = sdr_.gainReduction();
+            txSaveLna_ = sdr_.lnaState();
+            sdr_.setGainLive(59, 8);
+            statusBar()->showMessage("TX monitor: gain dropped");
+        } else if (txMonOn_ && now - lastTxMs_ > 1000) {
+            txMonOn_ = false;
+            sdr_.setGainLive(txSaveGr_, txSaveLna_);
+            iqPeak_.exchange(0.0f);        // don't feed TX peaks to Auto LNA
+            {
+                const QSignalBlocker b(lna);
+                lna->setCurrentIndex(txSaveLna_);
+            }
+            statusBar()->showMessage("TX monitor: receive gain restored",
+                                     4000);
+        }
+    });
+    txTick->start();
     connect(antA, &QAction::triggered, this, [this] {
         sdr_.setAntennaB(false);
         QSettings().setValue("sdr/antennaB", false);
@@ -1361,6 +1415,12 @@ MainWindow::MainWindow(QWidget* parent)
                     "(offset %1 dB) — RF gain can go back down")
                 .arg(sdrCalDb_, 0, 'f', 1), 8000);
     });
+    // TX monitor state: the radio answers the meter poll in TX format
+    // only while keyed — the cleanest transmit indicator we have.
+    connect(radio_, &RadioController::txMeterReported, this,
+            [this](double, double, double) { radioTx_ = true; });
+    connect(radio_, &RadioController::sMeterReported, this,
+            [this](int, int) { radioTx_ = false; });
     connect(radio_, &RadioController::txMeterReported, this,
             [this](double fwd, double ref, double swr) {
                 smeter_->setTxLevel(fwd, ref, swr);
