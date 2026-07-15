@@ -4,6 +4,7 @@
 #include <QString>
 
 class QSerialPort;
+class QTimer;
 
 namespace ttc {
 
@@ -47,8 +48,9 @@ private:
     bool busy_ = false;
     int  wpm_ = 25;
     int  potMin_ = 7;                      // pot byte is offset from this
-    int  potPending_ = -1;                 // debounce: last raw pot report
+    int  potPending_ = -1;                 // latest raw pot report
     int  potEmitted_ = -1;                 // last value actually emitted
+    QTimer* potTimer_ = nullptr;           // settle timer (see onReadyRead)
     QString err_;
 };
 

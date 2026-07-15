@@ -5,6 +5,8 @@
 #include <complex>
 #include <cstddef>
 
+#include "cw/FldigiCwEngine.h"
+
 namespace ttc {
 
 // CW reader fed straight from the SDR IQ stream — no audio cable, works
@@ -38,6 +40,22 @@ public:
     // stay centered on the station (Hz; reads from any thread).
     double afcHz() const { return afcTotal_.load(std::memory_order_relaxed); }
 
+    // Decode-engine adjustments (fldigi engine only; the legacy path
+    // ignores them). GUI-thread writes are safe: plain flags/params read
+    // by the SDR thread with no torn-value hazard worse than one sample.
+    // Engine choice is per instance: the CW window's tuned reader runs
+    // the fldigi engine (operator-adjustable), the skimmer's 24 channels
+    // stay on the battle-tuned legacy path until the engine beats it on
+    // the full matrix. TTC_CWLEGACY / TTC_CWENGINE override for tests.
+    void setEngineMode(bool fldigi) { legacy_ = !fldigi; }
+    void setSom(bool on) { eng_.setSom(on); }
+    void setAttack(int idx) { eng_.setAttack(idx); }
+    void setDecay(int idx) { eng_.setDecay(idx); }
+    // DEEP: narrow the matched filter well below real-time comfort —
+    // latency and mushier edges for weak-signal SNR. Tuned reader only;
+    // never set this on skimmer channels.
+    void setDeep(bool on) { deep_.store(on, std::memory_order_relaxed); }
+
     // SDR streaming thread.
     void processIq(const std::complex<float>* d, size_t n);
 
@@ -54,6 +72,21 @@ private:
     std::atomic<double> pendingOffset_{0.0};
     std::atomic<bool> retunePending_{false};
     double inputRate_ = 500000.0;
+
+    // Decode brain: fldigi's ported engine by default (see
+    // FldigiCwEngine.h); TTC_CWLEGACY=1 selects the original tick() path
+    // for A/B comparison in cwtest/skimreplay.
+    FldigiCwEngine eng_;
+    bool legacy_ = true;                   // skimmer default; CW window opts in
+    std::atomic<bool> deep_{false};
+    int engWpm_ = 0;
+    // Engine-path FIR lowpass (see processIq): windowed sinc, recomputed
+    // only when the speed-tracked cutoff moves >10%.
+    std::vector<float> firTaps_;
+    std::vector<std::complex<float>> firBuf_;
+    size_t firPos_ = 0;
+    float firFc_ = 0.0f;
+    float agcPk_ = 0.0f;                   // rx-AGC-equivalent peak follower
 
     // mixer + decimator (SDR thread only). The LO is a recurrence phasor
     // (one complex multiply per sample, renormalized periodically) — a

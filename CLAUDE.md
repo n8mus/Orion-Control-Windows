@@ -85,9 +85,19 @@ was a real on-air bug, twice).
   call text is colored by cqrlog worked-before status (LogbookIndex),
   watch-list hits get an orange ring.
 - **CW decoding** (`src/cw/CwDecoder`): IQ-fed, one recurrence-phasor
-  mixer per instance, so banks are cheap (SkimmerEngine runs 24). The
-  slicer/clock logic is battle-tuned — every threshold has an on-air
-  story in a comment; run the full `cwtest` matrix on any change.
+  mixer per instance, so banks are cheap (SkimmerEngine runs 24). TWO
+  decode brains behind one front end: the legacy battle-tuned slicer
+  (skimmer default; every threshold has an on-air story in a comment)
+  and `src/cw/FldigiCwEngine` — fldigi's decode logic ported under
+  GPL-3 (W1HKJ et al.; keep the attribution header) — used by the CW
+  window's tuned reader with FLD/SOM/DEEP/ATK/DCY controls. Full matrix:
+  engine 95%, legacy 94% (engine wins sloppy timing via SOM, loses a
+  little at 45+ WPM; quick-tier QSB rows under-read the engine — its
+  trackers need the full-length runs to warm up). `TTC_CWENGINE=1` /
+  `TTC_CWLEGACY=1` force either path in tests. Flip the skimmer default
+  only after the engine beats legacy on real-air replays too. If the
+  repo ever goes public it ships GPL-3 because of this file (fine), and
+  binaries must not bundle the proprietary SDRplay lib.
   Tried and rejected (2026-07-14): an fldigi-style per-element release
   threshold (`off = 0.35 × this element's own peak`). The fast in-key
   peak re-training already collapses the tracker to the current

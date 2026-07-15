@@ -3,7 +3,9 @@
 #include "cw/WinKeyer.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QHostAddress>
 #include <QInputDialog>
 #include <QKeyEvent>
@@ -30,19 +32,27 @@ const char* kMemDefault[4] = {
 CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     setWindowTitle("CW — WinKeyer");
     setModal(false);
+    // Every control sets an explicit text color: widgets with a styled
+    // background otherwise keep the SYSTEM palette's text — dark-on-dark
+    // on some themes (live report: "panel is very difficult to read").
+    // Sizes tuned for shack distance, not laptop distance.
     setStyleSheet(
-        "QDialog { background: #141b24; color: #c8d4e0; }"
-        "QLabel { color: #8fa3b8; font-size: 12px; }"
-        "QLineEdit { background: #1c2430; color: #e8f0d8; border: 1px solid"
-        " #2a3644; border-radius: 3px; padding: 5px 8px; font-size: 15px;"
+        "QDialog { background: #141b24; color: #dde7f0; font-size: 15px; }"
+        "QLabel { color: #b8c8d8; font-size: 14px; }"
+        "QLineEdit { background: #1c2430; color: #eef4e2; border: 1px solid"
+        " #3a4a5e; border-radius: 3px; padding: 6px 9px; font-size: 18px;"
         " font-family: monospace; }"
-        "QSpinBox { background: #1c2430; border: 1px solid #2a3644;"
-        " border-radius: 3px; padding: 3px; }"
-        "QCheckBox { font-size: 12px; }"
-        "QPushButton { background: #1c2430; border: 1px solid #2a3644;"
-        " border-radius: 3px; padding: 5px 10px; font-weight: bold; }"
-        "QPushButton:hover { border-color: #4a5a6e; }"
-        "QPushButton:checked { background: #8a2727; border-color: #e05d5d; }");
+        "QSpinBox { background: #1c2430; color: #eef4e2; border: 1px solid"
+        " #3a4a5e; border-radius: 3px; padding: 4px 6px; font-size: 18px;"
+        " font-weight: bold; min-width: 72px; }"
+        "QCheckBox { color: #b8c8d8; font-size: 14px; }"
+        "QCheckBox::indicator { width: 17px; height: 17px; }"
+        "QPushButton { background: #24303e; color: #dde7f0; border: 1px solid"
+        " #3a4a5e; border-radius: 3px; padding: 8px 12px; font-size: 14px;"
+        " font-weight: bold; }"
+        "QPushButton:hover { border-color: #6aa5d8; }"
+        "QPushButton:checked { background: #8a2727; border-color: #e05d5d;"
+        " color: #ffe8e8; }");
 
     wk_ = new WinKeyer(this);
     auto* g = new QGridLayout(this);
@@ -77,16 +87,29 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
                       "Esc or the paddle stops everything instantly.");
     g->addWidget(line_, 1, 0, 1, 4);
 
-    // Row 2: what went out this over + live-mode toggle
+    // Row 2: what went out this over + send-mode toggles. Three send
+    // styles: neither box = the whole line waits for Enter; Word keys =
+    // each word goes out when the space bar lands (backspace can still
+    // fix the word being typed); Live keys = every keystroke immediately.
     sentView_ = new QLabel(this);
-    sentView_->setStyleSheet("color: #7f9468; font-family: monospace;");
-    g->addWidget(sentView_, 2, 0, 1, 3);
+    sentView_->setStyleSheet(
+        "color: #a4cf82; font-family: monospace; font-size: 15px;");
+    g->addWidget(sentView_, 2, 0, 1, 2);
+    word_ = new QCheckBox("Word keys", this);
+    word_->setChecked(QSettings().value("cw/word", false).toBool());
+    word_->setToolTip("Hold letters until the space bar — each completed "
+                      "word is sent as a unit.\nBackspace fixes the word "
+                      "you're typing before it goes out.\nEnter sends "
+                      "whatever's left on the line.");
+    g->addWidget(word_, 2, 2);
     live_ = new QCheckBox("Live keys", this);
     live_->setChecked(QSettings().value("cw/live", false).toBool());
     live_->setToolTip("Stream each keystroke to the keyer as you type "
                       "instead of\nwaiting for Enter (classic keyboard-keyer "
                       "feel)");
     g->addWidget(live_, 2, 3);
+    if (live_->isChecked() && word_->isChecked())  // stale settings guard
+        word_->setChecked(false);
 
     // Row 3: memories
     for (int i = 0; i < 4; ++i) {
@@ -119,22 +142,75 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     g->addWidget(rxWpm_, 4, 1);
     auto* rxClear = new QPushButton("Clear", this);
     g->addWidget(rxClear, 4, 3);
+    // Row 5: decode-engine adjustments. FLD = the ported fldigi decode
+    // engine (see FldigiCwEngine.h) for THIS tuned reader; SOM = fldigi's
+    // fuzzy whole-character matcher; DEEP narrows the filter for weak
+    // signals (adds latency); ATK/DCY are fldigi's tracker speeds.
+    fldEng_ = new QCheckBox("FLD engine", this);
+    fldEng_->setChecked(QSettings().value("cw/engine", true).toBool());
+    fldEng_->setToolTip("Decode with the engine ported from fldigi (best "
+                        "copy).\nUnchecked = the original console decoder.");
+    g->addWidget(fldEng_, 5, 0);
+    som_ = new QCheckBox("SOM", this);
+    som_->setChecked(QSettings().value("cw/som", true).toBool());
+    som_->setToolTip("Fuzzy whole-character matching: the closest valid "
+                     "character wins,\nso one smeared element can't bust the "
+                     "letter. fldigi's SOM decoder.");
+    g->addWidget(som_, 5, 1);
+    deep_ = new QCheckBox("DEEP", this);
+    deep_->setChecked(QSettings().value("cw/deep", false).toBool());
+    deep_->setToolTip("Weak-signal mode: much narrower filter — better SNR, "
+                      "slower response.\nFor stations near the noise; leave "
+                      "off for normal copy.");
+    g->addWidget(deep_, 5, 2);
+    auto* trk = new QWidget(this);
+    auto* trkLay = new QHBoxLayout(trk);
+    trkLay->setContentsMargins(0, 0, 0, 0);
+    trkLay->setSpacing(4);
+    atk_ = new QComboBox(trk);
+    atk_->addItems({"ATK slow", "ATK norm", "ATK fast"});
+    atk_->setCurrentIndex(QSettings().value("cw/attack", 1).toInt());
+    atk_->setToolTip("Signal-tracker attack speed (fldigi's RX attack)");
+    dcy_ = new QComboBox(trk);
+    dcy_->addItems({"DCY slow", "DCY norm", "DCY fast"});
+    dcy_->setCurrentIndex(QSettings().value("cw/decay", 1).toInt());
+    dcy_->setToolTip("Signal-tracker decay speed (fldigi's RX decay)");
+    trkLay->addWidget(atk_);
+    trkLay->addWidget(dcy_);
+    g->addWidget(trk, 5, 3);
+    const auto decodeChanged = [this] {
+        QSettings s;
+        s.setValue("cw/engine", fldEng_->isChecked());
+        s.setValue("cw/som", som_->isChecked());
+        s.setValue("cw/deep", deep_->isChecked());
+        s.setValue("cw/attack", atk_->currentIndex());
+        s.setValue("cw/decay", dcy_->currentIndex());
+        emit rxDecodeConfigChanged(fldEng_->isChecked(), som_->isChecked(),
+                                   deep_->isChecked(), atk_->currentIndex(),
+                                   dcy_->currentIndex());
+    };
+    connect(fldEng_, &QCheckBox::toggled, this, decodeChanged);
+    connect(som_, &QCheckBox::toggled, this, decodeChanged);
+    connect(deep_, &QCheckBox::toggled, this, decodeChanged);
+    connect(atk_, &QComboBox::currentIndexChanged, this, decodeChanged);
+    connect(dcy_, &QComboBox::currentIndexChanged, this, decodeChanged);
+
     rx_ = new QPlainTextEdit(this);
     rx_->setReadOnly(true);
-    rx_->setFixedHeight(74);
+    rx_->setFixedHeight(92);               // ~4 lines at the bigger font
     rx_->setStyleSheet("QPlainTextEdit { background: #0d1218; color: "
-                       "#8fd48f; border: 1px solid #2a3644; border-radius: "
-                       "3px; font-family: monospace; font-size: 14px; }");
-    g->addWidget(rx_, 5, 0, 1, 4);
+                       "#9fe89f; border: 1px solid #3a4a5e; border-radius: "
+                       "3px; font-family: monospace; font-size: 16px; }");
+    g->addWidget(rx_, 6, 0, 1, 4);
     connect(rxClear, &QPushButton::clicked, rx_, &QPlainTextEdit::clear);
     connect(rxOn_, &QCheckBox::toggled, this, [this](bool on) {
         QSettings().setValue("cw/rxDecode", on);
         emit rxDecodeWanted(isVisible() && on);
     });
 
-    // Row 6: status
+    // Row 7: status
     status_ = new QLabel(this);
-    g->addWidget(status_, 6, 0, 1, 4);
+    g->addWidget(status_, 7, 0, 1, 4);
 
     connect(wpm_, &QSpinBox::valueChanged, this, [this](int v) {
         wk_->setSpeed(v);
@@ -142,7 +218,14 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         updateStatus();
     });
     connect(live_, &QCheckBox::toggled, this, [this](bool on) {
+        if (on) word_->setChecked(false);  // one send style at a time
         QSettings().setValue("cw/live", on);
+        prevLen_ = 0;
+        line_->clear();
+    });
+    connect(word_, &QCheckBox::toggled, this, [this](bool on) {
+        if (on) live_->setChecked(false);
+        QSettings().setValue("cw/word", on);
         prevLen_ = 0;
         line_->clear();
     });
@@ -164,6 +247,21 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         line_->clear();
     });
     connect(line_, &QLineEdit::textEdited, this, [this](const QString& t) {
+        // Word keys: completed words (everything up to the last space)
+        // leave for the keyer; the word still being typed stays editable
+        // in the line. The trailing space rides along = the word gap.
+        if (word_->isChecked()) {
+            const int sp = t.lastIndexOf(' ');
+            if (sp < 0) return;
+            const QString out = substitute(t.left(sp + 1));
+            if (!out.simplified().isEmpty()) {
+                openKeyer();
+                wk_->send(out);
+                sentView_->setText((sentView_->text() + out).right(60));
+            }
+            line_->setText(t.mid(sp + 1));
+            return;
+        }
         if (!live_->isChecked()) return;
         // Stream the delta; backspace unsends if the char hasn't gone out.
         if (t.length() < prevLen_) {

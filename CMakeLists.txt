@@ -49,6 +49,7 @@ add_executable(tentec-console
   src/cw/WinKeyer.cpp           src/cw/WinKeyer.h
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
   src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
+  src/cw/FldigiCwEngine.cpp     src/cw/FldigiCwEngine.h
   src/cw/SkimmerEngine.cpp      src/cw/SkimmerEngine.h
   src/cw/SkimServer.cpp         src/cw/SkimServer.h
   src/ui/SkimmerWindow.cpp      src/ui/SkimmerWindow.h
@@ -75,7 +76,7 @@ target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6
 # the fldigi XML-RPC client test (pair with tests/fake_fldigi.py).
 add_executable(skimtest EXCLUDE_FROM_ALL
   tests/skimtest.cpp
-  src/cw/CwDecoder.cpp src/cw/SkimmerEngine.cpp)
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/SkimmerEngine.cpp)
 target_include_directories(skimtest PRIVATE src)
 target_link_libraries(skimtest PRIVATE Qt6::Core)
 
@@ -99,7 +100,7 @@ target_link_libraries(skimsrvtest PRIVATE Qt6::Core Qt6::Network)
 
 add_executable(skimreplay EXCLUDE_FROM_ALL
   tests/skimreplay.cpp
-  src/cw/CwDecoder.cpp src/cw/SkimmerEngine.cpp
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/SkimmerEngine.cpp
   src/dsp/SpectrumComputer.cpp src/dsp/Fft.cpp
   src/util/CtyLookup.cpp
   resources/resources.qrc)
@@ -108,7 +109,7 @@ target_link_libraries(skimreplay PRIVATE Qt6::Core Qt6::Gui)
 
 add_executable(cwtest EXCLUDE_FROM_ALL
   tests/cwtest.cpp
-  src/cw/CwDecoder.cpp)
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp)
 target_include_directories(cwtest PRIVATE src)
 target_link_libraries(cwtest PRIVATE Qt6::Core)
 
@@ -119,7 +120,7 @@ target_link_libraries(autogaintest PRIVATE Qt6::Core)
 
 add_executable(cohtest EXCLUDE_FROM_ALL
   tests/cohtest.cpp
-  src/cw/CwDecoder.cpp src/dsp/Fft.cpp)
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/dsp/Fft.cpp)
 target_include_directories(cohtest PRIVATE src)
 target_link_libraries(cohtest PRIVATE Qt6::Core)
 

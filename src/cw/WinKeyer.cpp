@@ -3,6 +3,7 @@
 
 #include <QSerialPort>
 #include <QThread>
+#include <QTimer>
 #include <algorithm>
 
 namespace ttc {
@@ -16,6 +17,15 @@ constexpr quint8 kStBusy    = 0x04;
 WinKeyer::WinKeyer(QObject* parent) : QObject(parent) {
     ser_ = new QSerialPort(this);
     connect(ser_, &QSerialPort::readyRead, this, &WinKeyer::onReadyRead);
+    potTimer_ = new QTimer(this);
+    potTimer_->setSingleShot(true);
+    potTimer_->setInterval(250);
+    connect(potTimer_, &QTimer::timeout, this, [this] {
+        if (potPending_ >= 0 && potPending_ != potEmitted_) {
+            potEmitted_ = potPending_;
+            emit potChanged(potEmitted_);
+        }
+    });
 }
 
 WinKeyer::~WinKeyer() { close(); }
@@ -97,6 +107,8 @@ void WinKeyer::setPotRange(int minWpm, int maxWpm) {
     const int range = std::clamp(maxWpm - potMin_, 1, 63);
     const char cmd[] = {0x05, char(potMin_), char(range), 0x00};
     ser_->write(cmd, 4);
+    const char getPot[] = {0x07};          // prime with the knob's position
+    ser_->write(getPot, 1);
 }
 
 void WinKeyer::send(const QString& text) {
@@ -144,15 +156,15 @@ void WinKeyer::onReadyRead() {
             if (b & kStBreakIn) emit breakIn();
             if (busy != busy_) { busy_ = busy; emit busyChanged(busy); }
         } else if ((b & 0xC0) == 0x80) {   // speed pot: offset from pot min
-            // A pot resting between detents flaps ±1 continuously (seen on
-            // the real WK3); require the same value twice running before
-            // acting so the speed doesn't chatter.
-            const int wpm = potMin_ + (b & 0x3F);
-            if (wpm == potPending_ && wpm != potEmitted_) {
-                potEmitted_ = wpm;
-                emit potChanged(wpm);
-            }
-            potPending_ = wpm;
+            // Coalesce with a short settle timer. The keyer reports each
+            // NEW value exactly once, so the old "same value twice in a
+            // row" debounce could never fire on a normal turn — the pot
+            // was completely dead (live-found). The timer keeps the
+            // original goal (a pot flapping ±1 between detents doesn't
+            // chatter the speed) while a real turn lands ~250 ms after
+            // the knob stops.
+            potPending_ = potMin_ + (b & 0x3F);
+            potTimer_->start();
         }
         // anything else would be serial echoback — we never enable it
     }

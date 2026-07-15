@@ -211,6 +211,26 @@ void MainWindow::setupCwUi() {
                         cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
                 connect(cwWin_, &CwWindow::rxDecodeWanted, this,
                         [this](bool on) { cwDec_->setEnabled(on); });
+                // Decode-engine adjustments: apply the persisted state now,
+                // then live-follow the window's controls. This tuned reader
+                // is the only instance that runs the fldigi engine — the
+                // skimmer's channels stay on the legacy path.
+                const auto applyCfg = [this](bool eng, bool som, bool deep,
+                                             int atk, int dcy) {
+                    cwDec_->setEngineMode(eng);
+                    cwDec_->setSom(som);
+                    cwDec_->setDeep(deep);
+                    cwDec_->setAttack(atk);
+                    cwDec_->setDecay(dcy);
+                };
+                QSettings cs;
+                applyCfg(cs.value("cw/engine", true).toBool(),
+                         cs.value("cw/som", true).toBool(),
+                         cs.value("cw/deep", false).toBool(),
+                         cs.value("cw/attack", 1).toInt(),
+                         cs.value("cw/decay", 1).toInt());
+                connect(cwWin_, &CwWindow::rxDecodeConfigChanged, this,
+                        applyCfg);
             }
         }
         cwWin_->show();

@@ -35,6 +35,10 @@ CwDecoder::CwDecoder(double inputRate, double offsetHz, QObject* parent)
     : QObject(parent), inputRate_(inputRate) {
     decim_ = static_cast<int>(inputRate / 2000.0);   // -> 2 ksps envelope
     tickMs_ = 1000.0 * decim_ / inputRate;
+    if (std::getenv("TTC_CWENGINE")) legacy_ = false;      // test hooks
+    if (std::getenv("TTC_CWLEGACY")) legacy_ = true;
+    if (std::getenv("TTC_CWDEEP"))
+        deep_.store(true, std::memory_order_relaxed);
     retune(offsetHz);
 }
 
@@ -80,6 +84,8 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         for (auto& m : markHist_) m = 0.0f;
         markHistN_ = 0;
         locked_ = false;
+        eng_.reset();
+        engWpm_ = 0;
     }
     for (size_t i = 0; i < n; ++i) {
         acc_ += std::complex<double>(d[i]) * lo_;
@@ -96,15 +102,62 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         accN_ = 0;
         // Matched-filter bandwidth from the sender's speed: keying
         // fundamental is 1000/(2*dit) Hz; pass ~2.5x that, each pole at
-        // fc, cascaded for ~12 dB/oct skirts.
-        const float fc = std::clamp(2400.0f / float(gapMin_), 40.0f, 150.0f);
-        const float a = 1.0f - std::exp(-2.0f * float(M_PI) * fc / 2000.0f);
-        lp1_ += a * (z - lp1_);
-        lp2_ += a * (lp1_ - lp2_);
-        const std::complex<float> s = lp2_;
+        // fc, cascaded for ~12 dB/oct skirts. The engine path takes the
+        // dit from the fldigi tracker; DEEP narrows the clamp range for
+        // weak-signal work (latency and soft edges traded for SNR).
+        const float ditEst = legacy_ ? float(gapMin_) : float(eng_.dotMs());
+        const bool deep = deep_.load(std::memory_order_relaxed);
+        const float fc = deep
+            ? std::clamp(2400.0f / ditEst, 15.0f, 60.0f)
+            : std::clamp(2400.0f / ditEst, 40.0f, 150.0f);
+        std::complex<float> s;
+        if (legacy_) {
+            const float a =
+                1.0f - std::exp(-2.0f * float(M_PI) * fc / 2000.0f);
+            lp1_ += a * (z - lp1_);
+            lp2_ += a * (lp1_ - lp2_);
+            s = lp2_;
+        } else {
+            // Engine path: proper windowed-sinc FIR lowpass instead of the
+            // one-pole pair. fldigi's front end is a 512-tap FIR brick
+            // wall (plus the radio's own crystal filter feeding it); the
+            // shallow IIR skirts let the neighborhood leak in and both
+            // decode paths busted in the same places on the W1AW replay —
+            // the gap to real fldigi was the EARS, not the brain. Taps
+            // are recomputed only when the speed-tracked cutoff moves
+            // >10% (cheap: ~1/s worst case, never in steady copy).
+            if (firTaps_.empty() || fc < firFc_ * 0.9f || fc > firFc_ * 1.1f) {
+                firFc_ = fc;
+                const int n = 128;
+                firTaps_.resize(n);
+                float sum = 0.0f;
+                for (int k = 0; k < n; ++k) {
+                    const float t = k - (n - 1) / 2.0f;
+                    const float x = 2.0f * float(M_PI) * fc / 2000.0f * t;
+                    const float sinc = std::abs(x) < 1e-6f
+                        ? 1.0f : std::sin(x) / x;
+                    const float w = 0.54f - 0.46f * std::cos(
+                        2.0f * float(M_PI) * k / (n - 1));
+                    firTaps_[k] = sinc * w;
+                    sum += firTaps_[k];
+                }
+                for (float& t : firTaps_) t /= sum;
+                if (firBuf_.size() != size_t(n))
+                    firBuf_.assign(n, {0.0f, 0.0f});
+            }
+            firBuf_[firPos_] = z;
+            std::complex<float> acc(0.0f, 0.0f);
+            size_t idx = firPos_;
+            for (const float t : firTaps_) {
+                acc += t * firBuf_[idx];
+                idx = idx == 0 ? firBuf_.size() - 1 : idx - 1;
+            }
+            firPos_ = (firPos_ + 1) % firBuf_.size();
+            s = acc;
+        }
         // AFC: while the key is down the filtered sample is a carrier;
         // successive-sample phase advance IS the residual frequency error.
-        if (key_) {
+        if (legacy_ ? key_ : eng_.inTone()) {
             const std::complex<float> d = s * std::conj(afcPrevZ_);
             if (std::abs(d) > 1e-9f) {
                 const double errHz =
@@ -129,7 +182,29 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
             }
         }
         afcPrevZ_ = s;
-        tick(std::abs(s));
+        if (legacy_) {
+            tick(std::abs(s));
+        } else {
+            // Receiver-AGC equivalent (the stage real fldigi gets for free
+            // from the radio): fast-attack, slow-release peak follower
+            // normalizing the envelope, so selective-fading flutter can't
+            // dip an element through the slicer mid-character. Replay
+            // evidence: both decode paths busted the same words in the
+            // same places on tonight's W1AW capture until this was added
+            // — the errors tracked the flutter, not the algorithms.
+            const float mag = std::abs(s);
+            if (mag > agcPk_) agcPk_ += 0.5f * (mag - agcPk_);   // ~1 ms up
+            else              agcPk_ += 0.0017f * (mag - agcPk_); // ~300 ms dn
+            const QString out =
+                eng_.process(agcPk_ > 1e-6f ? mag / agcPk_ : 0.0f);
+            if (!out.isEmpty()) emit textDecoded(out);
+            const int wpm = eng_.wpm();
+            if (wpm != engWpm_ && wpm >= 5 && wpm <= 60
+                && eng_.metric() > 10.0) {
+                engWpm_ = wpm;
+                emit wpmEstimated(wpm);
+            }
+        }
     }
 }
 

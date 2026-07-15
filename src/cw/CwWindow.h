@@ -8,6 +8,7 @@ class QLabel;
 class QSpinBox;
 class QPushButton;
 class QCheckBox;
+class QComboBox;
 class QUdpSocket;
 class QPlainTextEdit;
 
@@ -46,6 +47,9 @@ signals:
     // True while the window is visible with RX decode checked — gates the
     // IQ-side decoder so it costs nothing when the window is closed.
     void rxDecodeWanted(bool on);
+    // Decode-engine adjustments changed (engine, som, deep, attack, decay).
+    void rxDecodeConfigChanged(bool eng, bool som, bool deep, int atk,
+                               int dcy);
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -67,6 +71,12 @@ private:
     QPushButton* mem_[4] = {};
     QPushButton* tuneBtn_ = nullptr;
     QCheckBox* live_ = nullptr;          // stream keystrokes as typed
+    QCheckBox* word_ = nullptr;          // space bar releases each word
+    QCheckBox* fldEng_ = nullptr;        // fldigi decode engine on/off
+    QCheckBox* som_ = nullptr;           // fuzzy character matching
+    QCheckBox* deep_ = nullptr;          // weak-signal narrow filter
+    QComboBox* atk_ = nullptr;           // tracker attack speed
+    QComboBox* dcy_ = nullptr;           // tracker decay speed
     QPlainTextEdit* rx_ = nullptr;       // decoded-CW readout
     QCheckBox* rxOn_ = nullptr;
     QLabel* rxWpm_ = nullptr;
