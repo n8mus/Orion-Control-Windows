@@ -12,6 +12,7 @@
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -248,6 +249,24 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
                        "3px; font-family: monospace; font-size: 16px; }");
     g->addWidget(rx_, 6, 0, 1, 5);
     connect(rxClear, &QPushButton::clicked, rx_, &QPlainTextEdit::clear);
+    // Erase where the mouse already is: right-click the decode text
+    // itself (in addition to the Clear button on the row above).
+    rx_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(rx_, &QPlainTextEdit::customContextMenuRequested, this,
+            [this](const QPoint& pos) {
+        QMenu menu(rx_);
+        menu.setStyleSheet(
+            "QMenu { background: #1c2430; color: #dde7f0; border: 1px solid"
+            " #3a4a5e; } QMenu::item:selected { background: #2a3644; }");
+        QAction* erase = menu.addAction("Erase all");
+        QAction* copy = menu.addAction("Copy");
+        copy->setEnabled(rx_->textCursor().hasSelection());
+        QAction* selAll = menu.addAction("Select all");
+        QAction* act = menu.exec(rx_->mapToGlobal(pos));
+        if (act == erase) rx_->clear();
+        else if (act == copy) rx_->copy();
+        else if (act == selAll) rx_->selectAll();
+    });
     connect(rxOn_, &QCheckBox::toggled, this, [this](bool on) {
         QSettings().setValue("cw/rxDecode", on);
         emit rxDecodeWanted(isVisible() && on);
