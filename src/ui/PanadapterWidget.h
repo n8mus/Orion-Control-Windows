@@ -153,6 +153,9 @@ signals:
     // A spot label was clicked: call + source kind ('D'/'P'/'F') + tag (park
     // ref for POTA). Prefills the LOG panel.
     void spotClicked(const QString& call, QChar kind, const QString& tag);
+    // Ctrl+click on a spot callsign: turn the antenna to it too (bearing
+    // from the spot's cty/POTA placement; -1 = location unknown).
+    void spotTurnRequested(double bearingDeg, const QString& call);
     // Shift+right-click: add a marker here / remove the one already here.
     // The owner keeps the list (label prompt, persistence) and pushes it
     // back via setMarkers.

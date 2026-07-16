@@ -1428,6 +1428,11 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
             drag_ = Drag::None;
             wheelVfo_ = 'A';
             if (h.lat < 500.0) pointRoseAt(h.lat, h.lon, h.call);
+            // Ctrl+click = tune AND turn the antenna there (optional per
+            // click, never automatic; bearing from cty/POTA placement).
+            if (e->modifiers() & Qt::ControlModifier)
+                emit spotTurnRequested(
+                    h.lat < 500.0 ? roseBearing_ : -1.0, h.call);
             emit spotClicked(h.call, h.kind, h.tag);
             emit tuneRequested(static_cast<int>(h.hz - static_cast<qint64>(centerHz_)));
             return;

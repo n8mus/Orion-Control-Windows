@@ -465,9 +465,10 @@ void MainWindow::setupRotorUi() {
     rotOn->setCheckable(true);
     auto* rotFollow = rotMenu->addAction("Antenna follows the rose");
     rotFollow->setCheckable(true);
-    rotFollow->setToolTip("Every rose point (spot click / manual heading) "
-                          "turns the rotator immediately.\nOff = point "
-                          "first, then press TURN.");
+    rotFollow->setToolTip("Every rose point (incl. spot clicks) turns the "
+                          "rotator immediately.\nOff: manual rose clicks "
+                          "still turn; spot clicks point only —\n"
+                          "Ctrl+click a callsign to tune AND turn.");
     rotMenu->addSeparator();
     auto* rotW = new QWidget;
     rotW->setStyleSheet(
@@ -547,12 +548,40 @@ void MainWindow::setupRotorUi() {
             [this, rotFollow, rotRefresh](double b, const QString& label) {
                 lastRoseBearing_ = b;
                 lastRoseLabel_ = label;
-                if (b >= 0.0 && rotFollow->isChecked() && rotor_.connected()) {
+                // A MANUAL rose click is an order, not a suggestion —
+                // it turns immediately (operator: "make it go after I set
+                // it instead of opening the panel"). Spot points still
+                // only turn with auto-follow on, or via Ctrl+click.
+                const bool go = b >= 0.0 && rotor_.connected()
+                    && (rotFollow->isChecked()
+                        || label == QLatin1String("MAN"));
+                if (go) {
                     rotor_.turnTo(b);
                     statusBar()->showMessage(
                         QString("rotor -> %1° (%2)").arg(qRound(b))
                             .arg(label), 4000);
                 }
+                rotRefresh();
+            });
+    // Ctrl+click on a spot callsign: tune AND turn (optional per click —
+    // never automatic; plain click stays tune-only).
+    connect(pan_, &PanadapterWidget::spotTurnRequested, this,
+            [this, rotRefresh](double b, const QString& call) {
+                if (b < 0.0) {
+                    statusBar()->showMessage(
+                        QString("no bearing for %1 (location unknown)")
+                            .arg(call), 4000);
+                    return;
+                }
+                if (!rotor_.connected()) {
+                    statusBar()->showMessage(
+                        "rotor: not connected (ROT menu)", 4000);
+                    return;
+                }
+                rotor_.turnTo(b);
+                statusBar()->showMessage(
+                    QString("rotor -> %1° (%2)").arg(qRound(b)).arg(call),
+                    5000);
                 rotRefresh();
             });
     connect(rotTurn, &QPushButton::clicked, this, [this, rotRefresh] {
