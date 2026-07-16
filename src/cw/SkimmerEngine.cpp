@@ -38,6 +38,13 @@ SkimmerEngine::SkimmerEngine(double inputRate, int channels, QObject* parent)
     ch_.resize(std::clamp(channels, 1, 64));
     for (int i = 0; i < int(ch_.size()); ++i) {
         ch_[i].dec = new CwDecoder(inputRate, 0.0, this);
+        // SOM stays OFF on skimmer channels: the fuzzy matcher never
+        // outputs '*' — every noise burst becomes a plausible letter, and
+        // a quiet band's noise ridges assembled themselves into a
+        // cty-valid phantom that passed confirmation 107 times in one
+        // replay (UT3TUA, 2026-07-16 capture). The call miner wants
+        // honest junk markers; the CW window keeps SOM for human eyes.
+        ch_[i].dec->setSom(false);
         connect(ch_[i].dec, &CwDecoder::textDecoded, this,
                 [this, i](const QString& t) { onText(i, t); },
                 Qt::QueuedConnection);
