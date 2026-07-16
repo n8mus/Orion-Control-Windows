@@ -1133,6 +1133,10 @@ MainWindow::MainWindow(QWidget* parent)
     connect(lna, &QComboBox::currentIndexChanged, this, applySdrGain);
     // --- Auto LNA wiring ---
     autoLnaBox->setChecked(QSettings().value("sdr/autoLna", true).toBool());
+    // Release floor: quiet must not invite the shack's RFI up out of the
+    // noise (40 m grew spikes at LNA 1 the one evening this defaulted to
+    // 0 — see AutoGain.h). Per-station RF fact, so a setting.
+    autoLna_.setMinLna(QSettings().value("sdr/minLna", 3).toInt());
     autoLna_.reset(lna->currentIndex(), QDateTime::currentMSecsSinceEpoch());
     connect(autoLnaBox, &QCheckBox::toggled, this, [this, lna](bool on) {
         QSettings().setValue("sdr/autoLna", on);

@@ -18,11 +18,16 @@ namespace ttc {
 //   lockout: after an attack, releases won't go back below the level
 //            that clipped for 10 minutes (no ping-pong when one loud
 //            broadcaster fades in and out).
-//   floor  : releases never go below LNA 3. A quiet midday band kept
-//            "earning" releases until the PC/PSU RFI picket rose out of
-//            the floor across the whole span (live-found 2026-07-16:
-//            LNA had walked to 0 and the display grew a comb). Quiet is
-//            not an invitation to listen to the computer.
+//   floor  : releases never go below minLna_ (default 3, override via
+//            setMinLna / the sdr/minLna setting). History, one day long:
+//            the floor was added when a quiet band released the LNA to 0
+//            and an RFI comb rose across the span; after the USB hubs
+//            behind most of the RFI were removed and 20 m checked clean
+//            at LNA 0, the floor was dropped — and 40 m promptly grew
+//            spikes at LNA 1 the same evening (zap snapped to them).
+//            One clean band does not acquit the house: the floor is a
+//            per-station RF fact, so it is policy default 3 and a
+//            setting, not a rebuild.
 class AutoGain {
 public:
     struct Decision {
@@ -39,10 +44,19 @@ public:
         attackAtMs_ = 0;
     }
 
+    void setMinLna(int v) { minLna_ = clampLna(v); }
     int lna() const { return lna_; }
 
     Decision tick(double peakDbfs, qint64 nowMs) {
         if (nowMs - lastStepMs_ < kHoldMs) return {};
+        if (lna_ < minLna_) {
+            // Below the floor (stored state from a manual session or an
+            // old policy): auto mode climbs back into the safe zone —
+            // the floor is a fact about the shack, not a suggestion.
+            ++lna_;
+            lastStepMs_ = nowMs;
+            return {true, lna_, "below the RFI floor"};
+        }
         if (peakDbfs > kAttackDb) {
             quietSinceMs_ = -1;
             if (lna_ >= 8) return {};
@@ -56,8 +70,8 @@ public:
             if (quietSinceMs_ < 0) quietSinceMs_ = nowMs;
             int floorLna =
                 (attackFloor_ >= 0 && nowMs - attackAtMs_ < kLockoutMs)
-                    ? attackFloor_ : kMinLna;
-            if (floorLna < kMinLna) floorLna = kMinLna;
+                    ? attackFloor_ : minLna_;
+            if (floorLna < minLna_) floorLna = minLna_;
             if (nowMs - quietSinceMs_ >= kReleaseMs && lna_ > floorLna) {
                 --lna_;
                 lastStepMs_ = nowMs;
@@ -75,12 +89,13 @@ public:
     static constexpr qint64 kReleaseMs = 30000;
     static constexpr qint64 kHoldMs    = 2500;
     static constexpr qint64 kLockoutMs = 600000;
-    static constexpr int    kMinLna    = 3;   // release floor (RFI guard)
+    static constexpr int    kMinLna    = 3;   // default release floor (RFI guard)
 
 private:
     static int clampLna(int v) { return v < 0 ? 0 : (v > 8 ? 8 : v); }
 
     int    lna_ = 3;
+    int    minLna_ = kMinLna;
     qint64 lastStepMs_ = 0;
     qint64 quietSinceMs_ = -1;
     int    attackFloor_ = -1;              // -1 = no recent attack

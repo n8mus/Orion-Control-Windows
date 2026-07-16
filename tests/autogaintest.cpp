@@ -31,8 +31,10 @@ int main() {
         check(!d.step, "sweet spot: no step");
     }
     {   // Release: 30 s of quiet earns ONE step; each step earns its own;
-        // and releases stop at the LNA 3 floor (quiet must not invite the
-        // PC's RFI picket up out of the noise — live-found 2026-07-16).
+        // and releases stop at the LNA 3 default floor. (The floor was 0
+        // for one evening — 40 m promptly grew an RFI picket at LNA 1 and
+        // the zap snapped to the spikes. Quiet is not an invitation to
+        // listen to the shack.)
         AutoGain g;
         g.reset(4, 0);
         qint64 t = 3000;
@@ -47,6 +49,28 @@ int main() {
         check(!d.step, "next release needs its own 30 s");
         d = g.tick(-20.0, 64500);
         check(!d.step && g.lna() == 3, "release floor holds at LNA 3");
+    }
+    {   // The floor is a per-station setting (sdr/minLna): a station that
+        // proves EVERY band clean can lower it and walk to LNA 0.
+        AutoGain g;
+        g.setMinLna(0);
+        g.reset(4, 0);
+        for (qint64 t = 3000; t < 200000; t += 1000) g.tick(-20.0, t);
+        check(g.lna() == 0, "minLna 0: sustained quiet walks to LNA 0");
+    }
+    {   // Starting below the floor (stored state from a manual session or
+        // an old policy): auto mode climbs back up to it, one held step
+        // at a time, whatever the band is doing.
+        AutoGain g;
+        g.reset(1, 0);
+        auto d = g.tick(-10.0, 3000);
+        check(d.step && d.lna == 2, "below floor: climbs even in the sweet spot");
+        d = g.tick(-10.0, 4000);
+        check(!d.step, "climb honors the hold time");
+        d = g.tick(-10.0, 6000);
+        check(d.step && d.lna == 3, "second climb reaches the floor");
+        d = g.tick(-10.0, 9000);
+        check(!d.step, "at the floor: back to normal policy");
     }
     {   // Mid-zone resets the quiet clock.
         AutoGain g;
