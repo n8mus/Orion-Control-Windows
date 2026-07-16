@@ -89,8 +89,11 @@ static RadioController* makeRadio(QObject* parent) {
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), radio_(makeRadio(this)), rigctld_(radio_) {
-    setWindowTitle(radio_->caps().dualReceiver ? "Orion III SDR Console"
-                                               : "Omni 8 SDR Console");
+    // Ship names, operator's christening 2026-07-16: the NCC hull numbers
+    // are the radios' real Ten-Tec model numbers (Orion = 565, Omni VII =
+    // 588), and every signal really does depart at Warp 1.
+    setWindowTitle(radio_->caps().dualReceiver ? "Orion NCC-565 Warp 1"
+                                               : "Omni NCC-588 Warp 1");
 
     pan_ = new PanadapterWidget(this);
     pan_->setPassband(-1200, 1200);

@@ -1,6 +1,6 @@
-# Orion III SDR Console
+# Orion NCC-565 Warp 1
 
-*(An independent project, not affiliated with or endorsed by Ten-Tec. "Orion III" is this console's own name — the radios it controls are the Ten-Tec Orion 565/566.)*
+*(An independent project, not affiliated with or endorsed by Ten-Tec — or Starfleet. The name is this console's own: the hull numbers are the radios' real Ten-Tec model numbers — Orion = 565, Omni VII = 588, whose personality boots as **Omni NCC-588 Warp 1** — and all signals depart at exactly Warp 1.)*
 
 A Flex/SmartSDR-style SDR console that gives the **Ten-Tec Orion (565/566)** and
 **Omni VII (588)** full computer control plus a live **panadapter/waterfall** fed by

@@ -1,8 +1,10 @@
-# Orion III / Omni 8 SDR Console
+# Orion NCC-565 Warp 1  (Omni personality: Omni NCC-588 Warp 1)
 
 Qt6/C++20 Flex-style console for Ten-Tec Orion (565/566) and Omni VII
 radios with an SDRplay RSP2 panadapter. One binary, two personalities
 (`TTC_RADIO=orion|omni8`, or the `radio/model` setting). Linux only.
+The hull numbers are the real Ten-Tec model numbers; the binary stays
+`tentec-console` (launchers and docs depend on it).
 
 ## Build & run
 
