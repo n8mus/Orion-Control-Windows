@@ -18,6 +18,11 @@ namespace ttc {
 //   lockout: after an attack, releases won't go back below the level
 //            that clipped for 10 minutes (no ping-pong when one loud
 //            broadcaster fades in and out).
+//   floor  : releases never go below LNA 3. A quiet midday band kept
+//            "earning" releases until the PC/PSU RFI picket rose out of
+//            the floor across the whole span (live-found 2026-07-16:
+//            LNA had walked to 0 and the display grew a comb). Quiet is
+//            not an invitation to listen to the computer.
 class AutoGain {
 public:
     struct Decision {
@@ -49,9 +54,10 @@ public:
         }
         if (peakDbfs < kReleaseDb) {
             if (quietSinceMs_ < 0) quietSinceMs_ = nowMs;
-            const int floorLna =
+            int floorLna =
                 (attackFloor_ >= 0 && nowMs - attackAtMs_ < kLockoutMs)
-                    ? attackFloor_ : 0;
+                    ? attackFloor_ : kMinLna;
+            if (floorLna < kMinLna) floorLna = kMinLna;
             if (nowMs - quietSinceMs_ >= kReleaseMs && lna_ > floorLna) {
                 --lna_;
                 lastStepMs_ = nowMs;
@@ -69,6 +75,7 @@ public:
     static constexpr qint64 kReleaseMs = 30000;
     static constexpr qint64 kHoldMs    = 2500;
     static constexpr qint64 kLockoutMs = 600000;
+    static constexpr int    kMinLna    = 3;   // release floor (RFI guard)
 
 private:
     static int clampLna(int v) { return v < 0 ? 0 : (v > 8 ? 8 : v); }
