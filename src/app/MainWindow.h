@@ -251,8 +251,12 @@ private:
     qint64   txPredictMs_ = 0;             // console is about to key (CW win)
     // 0-beat final stage: damped stepped servo on the SignaLink pitch
     // measurement (the radio's own audio frame). Policy in dsp/PitchTrim.h;
-    // fed from the pitchMeasured stream in setupCwUi.
+    // fed from the pitchMeasured stream in setupCwUi. The latest reading
+    // is kept so zeroBeat() can go pitch-first: an audible note near the
+    // target skips the FFT peak hunt entirely.
     PitchTrim pitchTrim_;
+    double   lastPitchHz_ = -1.0;
+    qint64   lastPitchMs_ = 0;
     bool     panicked_ = false;            // event-callback slam may be live
     std::atomic<bool> txMonEnabled_{true}; // checkbox mirror (SDR thread reads)
     int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns

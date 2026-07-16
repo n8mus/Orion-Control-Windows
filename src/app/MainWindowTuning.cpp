@@ -68,6 +68,25 @@ void MainWindow::zeroBeat() {
         statusBar()->showMessage("0-beat (Z) works in CW modes", 3000);
         return;
     }
+    // Pitch-first: an audible note near the target means the station is
+    // already tuned — hand it straight to the servo (one small move) and
+    // NEVER run the passband peak hunt, whose job is finding a signal you
+    // don't have yet. Live-found: note at 530, zap's FFT hunt grabbed a
+    // stronger neighbor, dial lurched to a 700 Hz note, servo rightly
+    // refused the 150 Hz "correction" — stranded, when 20 Hz was the job.
+    {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const int target = QSettings().value("cw/pitchHz", 550).toInt();
+        if (lastPitchHz_ > 0.0 && now - lastPitchMs_ <= 1500
+            && std::abs(lastPitchHz_ - target) <= PitchTrim::kMaxErrHz) {
+            statusBar()->showMessage(
+                QString("0-beat: note %1 Hz — trimming to %2…")
+                    .arg(qRound(lastPitchHz_)).arg(target), 4000);
+            zbPassesLeft_ = 0;             // no FFT passes on this path
+            armPitchTrim();
+            return;
+        }
+    }
     int lo = 0, hi = 0;
     edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
     const int peak = snapToCwPeak((lo + hi) / 2, (hi - lo) / 2);
