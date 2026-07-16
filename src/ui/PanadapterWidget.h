@@ -6,6 +6,7 @@
 #include <QVector>
 #include <QRect>
 #include <cstdint>
+#include <functional>
 #include <cstdlib>
 #include <vector>
 
@@ -37,6 +38,7 @@ struct DisplaySettings {
     bool  showClock  = true;    // UTC/local clock (radio panel bottom)
     bool  cwZap      = true;    // CW click snaps to the carrier peak (owner)
     bool  showWfTime = true;    // UTC timestamps down the waterfall edge
+    bool  showCursor = true;    // hover cursor line + zap snap preview
 };
 
 // A user-pinned frequency marker (SDR-Console/Thetis style): a labeled
@@ -109,6 +111,13 @@ public:
     void setCenterHz(uint64_t hz);                 // dial freq, for grid labels
     void setSpots(const QVector<SpotLabel>& s);    // empty = feature off
     void setMarkers(const QVector<FreqMarker>& m); // pinned frequency lines
+    // Zap snap preview for the hover cursor: given a dial offset, return
+    // where a CW-zap click would land (or INT_MIN when zap wouldn't apply
+    // — wrong mode, feature off). Installed by the owner; called during
+    // paint, so keep it cheap.
+    void setSnapPreview(std::function<int(int offsetHz)> fn) {
+        snapFn_ = std::move(fn);
+    }
     void setCallsign(const QString& call);         // watermark text (ds_.showCall)
     // Space weather for the sun marker (on map backdrops) + the green
     // corner panel (ds_.showSolar). Values < 0 / empty = unknown, not drawn.
@@ -187,6 +196,7 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void mouseDoubleClickEvent(QMouseEvent*) override;
+    void leaveEvent(QEvent*) override;
     void wheelEvent(QWheelEvent*) override;
 
 private:
@@ -203,6 +213,7 @@ private:
     void   drawDbScale(QPainter& p, int hSpec);    // horizontal dB lines + labels
     void   drawSpots(QPainter& p, int hSpec);      // cluster spot lines + callsigns
     void   drawMarkers(QPainter& p, int hSpec);    // pinned frequency lines
+    void   drawCursor(QPainter& p, int hSpec);     // hover line + zap preview
     void   drawWfTimes(QPainter& p, int wfTop);    // UTC labels down the waterfall
 
     bool   overNotch(int x) const;                 // cursor within the grab zone
@@ -258,6 +269,8 @@ private:
     QVector<SpotLabel> spots_;
     QVector<SpotHit>   spotHits_;                  // label rect -> freq + call
     QVector<FreqMarker> markers_;                  // pinned frequency lines
+    std::function<int(int)> snapFn_;               // zap snap preview
+    int hoverX_ = -1;                              // cursor line (-1 = hidden)
 
     QString callsign_;                             // watermark (empty = off)
 

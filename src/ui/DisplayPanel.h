@@ -55,6 +55,7 @@ private:
     QCheckBox* bigVfo_ = nullptr;
     QCheckBox* clock_  = nullptr;
     QCheckBox* wfTime_ = nullptr;
+    QCheckBox* cursor_ = nullptr;
     QCheckBox* zap_    = nullptr;
     QComboBox* trace_  = nullptr;
     QCheckBox* call_   = nullptr;

@@ -589,6 +589,50 @@ void PanadapterWidget::drawMarkers(QPainter& p, int hSpec) {
     p.setBrush(Qt::NoBrush);
 }
 
+// Hover cursor (PowerSDR crosshair idea, minus the useless horizontal
+// half — the Apache forums asked for exactly this): a dashed line under
+// the mouse across spectrum AND waterfall, the frequency at the cursor
+// riding it, and — the part PowerSDR doesn't have — a bright tick where
+// a CW-zap click would actually land (live snap preview), so the
+// operator sees BEFORE clicking whether the zap grabs the intended
+// signal or its louder neighbor.
+void PanadapterWidget::drawCursor(QPainter& p, int hSpec) {
+    if (!ds_.showCursor || hoverX_ < 0 || drag_ != Drag::None
+        || centerHz_ == 0)
+        return;
+    const int offHz = xToHz(hoverX_);
+    p.setPen(QPen(QColor(150, 205, 235, 130), 1, Qt::DashLine));
+    p.drawLine(hoverX_, 14, hoverX_, height());
+    // frequency at the cursor, scale-format (7.028.4)
+    const qint64 f = static_cast<qint64>(centerHz_) + offHz;
+    const QString txt = QString("%1.%2.%3")
+        .arg(f / 1000000)
+        .arg((f / 1000) % 1000, 3, 10, QChar('0'))
+        .arg((f % 1000) / 100);
+    QFont fo = p.font(); fo.setPixelSize(10); fo.setBold(true); p.setFont(fo);
+    const QFontMetrics fm(fo);
+    const int tw = fm.horizontalAdvance(txt);
+    const bool leftSide = hoverX_ + 10 + tw > width();
+    const QRect box(leftSide ? hoverX_ - tw - 12 : hoverX_ + 6, 16,
+                    tw + 6, 14);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(10, 16, 24, 200));
+    p.drawRect(box);
+    p.setPen(QColor(235, 216, 100));
+    p.drawText(box, Qt::AlignCenter, txt);
+    // zap snap preview: where the click would actually land
+    if (snapFn_) {
+        const int snapped = snapFn_(offHz);
+        if (snapped != INT_MIN) {
+            const int sx = hzToX(snapped);
+            p.setPen(QPen(QColor(120, 255, 170, 220), 2));
+            p.drawLine(sx, 34, sx, 34 + 16);
+            if (std::abs(sx - hoverX_) > 3)        // caret when it differs
+                p.drawLine(hoverX_, 42, sx, 42);
+        }
+    }
+}
+
 // UTC timestamps down the waterfall's left edge, one every ~48 px: history
 // depth at a glance, and a scroll-back capture ("who called at :05?") reads
 // like a log. Uses each ROW's recorded time, so speed changes and stalls
@@ -1313,6 +1357,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         p.drawPath(tracePath);
         drawMarkers(p, hSpec);                     // pinned frequencies
         drawSpots(p, hSpec);                       // cluster spots, on top
+        drawCursor(p, hSpec);                      // hover line + zap preview
         drawSolarPanel(p, hSpec);                  // space-weather corner box
         drawCompassRose(p, hSpec);                 // bearing rose, bottom-left
     } else {
@@ -1353,6 +1398,11 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
             emit tuneStepRequested(n, e->modifiers() & Qt::ShiftModifier);
     }
     e->accept();
+}
+
+void PanadapterWidget::leaveEvent(QEvent*) {
+    hoverX_ = -1;
+    update();
 }
 
 void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
@@ -1525,6 +1575,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
 
 void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
     if (drag_ == Drag::None) {
+        hoverX_ = e->pos().x();            // cursor line follows the mouse
         // Hover feedback: vertical-drag targets, then every horizontal grab —
         // VFO B (line/passband), the A dial line, and BOTH of A's filter
         // edges (the outer edge used to miss the double arrow).

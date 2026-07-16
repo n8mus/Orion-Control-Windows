@@ -24,6 +24,7 @@
 #include <QHostAddress>
 #include <QPushButton>
 #include <QInputDialog>
+#include <climits>
 #include <QLineEdit>
 #include <QSet>
 #include <QShortcut>
@@ -402,6 +403,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/bigVfo",     d.bigVfo);
         s.setValue("display/clock",      d.showClock);
         s.setValue("display/wfTime",     d.showWfTime);
+        s.setValue("display/cursor",     d.showCursor);
         s.setValue("display/cwZap",      d.cwZap);
     };
     // Station callsign: drives the watermark and defaults the cluster login.
@@ -472,6 +474,7 @@ MainWindow::MainWindow(QWidget* parent)
         d.bigVfo     = s.value("display/bigVfo",     d.bigVfo).toBool();
         d.showClock  = s.value("display/clock",      d.showClock).toBool();
         d.showWfTime = s.value("display/wfTime",     d.showWfTime).toBool();
+        d.showCursor = s.value("display/cursor",     d.showCursor).toBool();
         d.cwZap      = s.value("display/cwZap",      d.cwZap).toBool();
         cwZap_       = d.cwZap;
         dispPanel->setSettings(d);
@@ -508,6 +511,14 @@ MainWindow::MainWindow(QWidget* parent)
                     QString("display: REF %1 dB  RANGE %2 dB")
                         .arg(d.refDb, 0, 'f', 0).arg(d.rangeDb, 0, 'f', 0));
             });
+
+    // Hover-cursor zap preview: paint asks where a CW-zap click would
+    // land; INT_MIN = zap not applicable (wrong mode / feature off).
+    pan_->setSnapPreview([this](int offHz) {
+        if (!cwZap_ || (rigMode_ != Mode::CWU && rigMode_ != Mode::CWL))
+            return INT_MIN;
+        return snapToCwPeak(offHz, 150);
+    });
 
     // Pinned frequency markers: Shift+right-click on the panadapter toggles
     // one (label prompt on create). The list lives in QSettings as
