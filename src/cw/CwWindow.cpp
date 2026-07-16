@@ -230,7 +230,11 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
 
     rx_ = new QPlainTextEdit(this);
     rx_->setReadOnly(true);
-    rx_->setFixedHeight(92);               // ~4 lines at the bigger font
+    // Resizing the window feeds the decode pane: extra height grows the
+    // reading area, extra width stretches everything (operator request —
+    // dragging bigger used to just add blank margin).
+    rx_->setMinimumHeight(92);             // ~4 lines at the bigger font
+    rx_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     rx_->setStyleSheet("QPlainTextEdit { background: #0d1218; color: "
                        "#9fe89f; border: 1px solid #3a4a5e; border-radius: "
                        "3px; font-family: monospace; font-size: 16px; }");
@@ -244,6 +248,9 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     // Row 7: status
     status_ = new QLabel(this);
     g->addWidget(status_, 7, 0, 1, 5);
+    g->setRowStretch(6, 1);                // spare height -> the decode pane
+    for (int c = 0; c < 5; ++c)            // spare width -> spread evenly
+        g->setColumnStretch(c, 1);
 
     connect(wpm_, &QSpinBox::valueChanged, this, [this](int v) {
         wk_->setSpeed(v);
