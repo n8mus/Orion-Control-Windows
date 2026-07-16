@@ -68,7 +68,6 @@ void MainWindow::zeroBeat() {
         statusBar()->showMessage("0-beat (Z) works in CW modes", 3000);
         return;
     }
-    zbPitchTries_ = 3;                 // arm the pitch-trim final stage
     int lo = 0, hi = 0;
     edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
     const int peak = snapToCwPeak((lo + hi) / 2, (hi - lo) / 2);
@@ -96,7 +95,7 @@ void MainWindow::zeroBeatPass() {
     if (std::abs(err) < 3) {                    // close enough to be inaudible
         zbPassesLeft_ = 0;
         statusBar()->showMessage("0-beat locked", 3000);
-        QTimer::singleShot(900, this, [this] { zeroBeatPitchTrim(); });
+        armPitchTrim();
         return;
     }
     tuneAbsolute(centerHz_ + err);
@@ -107,49 +106,68 @@ void MainWindow::zeroBeatPass() {
     if (zbPassesLeft_ > 0)
         QTimer::singleShot(700, this, [this] { zeroBeatPass(); });
     else
-        QTimer::singleShot(900, this, [this] { zeroBeatPitchTrim(); });
+        armPitchTrim();
 }
 
 // Final 0-beat stage — the closed loop. The FFT passes land the dial where
 // the SDR says the carrier is, but the SDR and the radio disagree by a
 // small reference offset, so the NOTE can still sit 10-20 Hz off the
 // operator's pitch. The pitch meter measures the note in the radio's own
-// audio frame (the only frame that matters), and one signed nudge lands
-// it ON cw/pitchHz — the readout goes green as the zap finishes. Runs
-// only with a fresh reading (CW window capture live + station keying);
-// corrections outside 3..100 Hz are refused (too small to matter / too
-// likely a different station).
-void MainWindow::zeroBeatPitchTrim() {
-    if (zbPitchTries_ <= 0) return;
+// audio frame (the only frame that matters); PitchTrim (dsp/PitchTrim.h)
+// walks it onto cw/pitchHz in small quantized steps and stops on its own
+// when the station stops. This replaces a one-throw-full-error version
+// that rocked the dial in big swings off stale samples (live report:
+// "I can see 400 then 650").
+void MainWindow::armPitchTrim() {
     if (rigMode_ != Mode::CWU && rigMode_ != Mode::CWL) return;
-    if (centerHz_ != zbExpectHz_) return;      // operator moved on
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (lastPitchHz_ < 0.0 || now - lastPitchMs_ > 1500) {
-        if (--zbPitchTries_ > 0)               // wait for the next keying
-            QTimer::singleShot(700, this, [this] { zeroBeatPitchTrim(); });
-        return;
-    }
-    const int target = QSettings().value("cw/pitchHz", 550).toInt();
-    const double err = lastPitchHz_ - target;
-    if (std::abs(err) < 3.0) {
-        zbPitchTries_ = 0;
-        statusBar()->showMessage(
-            QString("0-beat: note on %1 Hz").arg(target), 4000);
-        return;
-    }
-    if (std::abs(err) > 100.0) {
-        zbPitchTries_ = 0;
-        return;                                // not our station — leave it
-    }
-    // CWU: higher note = carrier above the dial; CWL mirrored.
-    const double delta = rigMode_ == Mode::CWU ? err : -err;
-    tuneAbsolute(centerHz_ + qint64(std::lround(delta)));
+    pitchTrim_.arm(QSettings().value("cw/pitchHz", 550).toInt(),
+                   QDateTime::currentMSecsSinceEpoch());
     zbExpectHz_ = centerHz_;
-    statusBar()->showMessage(
-        QString("0-beat pitch trim %1%2 Hz").arg(delta > 0 ? "+" : "")
-            .arg(qRound(delta)), 4000);
-    if (--zbPitchTries_ > 0)                   // one confirming look
-        QTimer::singleShot(900, this, [this] { zeroBeatPitchTrim(); });
+    // Heartbeat: the pitch stream only flows while the CW-window capture
+    // runs; these invalid ticks guarantee the no-signal timeout fires
+    // even when it doesn't (capture off, station gone silently).
+    const auto beat = [this](auto&& self) -> void {
+        if (!pitchTrim_.active()) return;
+        pitchTrimFeed(-1.0);
+        QTimer::singleShot(1200, this, [this, self] { self(self); });
+    };
+    QTimer::singleShot(1200, this, [this, beat] { beat(beat); });
+}
+
+// Every pitchMeasured() emission (~4/s, -1 when no tone) lands here; the
+// servo decides, this applies. Sign: CWU higher note = carrier above the
+// dial, CWL mirrored.
+void MainWindow::pitchTrimFeed(double hz) {
+    if (!pitchTrim_.active()) return;
+    if ((rigMode_ != Mode::CWU && rigMode_ != Mode::CWL)
+        || centerHz_ != zbExpectHz_) {         // operator moved on: stand down
+        pitchTrim_.cancel();
+        return;
+    }
+    const auto d =
+        pitchTrim_.feed(hz, QDateTime::currentMSecsSinceEpoch());
+    switch (d.what) {
+    case PitchTrim::Decision::Move: {
+        const int delta = rigMode_ == Mode::CWU ? d.deltaHz : -d.deltaHz;
+        tuneAbsolute(centerHz_ + delta);
+        zbExpectHz_ = centerHz_;
+        statusBar()->showMessage(
+            QString("0-beat trim %1%2 Hz…").arg(delta > 0 ? "+" : "")
+                .arg(delta), 3000);
+        break;
+    }
+    case PitchTrim::Decision::Done:
+        statusBar()->showMessage(
+            QString("0-beat: note on %1 Hz")
+                .arg(QSettings().value("cw/pitchHz", 550).toInt()), 4000);
+        break;
+    case PitchTrim::Decision::Fail:
+        if (qstrcmp(d.why, "no signal") == 0)
+            statusBar()->showMessage("0-beat: signal gone — holding", 3000);
+        break;                                 // other reasons: leave quietly
+    case PitchTrim::Decision::None:
+        break;
+    }
 }
 
 // CW⇄CWR flip (X key): the aural zero-beat check — the BFO mirrors around

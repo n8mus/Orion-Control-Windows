@@ -41,6 +41,7 @@ namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
 #include "dsp/SpectrumComputer.h"
 #endif
 #include "sdr/IqRecorder.h"
+#include "dsp/PitchTrim.h"
 #include "sdr/AutoGain.h"
 #include <atomic>
 class QThread;
@@ -69,7 +70,8 @@ private:
     int  snapToCwPeak(int offsetHz, int windowHz) const; // CW zap peak finder
     void zeroBeat();                   // Z: zap strongest signal in the passband
     void zeroBeatPass();               // refinement passes (fresh FFT each time)
-    void zeroBeatPitchTrim();          // final stage: land the NOTE on cw/pitchHz
+    void armPitchTrim();               // final stage: land the NOTE on cw/pitchHz
+    void pitchTrimFeed(double hz);     // every pitch sample drives the servo
     void flipCwSideband();             // X: CW<->CWR aural zero-beat check
     void refreshPassbandOverlay();     // radio state -> mode-sided on-screen passband
     void refreshNotchOverlay();        // radio notch (audio Hz) -> RF-offset marker
@@ -247,11 +249,10 @@ private:
     int      txSaveGr_ = 45, txSaveLna_ = 3;
     qint64   lastTxMs_ = 0;
     qint64   txPredictMs_ = 0;             // console is about to key (CW win)
-    // Live audio pitch from the SignaLink (AudioCwSource) — the radio's
-    // own frame, the closed-loop sensor for the 0-beat pitch trim.
-    double   lastPitchHz_ = -1.0;
-    qint64   lastPitchMs_ = 0;
-    int      zbPitchTries_ = 0;
+    // 0-beat final stage: damped stepped servo on the SignaLink pitch
+    // measurement (the radio's own audio frame). Policy in dsp/PitchTrim.h;
+    // fed from the pitchMeasured stream in setupCwUi.
+    PitchTrim pitchTrim_;
     bool     panicked_ = false;            // event-callback slam may be live
     std::atomic<bool> txMonEnabled_{true}; // checkbox mirror (SDR thread reads)
     int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns

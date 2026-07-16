@@ -119,6 +119,10 @@ add_executable(autogaintest EXCLUDE_FROM_ALL
 target_include_directories(autogaintest PRIVATE src)
 target_link_libraries(autogaintest PRIVATE Qt6::Core)
 
+add_executable(trimtest EXCLUDE_FROM_ALL
+  tests/trimtest.cpp)
+target_include_directories(trimtest PRIVATE src)
+
 add_executable(cohtest EXCLUDE_FROM_ALL
   tests/cohtest.cpp
   src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/dsp/Fft.cpp)
