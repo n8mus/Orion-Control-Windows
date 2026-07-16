@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "sdr/SdrPlaySource.h"
 
+#include <chrono>
 #include <cstdio>
 
 namespace ttc {
@@ -161,7 +162,27 @@ void SdrPlaySource::eventCb(sdrplay_api_EventT eventId, sdrplay_api_TunerSelectT
                             sdrplay_api_EventParamsT*, void* ctx) {
     auto* self = static_cast<SdrPlaySource*>(ctx);
     if (eventId == sdrplay_api_PowerOverloadChange) {
-        if (self) self->overloads_.fetch_add(1, std::memory_order_relaxed);
+        if (self) {
+            self->overloads_.fetch_add(1, std::memory_order_relaxed);
+            const int64_t now =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+            self->lastOverloadMs_.store(now, std::memory_order_relaxed);
+            // TX panic: hardware-only max attenuation, logical state
+            // untouched (see header). Rate-limited so the repeated
+            // overload notifications don't spam tuner updates.
+            if (self->panicArmed_.load(std::memory_order_relaxed)
+                && self->params_ && now - self->lastPanicMs_ > 400) {
+                self->lastPanicMs_ = now;
+                auto* rx = self->params_->rxChannelA;
+                rx->tunerParams.gain.gRdB = 59;
+                rx->tunerParams.gain.LNAstate = 8;
+                sdrplay_api_Update(self->device_.dev, tuner,
+                                   sdrplay_api_Update_Tuner_Gr,
+                                   sdrplay_api_Update_Ext1_None);
+            }
+        }
         // Expected whenever the shared-antenna feed goes hot (own TX): the API
         // repeats the event until acknowledged, so ack it and log only rarely.
         if (self)

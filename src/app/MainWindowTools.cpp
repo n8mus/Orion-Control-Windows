@@ -239,6 +239,9 @@ void MainWindow::setupCwUi() {
                             rxWanted_ = on;
                             applyRouting();
                         });
+                connect(cwWin_, &CwWindow::txImminent, this, [this] {
+                    txPredictMs_ = QDateTime::currentMSecsSinceEpoch();
+                });
                 connect(cwWin_, &CwWindow::rxSourceChanged, this,
                         [this, applyRouting](bool radio) {
                             rxRadio_ = radio;

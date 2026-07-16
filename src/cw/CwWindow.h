@@ -48,6 +48,10 @@ signals:
     // IQ-side decoder so it costs nothing when the window is closed.
     void rxDecodeWanted(bool on);
     void rxSourceChanged(bool radioAudio);  // RADIO src box toggled
+    // The operator just asked the keyer to make RF (send/tune/macro/
+    // cwdaemon) — the TX monitor can drop SDR gain BEFORE the first
+    // element instead of reacting to its overload.
+    void txImminent();
     // Decode-engine adjustments changed (engine, som, deep, attack, decay).
     void rxDecodeConfigChanged(bool eng, bool som, bool deep, int atk,
                                int dcy);

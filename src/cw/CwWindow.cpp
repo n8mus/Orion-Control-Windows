@@ -251,6 +251,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         updateStatus("stopped");
     });
     connect(tuneBtn_, &QPushButton::toggled, this, [this](bool on) {
+        if (on) emit txImminent();
         wk_->tune(on);
         updateStatus(on ? "TUNE — key down" : QString());
     });
@@ -268,6 +269,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
             if (sp < 0) return;
             const QString out = substitute(t.left(sp + 1));
             if (!out.simplified().isEmpty()) {
+                emit txImminent();
                 openKeyer();
                 wk_->send(out);
                 sentView_->setText((sentView_->text() + out).right(60));
@@ -281,6 +283,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
             for (int i = t.length(); i < prevLen_; ++i) wk_->backspace();
         } else if (t.length() > prevLen_) {
             const QString add = substitute(t.mid(prevLen_));
+            emit txImminent();
             wk_->send(add);
             sentView_->setText((sentView_->text() + add).right(60));
         }
@@ -326,6 +329,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
                         }
                     }
                 } else {
+                    emit txImminent();
                     openKeyer();             // cqrlog may key before we show
                     wk_->send(QString::fromLatin1(d).trimmed());
                 }
@@ -407,6 +411,7 @@ QString CwWindow::substitute(QString t) const {
 }
 
 void CwWindow::sendText(const QString& t) {
+    emit txImminent();
     openKeyer();
     const QString out = substitute(t).simplified();
     if (out.isEmpty()) return;

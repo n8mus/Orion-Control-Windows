@@ -3,6 +3,7 @@
 #include "sdr/SdrSource.h"
 #include <sdrplay_api.h>
 #include <atomic>
+#include <cstdint>
 #include <string>
 
 namespace ttc {
@@ -55,6 +56,21 @@ public:
     unsigned overloadCount() const {
         return overloads_.load(std::memory_order_relaxed);
     }
+    // Epoch ms (same clock as QDateTime::currentMSecsSinceEpoch, but this
+    // file stays Qt-free — sdr_probe links it without Qt).
+    int64_t lastOverloadMs() const {
+        return lastOverloadMs_.load(std::memory_order_relaxed);
+    }
+    // TX panic: when armed, an overload event slams the tuner to maximum
+    // attenuation FROM THE EVENT CALLBACK — milliseconds instead of the
+    // GUI tick. Deliberately does NOT touch gRdB_/lnaState_, so the
+    // logical (receive) gain state survives; the owner restores by simply
+    // re-applying it with setGainLive. Calling sdrplay_api_Update from
+    // the event callback is proven ground: the overload ack has always
+    // been sent from there.
+    void setTxPanic(bool armed) {
+        panicArmed_.store(armed, std::memory_order_relaxed);
+    }
 
 private:
     static void streamCb(short* xi, short* xq, sdrplay_api_StreamCbParamsT* params,
@@ -73,6 +89,9 @@ private:
     int  lnaState_  = 6;
     int  decim_     = 1;
     std::atomic<unsigned> overloads_{0};
+    std::atomic<int64_t> lastOverloadMs_{0};
+    std::atomic<bool> panicArmed_{false};
+    int64_t lastPanicMs_ = 0;              // event-callback thread only
 
     sdrplay_api_DeviceT       device_{};
     sdrplay_api_DeviceParamsT* params_ = nullptr;

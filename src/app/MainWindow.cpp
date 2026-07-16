@@ -1175,8 +1175,10 @@ MainWindow::MainWindow(QWidget* parent)
         "While transmitting, drop the RSP2 gain hard so your own signal\n"
         "shows cleanly on the panadapter (keying envelope, speech width)\n"
         "instead of overload hash. Restores receive gain ~1 s after unkey.");
+    sdr_.setTxPanic(txMonAct_->isChecked());
     connect(txMonAct_, &QAction::toggled, this, [this](bool on) {
         QSettings().setValue("sdr/txMon", on);
+        sdr_.setTxPanic(on);
         if (!on && txMonOn_) {
             txMonOn_ = false;
             sdr_.setGainLive(txSaveGr_, txSaveLna_);
@@ -1211,10 +1213,22 @@ MainWindow::MainWindow(QWidget* parent)
         const unsigned ov = sdr_.overloadCount();
         const unsigned burst = ov - lastOverloads_;
         lastOverloads_ = ov;
-        const bool tx = radioTx_ || tuning_ || dvrTxPlayback_ || burst >= 3;
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const bool predicted = now - txPredictMs_ < 1500;
+        const bool tx = radioTx_ || tuning_ || dvrTxPlayback_ || predicted
+                        || burst >= 3;
+        if (burst > 0) panicked_ = true;   // callback may have slammed gain
         if (tx) lastTxMs_ = now;
         if (!txMonAct_->isChecked()) return;
+        // A lone RX overload (broadcast peak) also fires the callback
+        // panic; if no TX evidence follows within ~300 ms, quietly put the
+        // logical receive gains back — a sub-half-second dip instead of a
+        // full hang. Real TX gets confirmed and promoted below.
+        if (panicked_ && !txMonOn_ && !tx
+            && now - sdr_.lastOverloadMs() > 300) {
+            panicked_ = false;
+            sdr_.setGainLive(sdr_.gainReduction(), sdr_.lnaState());
+        }
         if (tx && !txMonOn_) {
             txMonOn_ = true;
             txSaveGr_ = sdr_.gainReduction();
@@ -1223,6 +1237,7 @@ MainWindow::MainWindow(QWidget* parent)
             statusBar()->showMessage("TX monitor: gain dropped");
         } else if (txMonOn_ && now - lastTxMs_ > txMonHangMs_) {
             txMonOn_ = false;
+            panicked_ = false;
             sdr_.setGainLive(txSaveGr_, txSaveLna_);
             iqPeak_.exchange(0.0f);        // don't feed TX peaks to Auto LNA
             {
@@ -2225,6 +2240,11 @@ MainWindow::MainWindow(QWidget* parent)
             const double meas = 10.0 * std::log10(acc)
                 + sdr_.gainReduction()
                 + kRsp2LnaDb[std::clamp(sdr_.lnaState(), 0, 8)];
+            // Clipped frames are hash, not signal: while the ADC reports
+            // overload (the first ms of TX before the panic slam lands),
+            // freeze the display instead of painting the splash.
+            if (QDateTime::currentMSecsSinceEpoch() - sdr_.lastOverloadMs()
+                < 150) return;
             lastSdrMeasDb_ = meas;
             smeter_->setSdrLevel(meas + sdrCalDb_);
             lastSpectrum_ = std::move(copy);          // CW zap reads this
@@ -2237,8 +2257,14 @@ MainWindow::MainWindow(QWidget* parent)
     Q_ASSERT(spanHz == 500000);            // skim_ was built for this rate
     const auto iqHandler = [this](const IqBlock& iq) {
         spectrum_.addSamples(iq);
-        cwDec_->processIq(iq.data(), iq.size());
-        skim_->processIq(iq.data(), iq.size());
+        // During ADC clip (TX onset) the stream is broadband hash — keep
+        // it out of the decoders; the display freeze handles the eyes.
+        const bool clipped =
+            QDateTime::currentMSecsSinceEpoch() - sdr_.lastOverloadMs() < 150;
+        if (!clipped) {
+            cwDec_->processIq(iq.data(), iq.size());
+            skim_->processIq(iq.data(), iq.size());
+        }
         iqRec_->feed(iq);
         // Wideband peak for the Auto LNA loop (read+reset by a GUI timer).
         float m = 0.0f;

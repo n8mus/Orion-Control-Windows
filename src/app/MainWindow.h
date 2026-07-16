@@ -245,6 +245,8 @@ private:
     bool     radioTx_ = false;
     int      txSaveGr_ = 45, txSaveLna_ = 3;
     qint64   lastTxMs_ = 0;
+    qint64   txPredictMs_ = 0;             // console is about to key (CW win)
+    bool     panicked_ = false;            // event-callback slam may be live
     int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns
     unsigned lastOverloads_ = 0;
     IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)
