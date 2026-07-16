@@ -77,24 +77,35 @@ static const SpotArea kSpotAreas[] = {
                       "ZA,KE,EG,MA,NA,ZM,MU,MG,SN,ZW,BW"},
 };
 
-// Radio driver factory: TTC_RADIO env overrides the persisted picker choice.
-// "orion" = Ten-Tec Orion 565/566 (ASCII CAT); "omni8" = Omni VII 588
-// (binary CAT, RTS/CTS) — the console's Omni 8 personality.
-static RadioController* makeRadio(QObject* parent) {
+// The resolved radio-model choice: TTC_RADIO env overrides the persisted
+// picker. "orion" = Ten-Tec Orion 565, "orion2" = Orion II 566 (identical
+// ASCII CAT and controls — only the nameplate differs); "omni8"/"omni7" =
+// Omni VII 588 (binary CAT, RTS/CTS).
+static QString radioModelChoice() {
     QString model = qEnvironmentVariable("TTC_RADIO");
     if (model.isEmpty()) model = QSettings().value("radio/model", "orion").toString();
+    return model;
+}
+
+static RadioController* makeRadio(QObject* parent) {
+    const QString model = radioModelChoice();
     if (model == "omni8" || model == "omni7")
         return new TenTecOmni7(parent);
-    return new TenTecOrion(parent);
+    return new TenTecOrion(parent);      // "orion" and "orion2" alike
+}
+
+// Fleet registry, operator's christening (2026-07-16, refit 2026-07-17):
+// the NCC hull numbers are the radios' real Ten-Tec model numbers.
+static QString shipName() {
+    const QString model = radioModelChoice();
+    if (model == "omni8" || model == "omni7") return "USS Omni VII NCC-588";
+    if (model == "orion2")                    return "USS Orion II NCC-566";
+    return "USS Orion NCC-565";
 }
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), radio_(makeRadio(this)), rigctld_(radio_) {
-    // Ship names, operator's christening 2026-07-16: the NCC hull numbers
-    // are the radios' real Ten-Tec model numbers (Orion = 565, Omni VII =
-    // 588), and every signal really does depart at Warp 1.
-    setWindowTitle(radio_->caps().dualReceiver ? "Orion NCC-565 Warp 1"
-                                               : "Omni NCC-588 Warp 1");
+    setWindowTitle(shipName());
 
     pan_ = new PanadapterWidget(this);
     pan_->setPassband(-1200, 1200);
@@ -970,20 +981,26 @@ MainWindow::MainWindow(QWidget* parent)
     {
         auto* radioGroup = new QActionGroup(this);
         radioGroup->setExclusive(true);
-        auto* rOrion = radioGroup->addAction(sdrMenu->addAction("Radio: Orion III  (565)"));
-        auto* rOmni  = radioGroup->addAction(sdrMenu->addAction("Radio: Omni 8  (588)"));
-        rOrion->setCheckable(true);
-        rOmni->setCheckable(true);
-        const bool isOmni = !radio_->caps().dualReceiver;
-        (isOmni ? rOmni : rOrion)->setChecked(true);
-        connect(rOrion, &QAction::triggered, this, [this] {
-            QSettings().setValue("radio/model", "orion");
-            statusBar()->showMessage("radio: Orion III — restart the console to switch");
-        });
-        connect(rOmni, &QAction::triggered, this, [this] {
-            QSettings().setValue("radio/model", "omni8");
-            statusBar()->showMessage("radio: Omni 8 — restart the console to switch");
-        });
+        struct Ship { const char* label; const char* model; };
+        static constexpr Ship kFleet[] = {
+            {"Radio: USS Orion  (565)",    "orion"},
+            {"Radio: USS Orion II  (566)", "orion2"},
+            {"Radio: USS Omni VII  (588)", "omni8"},
+        };
+        const QString current = radioModelChoice();
+        for (const Ship& ship : kFleet) {
+            auto* act = radioGroup->addAction(sdrMenu->addAction(ship.label));
+            act->setCheckable(true);
+            if (current == ship.model
+                || (current == "omni7" && QString(ship.model) == "omni8"))
+                act->setChecked(true);
+            connect(act, &QAction::triggered, this, [this, ship] {
+                QSettings().setValue("radio/model", ship.model);
+                statusBar()->showMessage(
+                    QString("radio: %1 — restart the console to switch")
+                        .arg(QString(ship.label).mid(7)));
+            });
+        }
         sdrMenu->addSeparator();
     }
     auto* antGroup = new QActionGroup(this);
