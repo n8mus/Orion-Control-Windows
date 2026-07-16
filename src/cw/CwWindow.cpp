@@ -3,6 +3,7 @@
 #include "cw/WinKeyer.h"
 
 #include <QCheckBox>
+#include <cmath>
 #include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -407,7 +408,31 @@ void CwWindow::appendRx(const QString& text) {
 }
 
 void CwWindow::setRxWpm(int wpm) {
-    rxWpm_->setText(QString("%1 WPM heard").arg(wpm));
+    rxWpmVal_ = wpm;
+    updateRxInfo();
+}
+
+void CwWindow::setRxPitch(double hz) {
+    rxPitchVal_ = hz;
+    updateRxInfo();
+}
+
+// "18 WPM · 547 Hz" — the Hz is the RADIO's actual audio tone (measured
+// like fldigi does), GREEN when within +/-10 Hz of the operator's pitch
+// (cw/pitchHz, 550) and amber when off: on-the-note at a glance instead
+// of consulting fldigi's waterfall (operator's spec).
+void CwWindow::updateRxInfo() {
+    QStringList parts;
+    if (rxWpmVal_ > 0)
+        parts << QString("%1 WPM").arg(rxWpmVal_);
+    if (rxPitchVal_ > 0) {
+        const int target = QSettings().value("cw/pitchHz", 550).toInt();
+        const bool on = std::abs(rxPitchVal_ - target) <= 10.0;
+        parts << QString("<span style='color:%1'>%2 Hz</span>")
+                     .arg(on ? "#8fd48f" : "#e0b060")
+                     .arg(qRound(rxPitchVal_));
+    }
+    rxWpm_->setText(parts.join("&nbsp;·&nbsp;"));
 }
 
 void CwWindow::keyPressEvent(QKeyEvent* e) {

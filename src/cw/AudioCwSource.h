@@ -40,6 +40,11 @@ public:
 
 signals:
     void statusChanged(const QString& text);
+    // Strongest audio tone 200-1200 Hz, ~4x/s, parabolic-interpolated
+    // (about +/-1 Hz) — the fldigi-equivalent pitch readout. -1 = no
+    // signal standing above the floor (or capture stopped). Measured on
+    // the RAW stream, before NR.
+    void pitchMeasured(double hz);
 
 private:
     void onReadable();
@@ -52,6 +57,10 @@ private:
     DenoiseState* nrSt_ = nullptr;         // lazily created, reset on start
     std::vector<float> nrIn_;              // 480-sample frame accumulator
     int nrFill_ = 0;
+    // pitch meter (see pitchMeasured)
+    void measurePitch();
+    std::vector<float> pitchBuf_;          // rolling window, kPitchN samples
+    int pitchFill_ = 0;                    // samples since last measurement
 };
 
 } // namespace ttc

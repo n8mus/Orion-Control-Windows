@@ -223,6 +223,8 @@ void MainWindow::setupCwUi() {
                         cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
                 connect(audioDec_, &CwDecoder::wpmEstimated,
                         cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
+                connect(audioSrc_, &AudioCwSource::pitchMeasured,
+                        cwWin_, &CwWindow::setRxPitch);
                 connect(audioSrc_, &AudioCwSource::statusChanged, this,
                         [this](const QString& t) {
                             statusBar()->showMessage(t, 6000);
@@ -231,7 +233,10 @@ void MainWindow::setupCwUi() {
                 const auto applyRouting = [this] {
                     cwDec_->setEnabled(rxWanted_ && !rxRadio_);
                     audioDec_->setEnabled(rxWanted_ && rxRadio_);
-                    if (rxWanted_ && rxRadio_) audioSrc_->start();
+                    // Capture runs whenever decode is on, regardless of
+                    // source: the pitch readout measures the radio's audio
+                    // even while the SDR does the decoding.
+                    if (rxWanted_) audioSrc_->start();
                     else audioSrc_->stop();
                 };
                 connect(cwWin_, &CwWindow::rxDecodeWanted, this,
