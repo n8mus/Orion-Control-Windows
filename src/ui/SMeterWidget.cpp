@@ -91,6 +91,13 @@ double SMeterWidget::rawToDbS9(int raw) {
 }
 
 void SMeterWidget::setRawLevel(int raw) {
+    // TX-face hang: on CW the radio answers in RX form between elements,
+    // and flipping faces at keying speed made the TX meter unreadable
+    // (live report). Hold the TX face until keying has really stopped.
+    if (tx_ && sinceTx_.isValid() && sinceTx_.elapsed() < kTxHangMs) {
+        if (source_ == SrcRadio) feedRx(rawToDbS9(raw));  // keep RX data warm
+        return;
+    }
     tx_ = false;                          // radio answered in receive
     if (source_ == SrcRadio) feedRx(rawToDbS9(raw));
     else update();                        // face may need to flip off the TX view
@@ -149,6 +156,7 @@ void SMeterWidget::feedRx(double db) {
 
 void SMeterWidget::setTxLevel(double fwdWatts, double refWatts, double swr) {
     tx_ = true;                           // radio answered in transmit
+    sinceTx_.restart();
     fwdW_ = fwdWatts;
     refW_ = refWatts;
     swr_  = swr;

@@ -99,6 +99,8 @@ private:
     double fwdW_ = 0.0, refW_ = 0.0, swr_ = 1.0;
     double peakW_ = 0.0;                  // TX peak hold (watts)
     QElapsedTimer sinceTxPeak_;
+    QElapsedTimer sinceTx_;               // TX-face hang (CW keying gaps)
+    static constexpr int kTxHangMs = 1500;
     double needleRef_ = 0.0;              // animated REF needle (cross style)
 };
 
