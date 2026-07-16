@@ -262,6 +262,8 @@ PanadapterWidget::PanadapterWidget(QWidget* parent) : QWidget(parent) {
     setMouseTracking(true);
     dbMax_ = ds_.refDb;
     dbMin_ = ds_.refDb - ds_.rangeDb;
+    wfDbMax_ = ds_.wfRefDb;
+    wfDbMin_ = ds_.wfRefDb - ds_.rangeDb;
 }
 
 void PanadapterWidget::setSpanHz(int spanHz) {
@@ -803,6 +805,8 @@ void PanadapterWidget::setDisplaySettings(const DisplaySettings& s) {
     ds_.split     = std::clamp(ds_.split, 0.15f, 0.85f);
     dbMax_ = ds_.refDb;
     dbMin_ = ds_.refDb - std::max(10.0f, ds_.rangeDb);
+    wfDbMax_ = ds_.wfRefDb;
+    wfDbMin_ = ds_.wfRefDb - std::max(10.0f, ds_.rangeDb);
     if (scaleChanged)
         wfDirty_ = true;       // history re-renders in the new scale/palette
     update();
@@ -853,6 +857,10 @@ bool PanadapterWidget::inDbAxis(int x, int y) const {
     return x < kDbAxisW && y < spectrumHeight() - 2;
 }
 
+bool PanadapterWidget::inWfDbAxis(int x, int y) const {
+    return x < kDbAxisW && y > spectrumHeight() + kScaleBandH + 2;
+}
+
 QRgb PanadapterWidget::mapColor(float t) const {
     const Palette& pal =
         kPalettes[std::clamp(ds_.palette, 0, int(std::size(kPalettes)) - 1)];
@@ -893,14 +901,14 @@ void PanadapterWidget::pushWaterfallRow(const std::vector<float>& db) {
 void PanadapterWidget::renderWfLine(const float* src, QRgb* dst, int w,
                                     int binLo, int binHi) const {
     const int nv = binHi - binLo;
-    const float invRange = 1.0f / (dbMax_ - dbMin_);
+    const float invRange = 1.0f / (wfDbMax_ - wfDbMin_);
     for (int j = 0; j < w; ++j) {
         int b0 = binLo + static_cast<int>(static_cast<int64_t>(j) * nv / w);
         int b1 = binLo + static_cast<int>(static_cast<int64_t>(j + 1) * nv / w);
         if (b1 <= b0) b1 = b0 + 1;
         float m = src[b0];
         for (int b = b0 + 1; b < b1; ++b) m = std::max(m, src[b]);
-        dst[j] = mapColor((m - dbMin_) * invRange);
+        dst[j] = mapColor((m - wfDbMin_) * invRange);
     }
 }
 
@@ -1181,6 +1189,16 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         ensureWaterfallImage(width(), height() - wfTop, binLo, binHi);
         if (!wfImg_.isNull()) p.drawImage(0, wfTop, wfImg_);
         drawWfTimes(p, wfTop);
+        if (std::abs(ds_.wfRefDb - ds_.refDb) > 0.5f) {
+            QFont wf = p.font(); wf.setPixelSize(9); wf.setBold(true);
+            p.setFont(wf);
+            p.setPen(QColor(0, 0, 0, 160));
+            p.drawText(kDbAxisW + 7, wfTop + 13,
+                       QString("WF %1 dB").arg(qRound(ds_.wfRefDb)));
+            p.setPen(QColor(200, 220, 240, 150));
+            p.drawText(kDbAxisW + 6, wfTop + 12,
+                       QString("WF %1 dB").arg(qRound(ds_.wfRefDb)));
+        }
     }
 
     // Per-pixel-column signal level (0..1 of the scale): max of the column's
@@ -1490,6 +1508,11 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     }
     // Left dB scale: vertical drag shifts the reference level (grid drag in
     // PowerSDR). Checked after the notch but before the passband edges.
+    if (inWfDbAxis(x, y)) {
+        drag_ = Drag::WfDbAxis;
+        dragStartRef_ = ds_.wfRefDb;
+        return;
+    }
     if (inDbAxis(x, y)) {
         drag_ = Drag::DbAxis;
         dragStartRef_ = ds_.refDb;
@@ -1585,7 +1608,8 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         bool onSpot = false;                     // spot labels are clickable
         for (const SpotHit& h : spotHits_)
             if (h.rect.contains(e->pos())) { onSpot = true; break; }
-        if (inScaleBand(hy) || inDbAxis(hx, hy)) setCursor(Qt::SizeVerCursor);
+        if (inScaleBand(hy) || inDbAxis(hx, hy) || inWfDbAxis(hx, hy))
+            setCursor(Qt::SizeVerCursor);
         else if (onSpot)                         setCursor(Qt::PointingHandCursor);
         else if (overVfoB(hx) || onAEdge
                  || std::abs(hx - width() / 2) <= 4) setCursor(Qt::SizeHorCursor);
@@ -1601,6 +1625,21 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         ds_.split = std::clamp(
             dragStartSplit_ + static_cast<float>(e->pos().y() - dragStartY_) / usable,
             0.15f, 0.85f);
+        update();
+        emit displaySettingsEdited(ds_);
+        return;
+    }
+    if (drag_ == Drag::WfDbAxis) {
+        // Same feel as the spectrum's axis, scaled to the waterfall's own
+        // height; only the waterfall recolors — the trace stays put.
+        const int wfTop = spectrumHeight() + kScaleBandH;
+        const int wfH = std::max(1, height() - wfTop);
+        const float dDb = static_cast<float>(e->pos().y() - dragStartY_)
+                          * ds_.rangeDb / wfH;
+        ds_.wfRefDb = std::clamp(dragStartRef_ + dDb, -100.0f, -20.0f);
+        wfDbMax_ = ds_.wfRefDb;
+        wfDbMin_ = ds_.wfRefDb - ds_.rangeDb;
+        wfDirty_ = true;
         update();
         emit displaySettingsEdited(ds_);
         return;

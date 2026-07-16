@@ -278,11 +278,13 @@ DisplaySettings DisplayPanel::settings() const {
     s.showCursor = cursor_->isChecked();
     s.cwZap      = zap_->isChecked();
     s.split      = split_;
+    s.wfRefDb    = wfRef_;
     return s;
 }
 
 void DisplayPanel::setSettings(const DisplaySettings& s) {
     split_ = s.split;
+    wfRef_ = s.wfRefDb;
     const QSignalBlocker b1(ref_), b2(range_), b3(avg_), b4(speed_), b5(pal_),
         b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_),
         b11(mapDay_), b12(mapNight_), b13(solar_), b14(rose_),

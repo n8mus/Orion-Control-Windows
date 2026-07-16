@@ -62,6 +62,7 @@ private:
     QLineEdit* callEdit_ = nullptr;
     QLineEdit* gridEdit_ = nullptr;
     float split_ = 0.42f;   // no UI control (dragged in the panadapter); pass through
+    float wfRef_ = -55.0f;  // waterfall ref — dragged on the waterfall edge; pass through
 };
 
 } // namespace ttc

@@ -39,6 +39,11 @@ struct DisplaySettings {
     bool  cwZap      = true;    // CW click snaps to the carrier peak (owner)
     bool  showWfTime = true;    // UTC timestamps down the waterfall edge
     bool  showCursor = true;    // hover cursor line + zap snap preview
+    // Waterfall reference level, independent of refDb: the operator runs
+    // the trace hot without flooding the waterfall with noise color.
+    // Shares rangeDb (one contrast knob). Dragged on the WATERFALL's own
+    // left edge, same gesture as the spectrum's dB axis.
+    float wfRefDb   = -55.0f;
 };
 
 // A user-pinned frequency marker (SDR-Console/Thetis style): a labeled
@@ -220,6 +225,7 @@ private:
     bool   overVfoB(int x) const;                  // over B's line or passband
     bool   inScaleBand(int y) const;               // over the draggable divider strip
     bool   inDbAxis(int x, int y) const;           // over the draggable dB scale
+    bool   inWfDbAxis(int x, int y) const;         // waterfall's left grab strip
 
     // Drag-gesture bookkeeping (symmetric-BW and body-drag PBT).
     int dragStartX_  = 0;
@@ -244,6 +250,7 @@ private:
 
     DisplaySettings ds_;
     float dbMin_ = -125.0f, dbMax_ = -55.0f;       // derived from ds_ (ref/range)
+    float wfDbMin_ = -125.0f, wfDbMax_ = -55.0f;   // waterfall's own scale
 
     std::vector<float> spectrum_;                  // latest raw frame, full span
     std::vector<float> avg_;                       // EMA of spectrum_ (the trace)
@@ -327,6 +334,7 @@ private:
         BSymEdge,           //   (drives the sub RX filter)
         Divider,            // drag the freq-scale band: move the wf split
         DbAxis,             // drag the left dB scale: shift ref level
+        WfDbAxis,           // drag the waterfall's left edge: its own ref
     } drag_ = Drag::None;
 };
 

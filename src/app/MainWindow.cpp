@@ -404,6 +404,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/clock",      d.showClock);
         s.setValue("display/wfTime",     d.showWfTime);
         s.setValue("display/cursor",     d.showCursor);
+        s.setValue("display/wfRef",      d.wfRefDb);
         s.setValue("display/cwZap",      d.cwZap);
     };
     // Station callsign: drives the watermark and defaults the cluster login.
@@ -475,6 +476,8 @@ MainWindow::MainWindow(QWidget* parent)
         d.showClock  = s.value("display/clock",      d.showClock).toBool();
         d.showWfTime = s.value("display/wfTime",     d.showWfTime).toBool();
         d.showCursor = s.value("display/cursor",     d.showCursor).toBool();
+        // default: locked to the spectrum ref until first dragged apart
+        d.wfRefDb    = s.value("display/wfRef",      d.refDb).toFloat();
         d.cwZap      = s.value("display/cwZap",      d.cwZap).toBool();
         cwZap_       = d.cwZap;
         dispPanel->setSettings(d);
@@ -508,8 +511,9 @@ MainWindow::MainWindow(QWidget* parent)
                 saveDisplay(d);
                 // In-widget edits are easy to make without noticing — say so.
                 statusBar()->showMessage(
-                    QString("display: REF %1 dB  RANGE %2 dB")
-                        .arg(d.refDb, 0, 'f', 0).arg(d.rangeDb, 0, 'f', 0));
+                    QString("display: REF %1 dB  RANGE %2 dB  WF REF %3 dB")
+                        .arg(d.refDb, 0, 'f', 0).arg(d.rangeDb, 0, 'f', 0)
+                        .arg(d.wfRefDb, 0, 'f', 0));
             });
 
     // Hover-cursor zap preview: paint asks where a CW-zap click would
