@@ -76,6 +76,16 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     stopBtn->setToolTip("Dump the keying buffer immediately — same as "
                         "touching the paddle");
     g->addWidget(stopBtn, 0, 3);
+    // 0-BEAT lives here too: with this window open the type-ahead line
+    // owns the keyboard, so the main window's Z shortcut never fires
+    // (live report: "hitting Z and nothing happens — maybe it sleeps").
+    auto* zapBtn = new QPushButton("0-BEAT", this);
+    zapBtn->setToolTip("Zero-beat the strongest signal in the passband —\n"
+                       "same as Z in the main window. Lands the note on\n"
+                       "your sidetone pitch, then refines.");
+    g->addWidget(zapBtn, 0, 4);
+    connect(zapBtn, &QPushButton::clicked, this,
+            [this] { emit zeroBeatRequested(); });
 
     // Row 1: type-ahead line
     line_ = new QLineEdit(this);
@@ -85,7 +95,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
                       "keyer\n(Backspace unsends a not-yet-sent character).\n"
                       "%mc = your call, %c = the LOG panel callsign.\n"
                       "Esc or the paddle stops everything instantly.");
-    g->addWidget(line_, 1, 0, 1, 4);
+    g->addWidget(line_, 1, 0, 1, 5);
 
     // Row 2: what went out this over + send-mode toggles. Three send
     // styles: neither box = the whole line waits for Enter; Word keys =
@@ -223,7 +233,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     rx_->setStyleSheet("QPlainTextEdit { background: #0d1218; color: "
                        "#9fe89f; border: 1px solid #3a4a5e; border-radius: "
                        "3px; font-family: monospace; font-size: 16px; }");
-    g->addWidget(rx_, 6, 0, 1, 4);
+    g->addWidget(rx_, 6, 0, 1, 5);
     connect(rxClear, &QPushButton::clicked, rx_, &QPlainTextEdit::clear);
     connect(rxOn_, &QCheckBox::toggled, this, [this](bool on) {
         QSettings().setValue("cw/rxDecode", on);
@@ -232,7 +242,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
 
     // Row 7: status
     status_ = new QLabel(this);
-    g->addWidget(status_, 7, 0, 1, 4);
+    g->addWidget(status_, 7, 0, 1, 5);
 
     connect(wpm_, &QSpinBox::valueChanged, this, [this](int v) {
         wk_->setSpeed(v);

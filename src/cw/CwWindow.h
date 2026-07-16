@@ -53,6 +53,7 @@ signals:
     // element instead of reacting to its overload.
     void txImminent();
     void rxNrChanged(bool on);              // RNNoise toggle (RADIO source)
+    void zeroBeatRequested();               // 0-BEAT button (Z lives here now)
     // Decode-engine adjustments changed (engine, som, deep, attack, decay).
     void rxDecodeConfigChanged(bool eng, bool som, bool deep, int atk,
                                int dcy);
