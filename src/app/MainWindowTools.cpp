@@ -225,6 +225,12 @@ void MainWindow::setupCwUi() {
                         cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
                 connect(audioSrc_, &AudioCwSource::pitchMeasured,
                         cwWin_, &CwWindow::setRxPitch);
+                connect(audioSrc_, &AudioCwSource::pitchMeasured, this,
+                        [this](double hz) {
+                            lastPitchHz_ = hz;
+                            lastPitchMs_ =
+                                QDateTime::currentMSecsSinceEpoch();
+                        });
                 connect(audioSrc_, &AudioCwSource::statusChanged, this,
                         [this](const QString& t) {
                             statusBar()->showMessage(t, 6000);

@@ -27,7 +27,10 @@ default screen distorts grabs.
 The selftest prints `[layout] window WxH layout-min WxH`. The layout
 minimum must stay ≤ **1808 px** wide on the offscreen platform (the
 operator's screen is 1920; past that the window manager loses the
-maximize button — happened twice). **New toolbar buttons go on the second
+maximize button — happened twice). Measure with a CLEAN config
+(`XDG_CONFIG_HOME=<tmp>`): the operator's live settings can add width
+(e.g. Large VFO digits ≈ +14 px → 1822, still fine on 1920) — that's
+his trade-off, not a regression. The budget is about the CODE's floor. **New toolbar buttons go on the second
 deck (`topLay2_`), never the first (`topLay`).** Each tool is built by its
 own `setup*Ui()` in `src/app/MainWindowTools.cpp`; add a new function
 there plus one call in the constructor.
