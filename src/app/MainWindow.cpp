@@ -1218,19 +1218,29 @@ MainWindow::MainWindow(QWidget* parent)
         lastOverloads_ = ov;
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         const bool predicted = now - txPredictMs_ < 1500;
-        const bool tx = radioTx_ || tuning_ || dvrTxPlayback_ || predicted
-                        || burst >= 3;
+        // Overload bursts alone are NOT transmit evidence: a hot band can
+        // hold the ADC in sustained overload and fire the same rapid
+        // events, and treating that as TX flapped the gain in a 300 ms
+        // slam/restore loop (live-found on the first post-restart look:
+        // "spikes, drops out, comes back"). TX = the radio says so, or
+        // the console keyed it, or keying is predicted; the callback
+        // panic still covers a paddle's first ~250 ms until the meter
+        // confirms.
+        const bool tx = radioTx_ || tuning_ || dvrTxPlayback_ || predicted;
         if (burst > 0) panicked_ = true;   // callback may have slammed gain
         if (tx) lastTxMs_ = now;
         if (!txMonAct_->isChecked()) return;
-        // A lone RX overload (broadcast peak) also fires the callback
-        // panic; if no TX evidence follows within ~300 ms, quietly put the
-        // logical receive gains back — a sub-half-second dip instead of a
-        // full hang. Real TX gets confirmed and promoted below.
+        // Unconfirmed panic (RX overload): restore the receive gains and
+        // BACK OFF the panic trigger for 5 s — chronic RX overload is Auto
+        // LNA's job (its attack steps the LNA), not the TX monitor's.
         if (panicked_ && !txMonOn_ && !tx
             && now - sdr_.lastOverloadMs() > 300) {
             panicked_ = false;
             sdr_.setGainLive(sdr_.gainReduction(), sdr_.lnaState());
+            sdr_.setTxPanic(false);
+            QTimer::singleShot(5000, this, [this] {
+                if (txMonAct_->isChecked()) sdr_.setTxPanic(true);
+            });
         }
         if (tx && !txMonOn_) {
             txMonOn_ = true;
