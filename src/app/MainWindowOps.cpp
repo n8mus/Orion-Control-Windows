@@ -281,8 +281,14 @@ void MainWindow::recallStack(int band, int reg) {
                             .arg(kBands[band].label).arg(kStackNames[reg]);
     const uint64_t f =
         s.value(key + "freq", QVariant::fromValue<qulonglong>(seed.hz)).toULongLong();
-    const Mode m = static_cast<Mode>(
+    Mode m = static_cast<Mode>(
         s.value(key + "mode", static_cast<int>(seed.mode)).toInt());
+    // Operator's rule: CW is always CWU, every band — one tuning direction
+    // to keep in your head. CWL is reachable only by the deliberate X-key
+    // flip (QRM dodging / aural zero-beat); the band stamp fires 1.5 s
+    // after any change, so a register stamped mid-flip must not strand
+    // the next recall in CWL.
+    if (m == Mode::CWL) m = Mode::CWU;
     const int bw  = std::clamp(s.value(key + "bw",  seed.bwHz).toInt(),
                                100, bwMaxFor(m));
     const int pbt = std::clamp(s.value(key + "pbt", seed.pbtHz).toInt(), -8000, 8000);
