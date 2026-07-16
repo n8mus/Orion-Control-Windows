@@ -239,6 +239,9 @@ void MainWindow::setupCwUi() {
                             rxWanted_ = on;
                             applyRouting();
                         });
+                audioSrc_->setNr(QSettings().value("cw/nr", false).toBool());
+                connect(cwWin_, &CwWindow::rxNrChanged, this,
+                        [this](bool on) { audioSrc_->setNr(on); });
                 connect(cwWin_, &CwWindow::txImminent, this, [this] {
                     txPredictMs_ = QDateTime::currentMSecsSinceEpoch();
                 });

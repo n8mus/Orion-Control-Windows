@@ -53,6 +53,7 @@ senders and weak-signal cases are the hard set.
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
 | `rotortest` | rotctld client | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
 | `watchtest` | DX-watch pattern matching | — |
+| `nrtest` | noise-reduction ruler: keyed 550 Hz tone at swept SNR through {none, RNNoise, SpectralNr} into the audio-path decoder. Verdict 2026-07-16: RNNoise perfect to -6 dB; our SpectralNr lost and stays test-only | — |
 
 Run the relevant tests plus a selftest sizing check before every commit.
 `cwtest` full matrix currently scores 94% — treat any drop as a

@@ -6,6 +6,7 @@
 #include <vector>
 
 class QProcess;
+struct DenoiseState;
 
 namespace ttc {
 
@@ -31,6 +32,12 @@ public:
     void stop();
     bool running() const;
 
+    // RNNoise ahead of the decoder. Ruler verdict (tests/nrtest,
+    // 2026-07-16): perfect copy to -6 dB SNR where raw audio busts and a
+    // tone-tuned spectral gate barely helps — the speech-trained net
+    // protects a tonal carrier beautifully. ~10 ms latency.
+    void setNr(bool on);
+
 signals:
     void statusChanged(const QString& text);
 
@@ -41,6 +48,10 @@ private:
     QProcess* proc_ = nullptr;
     QByteArray carry_;                     // odd trailing byte between reads
     std::vector<std::complex<float>> buf_;
+    bool nrOn_ = false;
+    DenoiseState* nrSt_ = nullptr;         // lazily created, reset on start
+    std::vector<float> nrIn_;              // 480-sample frame accumulator
+    int nrFill_ = 0;
 };
 
 } // namespace ttc

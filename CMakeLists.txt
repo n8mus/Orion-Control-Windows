@@ -71,7 +71,7 @@ add_executable(tentec-console
   resources/resources.qrc
 )
 target_include_directories(tentec-console PRIVATE src)
-target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort)
+target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort rnnoise)
 
 # Offline harnesses (not built by default): synthetic-IQ skimmer test and
 # the fldigi XML-RPC client test (pair with tests/fake_fldigi.py).
@@ -124,6 +124,13 @@ add_executable(cohtest EXCLUDE_FROM_ALL
   src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/dsp/Fft.cpp)
 target_include_directories(cohtest PRIVATE src)
 target_link_libraries(cohtest PRIVATE Qt6::Core)
+
+add_executable(nrtest EXCLUDE_FROM_ALL
+  tests/nrtest.cpp
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp
+  src/audio/SpectralNr.cpp src/dsp/Fft.cpp)
+target_include_directories(nrtest PRIVATE src)
+target_link_libraries(nrtest PRIVATE Qt6::Core rnnoise)
 
 add_executable(watchtest EXCLUDE_FROM_ALL
   tests/watchtest.cpp

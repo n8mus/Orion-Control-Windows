@@ -180,6 +180,12 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     auto* trkLay = new QHBoxLayout(trk);
     trkLay->setContentsMargins(0, 0, 0, 0);
     trkLay->setSpacing(4);
+    nr_ = new QCheckBox("NR", trk);
+    nr_->setChecked(QSettings().value("cw/nr", false).toBool());
+    nr_->setToolTip("AI noise reduction (RNNoise) ahead of the decoder —\n"
+                    "RADIO source only. Ruler: perfect copy to -6 dB SNR\n"
+                    "where raw audio busts. ~10 ms extra latency.");
+    trkLay->addWidget(nr_);
     atk_ = new QComboBox(trk);
     atk_->addItems({"ATK slow", "ATK norm", "ATK fast"});
     atk_->setCurrentIndex(QSettings().value("cw/attack", 1).toInt());
@@ -198,15 +204,18 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         s.setValue("cw/deep", deep_->isChecked());
         s.setValue("cw/attack", atk_->currentIndex());
         s.setValue("cw/decay", dcy_->currentIndex());
+        QSettings().setValue("cw/nr", nr_->isChecked());
         emit rxDecodeConfigChanged(fldEng_->isChecked(), som_->isChecked(),
                                    deep_->isChecked(), atk_->currentIndex(),
                                    dcy_->currentIndex());
+        emit rxNrChanged(nr_->isChecked());
     };
     connect(fldEng_, &QCheckBox::toggled, this, decodeChanged);
     connect(som_, &QCheckBox::toggled, this, decodeChanged);
     connect(deep_, &QCheckBox::toggled, this, decodeChanged);
     connect(atk_, &QComboBox::currentIndexChanged, this, decodeChanged);
     connect(dcy_, &QComboBox::currentIndexChanged, this, decodeChanged);
+    connect(nr_, &QCheckBox::toggled, this, decodeChanged);
 
     rx_ = new QPlainTextEdit(this);
     rx_->setReadOnly(true);

@@ -52,6 +52,7 @@ signals:
     // cwdaemon) — the TX monitor can drop SDR gain BEFORE the first
     // element instead of reacting to its overload.
     void txImminent();
+    void rxNrChanged(bool on);              // RNNoise toggle (RADIO source)
     // Decode-engine adjustments changed (engine, som, deep, attack, decay).
     void rxDecodeConfigChanged(bool eng, bool som, bool deep, int atk,
                                int dcy);
@@ -81,6 +82,7 @@ private:
     QCheckBox* som_ = nullptr;           // fuzzy character matching
     QCheckBox* deep_ = nullptr;          // weak-signal narrow filter
     QCheckBox* radioSrc_ = nullptr;      // decode from SignaLink audio
+    QCheckBox* nr_ = nullptr;            // RNNoise ahead of the decoder
     QComboBox* atk_ = nullptr;           // tracker attack speed
     QComboBox* dcy_ = nullptr;           // tracker decay speed
     QPlainTextEdit* rx_ = nullptr;       // decoded-CW readout
