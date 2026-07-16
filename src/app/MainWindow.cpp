@@ -1146,6 +1146,11 @@ MainWindow::MainWindow(QWidget* parent)
                 const float pk = iqPeak_.exchange(0.0f);
                 if (pk <= 0.0f || replayThread_) return;   // no live stream
                 if (txMonOn_ || radioTx_) return;  // TX peaks aren't band state
+                // Panic-slammed samples make the band look QUIET — feeding
+                // them to the release logic ratcheted the LNA to 0 today
+                // (live-found: spur forest + persisted sdr/lna=0). Sit the
+                // window out entirely.
+                if (panicked_) return;
                 if (!autoLnaBox->isChecked()) return;
                 const double dbfs = 20.0 * std::log10(double(pk));
                 const auto d = autoLna_.tick(
@@ -1179,9 +1184,11 @@ MainWindow::MainWindow(QWidget* parent)
         "shows cleanly on the panadapter (keying envelope, speech width)\n"
         "instead of overload hash. Restores receive gain ~1 s after unkey.");
     sdr_.setTxPanic(txMonAct_->isChecked());
+    txMonEnabled_.store(txMonAct_->isChecked(), std::memory_order_relaxed);
     connect(txMonAct_, &QAction::toggled, this, [this](bool on) {
         QSettings().setValue("sdr/txMon", on);
         sdr_.setTxPanic(on);
+        txMonEnabled_.store(on, std::memory_order_relaxed);
         if (!on && txMonOn_) {
             txMonOn_ = false;
             sdr_.setGainLive(txSaveGr_, txSaveLna_);
@@ -2255,9 +2262,13 @@ MainWindow::MainWindow(QWidget* parent)
                 + kRsp2LnaDb[std::clamp(sdr_.lnaState(), 0, 8)];
             // Clipped frames are hash, not signal: while the ADC reports
             // overload (the first ms of TX before the panic slam lands),
-            // freeze the display instead of painting the splash.
-            if (QDateTime::currentMSecsSinceEpoch() - sdr_.lastOverloadMs()
-                < 150) return;
+            // freeze the display instead of painting the splash. ONLY when
+            // the TX monitor is enabled — chronic RX overload must stay
+            // VISIBLE (the operator needs to see it, and unchecking the
+            // feature must actually disable all of it; live-found).
+            if (txMonEnabled_.load(std::memory_order_relaxed)
+                && QDateTime::currentMSecsSinceEpoch()
+                       - sdr_.lastOverloadMs() < 150) return;
             lastSdrMeasDb_ = meas;
             smeter_->setSdrLevel(meas + sdrCalDb_);
             lastSpectrum_ = std::move(copy);          // CW zap reads this
@@ -2272,8 +2283,11 @@ MainWindow::MainWindow(QWidget* parent)
         spectrum_.addSamples(iq);
         // During ADC clip (TX onset) the stream is broadband hash — keep
         // it out of the decoders; the display freeze handles the eyes.
+        // Gated on the TX monitor toggle like the freeze.
         const bool clipped =
-            QDateTime::currentMSecsSinceEpoch() - sdr_.lastOverloadMs() < 150;
+            txMonEnabled_.load(std::memory_order_relaxed)
+            && QDateTime::currentMSecsSinceEpoch() - sdr_.lastOverloadMs()
+                   < 150;
         if (!clipped) {
             cwDec_->processIq(iq.data(), iq.size());
             skim_->processIq(iq.data(), iq.size());

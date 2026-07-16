@@ -247,6 +247,7 @@ private:
     qint64   lastTxMs_ = 0;
     qint64   txPredictMs_ = 0;             // console is about to key (CW win)
     bool     panicked_ = false;            // event-callback slam may be live
+    std::atomic<bool> txMonEnabled_{true}; // checkbox mirror (SDR thread reads)
     int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns
     unsigned lastOverloads_ = 0;
     IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)
