@@ -60,7 +60,8 @@ protected:
 
 private:
     // Omni appended last so stored meterStyle indices never shift again.
-    enum Style { Analog = 0, Edge, Led, Cross, Eye, Omni, kStyleCount };
+    // Append-only: stored meterStyle indices must never shift.
+    enum Style { Analog = 0, Edge, Led, Cross, Eye, Omni, Tr7, kStyleCount };
     enum RxMode { Sig = 0, Avg, Peak, kModeCount };
     enum Source { SrcRadio = 0, SrcSdr };
 
@@ -75,6 +76,7 @@ private:
     void   paintEdge(class QPainter& p);    // RX + TX faces (edgewise)
     void   paintLed(class QPainter& p);     // segmented LED bargraph
     void   paintCross(class QPainter& p);   // TX cross-needle (RX = analog)
+    void   paintTr7(class QPainter& p);     // Drake TR-7 homage (blue, white ink)
     void   paintEye(class QPainter& p);     // magic-eye tube
     void   paintOmni(class QPainter& p);    // Omni VII TFT bargraph
     QString sUnitsText(double db) const;  // "S7" / "S9+23"

@@ -31,6 +31,12 @@ const QColor kIvoryLo(231, 219, 188);
 const QColor kBezel(40, 46, 56);
 const QColor kInk(30, 28, 24);           // scale/needle black
 const QColor kRed(196, 40, 32);          // over-S9 / over-100W zone
+// Drake TR-7 homage face: lamp-lit blue with white markings (operator's
+// photo, 2026-07-16 — "S UNITS ... DECIBELS" over "20 40 60 100 200W").
+const QColor kTr7Hi(58, 118, 214);
+const QColor kTr7Lo(10, 24, 62);
+const QColor kTr7Ink(236, 243, 252);     // white scale lettering
+const QColor kTr7Needle(14, 18, 28);     // dark silhouette needle
 const QColor kNeedleRed(210, 32, 22);    // instant-reading needle
 const QColor kNeedlePeak(20, 74, 160);   // peak needle (blue, Jon's ask)
 const QColor kGhost(120, 116, 104);      // peak ghost needle (ivory faces)
@@ -195,6 +201,7 @@ void SMeterWidget::applyStyle() {
         case Cross:   setFixedSize(230, 96); break;
         case Eye:     setFixedSize(170, 96); break;
         case Omni:    setFixedSize(280, 60); break;
+        case Tr7:     setFixedSize(230, 96); break;
     }
     static const char* styleName[] = {"Orion", "Edge", "LED", "Cross-needle",
                                       "Magic eye", "Omni-VII"};
@@ -272,6 +279,7 @@ void SMeterWidget::paintEvent(QPaintEvent*) {
         case Cross:   paintCross(p); break;
         case Eye:     paintEye(p); break;
         case Omni:    paintOmni(p); break;
+        case Tr7:     paintTr7(p); break;
     }
 }
 
@@ -398,6 +406,147 @@ void SMeterWidget::paintAnalog(QPainter& p) {
                    Qt::AlignRight, mode_ == Avg ? "AVG" : "PK");
     }
     drawSdrTag(p, face.left() + 8, face.top() + 5, kInk);
+}
+
+// ---------------------------------------------------------------- TR-7 style
+// Drake TR-7 homage: wide blue lamp-lit face, white markings, S-units +
+// decibels-over on the outer arc, the TR-7's 200 W power scale on the
+// inner. One movement, two printed scales, exactly like the original —
+// RX reads the top, TX the bottom.
+void SMeterWidget::paintTr7(QPainter& p) {
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF face(1.5, 1.5, width() - 3.0, height() - 3.0);
+    p.setPen(QPen(kBezel, 3));
+    QLinearGradient g(face.topLeft(), face.bottomLeft());
+    g.setColorAt(0.0, kTr7Hi);
+    g.setColorAt(1.0, kTr7Lo);
+    p.setBrush(g);
+    p.drawRoundedRect(face, 7, 7);
+    {   // soft lamp glow behind the lettering
+        QRadialGradient rg(QPointF(width() / 2.0, face.top() + 18),
+                           width() * 0.55);
+        rg.setColorAt(0.0, QColor(120, 175, 255, 70));
+        rg.setColorAt(1.0, QColor(0, 0, 0, 0));
+        p.setPen(Qt::NoPen);
+        p.setBrush(rg);
+        p.drawRoundedRect(face, 7, 7);
+    }
+
+    const QPointF pivot(width() / 2.0, height() + 46.0);
+    const double Rs = pivot.y() - 13.0;
+    const double Rw = Rs - 22.0;
+    const double aL = 122.0, aR = 58.0;
+    const auto ptAt = [&](double frac, double r) {
+        const double a = (aL - (aL - aR) * frac) * M_PI / 180.0;
+        return QPointF(pivot.x() + r * std::cos(a), pivot.y() - r * std::sin(a));
+    };
+    const QRectF arcRectS(pivot.x() - Rs, pivot.y() - Rs, 2 * Rs, 2 * Rs);
+    p.setPen(QPen(kTr7Ink, 1.4));
+    p.drawArc(arcRectS, static_cast<int>(aR * 16),
+              static_cast<int>((aL - aR) * 16));
+
+    QFont f = p.font(); f.setPixelSize(9); f.setBold(true); p.setFont(f);
+    const auto labelAt = [&](double frac, double r, const QString& t) {
+        const QPointF pt = ptAt(frac, r);
+        p.drawText(QRectF(pt.x() - 13, pt.y() - 6, 26, 12), Qt::AlignCenter, t);
+    };
+    // top scale: S 1..9 (odd labels), then decibels-over 10/30/60
+    for (int sN = 1; sN <= 9; ++sN) {
+        const double fr = scaleFrac((sN - 9) * 6.0);
+        p.setPen(QPen(kTr7Ink, sN & 1 ? 1.6 : 1.0));
+        p.drawLine(ptAt(fr, Rs - (sN & 1 ? 7 : 4)), ptAt(fr, Rs));
+        if (sN & 1) {
+            p.setPen(kTr7Ink);
+            labelAt(fr, Rs - 15, QString::number(sN));
+        }
+    }
+    for (int over : {10, 30, 60}) {
+        const double fr = scaleFrac(over);
+        p.setPen(QPen(kTr7Ink, 1.6));
+        p.drawLine(ptAt(fr, Rs - 7), ptAt(fr, Rs));
+        p.setPen(kTr7Ink);
+        // Label nudges (ticks stay true): +10 clears S9 to its right,
+        // which then crowded 30 — 30 slides toward 60 (operator-tuned).
+        const double lf = over == 10 ? fr + 0.035
+                        : over == 30 ? fr + 0.030 : fr;
+        labelAt(lf, Rs - 15, over == 10 ? "+10" : QString::number(over));
+    }
+    // captions, photo-faithful: S UNITS left, DECIBELS right
+    QFont fc = p.font(); fc.setPixelSize(7); fc.setBold(true);
+    fc.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
+    p.setFont(fc);
+    p.setPen(kTr7Ink);
+    p.drawText(QRectF(face.left() + 8, face.top() + 4, 90, 10),
+               Qt::AlignLeft, "S UNITS");
+    p.drawText(QRectF(face.right() - 98, face.top() + 4, 90, 10),
+               Qt::AlignRight, "DECIBELS");
+
+    // bottom scale: the TR-7's 200 W line (a 100 W rig reads mid-scale,
+    // exactly as it would on the real meter)
+    constexpr double kTr7MaxW = 200.0;
+    // Square-law watt scale (voltage-linear), like real wattmeter faces —
+    // a linear map crammed 20/40/60 into the left corner (screenshot-found).
+    const auto wFrac = [&](double w) {
+        return std::sqrt(std::clamp(w / kTr7MaxW, 0.0, 1.0));
+    };
+    QFont fw = p.font(); fw.setPixelSize(7); fw.setBold(true); p.setFont(fw);
+    for (int w : {20, 40, 60, 100, 200}) {
+        const double fr = wFrac(w);
+        p.setPen(QPen(kTr7Ink, w >= 100 ? 1.5 : 1.0));
+        p.drawLine(ptAt(fr, Rw - 5), ptAt(fr, Rw));
+        p.setPen(kTr7Ink);
+        // 40/60 print too close at this size — spread the labels apart
+        // (40 toward 20, 60 toward 100); ticks stay true.
+        const double lf = w == 40 ? fr - 0.018
+                        : w == 60 ? fr + 0.018 : fr;
+        labelAt(lf, Rw - 11,
+                w == 200 ? QStringLiteral("200W") : QString::number(w));
+    }
+
+    // homage wordmark
+    QFont fo("DejaVu Sans");
+    fo.setPixelSize(10);
+    fo.setBold(true);
+    fo.setLetterSpacing(QFont::AbsoluteSpacing, 2.0);
+    p.setFont(fo);
+    p.setPen(kTr7Ink);
+    p.drawText(QRectF(0, height() - 34, width(), 12), Qt::AlignHCenter,
+               "TR-7");
+
+    // needles: pale peak ghost under a dark silhouette needle
+    const bool rx = !tx_;
+    const double instFrac = rx ? scaleFrac(needleDb_) : wFrac(needleW_);
+    const double peakFrac = rx ? scaleFrac(peakDb_) : wFrac(peakW_);
+    if (haveReading_ || !rx) {
+        p.setPen(QPen(QColor(190, 215, 250, 150), 1.6, Qt::SolidLine,
+                      Qt::RoundCap));
+        p.drawLine(ptAt(peakFrac, Rs * 0.40), ptAt(peakFrac, Rs - 6));
+    }
+    p.setPen(QPen(kTr7Needle, 2.4, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(ptAt(instFrac, Rs * 0.36), ptAt(instFrac, Rs - 5));
+
+    // readouts
+    f.setPixelSize(12); p.setFont(f);
+    p.setPen(kTr7Ink);
+    if (rx) {
+        p.drawText(QRectF(face.left() + 8, face.bottom() - 18, 90, 15),
+                   Qt::AlignLeft | Qt::AlignVCenter, sUnitsText(displayDb()));
+    } else {
+        p.drawText(QRectF(face.left() + 8, face.bottom() - 18, 90, 15),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("%1 W").arg(fwdW_, 0, 'f', 0));
+        p.setPen(swr_ > 2.5 ? QColor(255, 120, 110) : kTr7Ink);
+        p.drawText(QRectF(face.right() - 98, face.bottom() - 18, 90, 15),
+                   Qt::AlignRight | Qt::AlignVCenter,
+                   QString("SWR %1").arg(swr_, 0, 'f', 1));
+    }
+    if (rx && mode_ != Sig) {
+        f.setPixelSize(9); p.setFont(f);
+        p.setPen(QColor(255, 170, 150));
+        p.drawText(QRectF(face.right() - 40, face.bottom() - 16, 32, 12),
+                   Qt::AlignRight, mode_ == Avg ? "AVG" : "PK");
+    }
+    drawSdrTag(p, face.left() + 8, face.top() + 15, kTr7Ink);
 }
 
 // --------------------------------------------------------------- Edge style
