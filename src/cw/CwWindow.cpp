@@ -153,6 +153,11 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     g->addWidget(rxOn_, 4, 0);
     rxWpm_ = new QLabel(this);
     rxWpm_->setStyleSheet("color: #6aa5d8;");
+    // Always rich text: with AutoText the tagless placeholder string
+    // ("— WPM&nbsp;·&nbsp;— Hz") is detected as PLAIN text and the
+    // entities print literally — a "&nbsp;" flash every time the tone
+    // drops out (live-found).
+    rxWpm_->setTextFormat(Qt::RichText);
     // Reserve the widest text this label will ever show: its width must
     // NEVER change at runtime, or the stretched grid re-negotiates and
     // the whole row visibly bounces at the pitch-update rate (live
