@@ -3,6 +3,7 @@
 #include "cw/WinKeyer.h"
 
 #include <QCheckBox>
+#include <algorithm>
 #include <cmath>
 #include <QComboBox>
 #include <QGridLayout>
@@ -96,6 +97,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
                       "keyer\n(Backspace unsends a not-yet-sent character).\n"
                       "%mc = your call, %c = the LOG panel callsign.\n"
                       "Esc or the paddle stops everything instantly.");
+    line_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     g->addWidget(line_, 1, 0, 1, 5);
 
     // Row 2: what went out this over + send-mode toggles. Three send
@@ -248,7 +250,8 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     // Row 7: status
     status_ = new QLabel(this);
     g->addWidget(status_, 7, 0, 1, 5);
-    g->setRowStretch(6, 1);                // spare height -> the decode pane
+    g->setRowStretch(1, 1);                // spare height: 1/3 to the entry
+    g->setRowStretch(6, 2);                // ... 2/3 to the decode pane
     for (int c = 0; c < 5; ++c)            // spare width -> spread evenly
         g->setColumnStretch(c, 1);
 
@@ -440,6 +443,15 @@ void CwWindow::updateRxInfo() {
                      .arg(qRound(rxPitchVal_));
     }
     rxWpm_->setText(parts.join("&nbsp;·&nbsp;"));
+}
+
+// The entry line grows with the window — and its FONT grows with it, so
+// a big window means CW you can read from across the shack.
+void CwWindow::resizeEvent(QResizeEvent* e) {
+    QDialog::resizeEvent(e);
+    QFont f = line_->font();
+    f.setPixelSize(std::clamp(int(line_->height() * 0.45), 18, 44));
+    line_->setFont(f);
 }
 
 void CwWindow::keyPressEvent(QKeyEvent* e) {

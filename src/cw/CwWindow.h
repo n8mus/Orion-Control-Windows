@@ -63,6 +63,7 @@ protected:
     void showEvent(QShowEvent* e) override;
     void hideEvent(QHideEvent* e) override;
     void keyPressEvent(QKeyEvent* e) override;
+    void resizeEvent(QResizeEvent* e) override;
 
 private:
     QString substitute(QString t) const; // %mc / %c
