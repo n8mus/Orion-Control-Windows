@@ -1234,9 +1234,12 @@ MainWindow::MainWindow(QWidget* parent)
         // panic still covers a paddle's first ~250 ms until the meter
         // confirms.
         const bool tx = radioTx_ || tuning_ || dvrTxPlayback_ || predicted;
-        if (burst > 0) panicked_ = true;   // callback may have slammed gain
         if (tx) lastTxMs_ = now;
-        if (!txMonAct_->isChecked()) return;
+        if (!txMonAct_->isChecked()) {
+            panicked_ = false;             // disabled = nothing slams; a
+            return;                        // latched flag was muting Auto
+        }                                  // LNA (live-found: stuck LNA 0)
+        if (burst > 0) panicked_ = true;   // callback may have slammed gain
         // Unconfirmed panic (RX overload): restore the receive gains and
         // BACK OFF the panic trigger for 5 s — chronic RX overload is Auto
         // LNA's job (its attack steps the LNA), not the TX monitor's.
