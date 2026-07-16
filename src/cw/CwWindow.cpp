@@ -152,6 +152,12 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     g->addWidget(rxOn_, 4, 0);
     rxWpm_ = new QLabel(this);
     rxWpm_->setStyleSheet("color: #6aa5d8;");
+    // Reserve the widest text this label will ever show: its width must
+    // NEVER change at runtime, or the stretched grid re-negotiates and
+    // the whole row visibly bounces at the pitch-update rate (live
+    // report: "a bounce related to the Hz readout").
+    rxWpm_->setMinimumWidth(
+        rxWpm_->fontMetrics().horizontalAdvance("88 WPM · 8888 Hz") + 12);
     g->addWidget(rxWpm_, 4, 1);
     radioSrc_ = new QCheckBox("RADIO src", this);
     radioSrc_->setChecked(QSettings().value("cw/rxRadio", false).toBool());
@@ -430,19 +436,27 @@ void CwWindow::setRxPitch(double hz) {
 // "18 WPM · 547 Hz" — the Hz is the RADIO's actual audio tone (measured
 // like fldigi does), GREEN when within +/-10 Hz of the operator's pitch
 // (cw/pitchHz, 550) and amber when off: on-the-note at a glance instead
-// of consulting fldigi's waterfall (operator's spec).
+// of consulting fldigi's waterfall (operator's spec). Both slots always
+// render (em-dash placeholders) so the text width stays constant, and
+// the shown Hz only moves when the measurement really moved (>1.5 Hz)
+// — no last-digit flicker.
 void CwWindow::updateRxInfo() {
-    QStringList parts;
-    if (rxWpmVal_ > 0)
-        parts << QString("%1 WPM").arg(rxWpmVal_);
-    if (rxPitchVal_ > 0) {
+    static double shownHz = -1.0;
+    if (rxPitchVal_ < 0) shownHz = -1.0;
+    else if (shownHz < 0 || std::abs(rxPitchVal_ - shownHz) > 1.5)
+        shownHz = rxPitchVal_;
+    const QString wpmPart =
+        rxWpmVal_ > 0 ? QString("%1 WPM").arg(rxWpmVal_)
+                      : QStringLiteral("— WPM");
+    QString hzPart = QStringLiteral("— Hz");
+    if (shownHz > 0) {
         const int target = QSettings().value("cw/pitchHz", 550).toInt();
-        const bool on = std::abs(rxPitchVal_ - target) <= 10.0;
-        parts << QString("<span style='color:%1'>%2 Hz</span>")
+        const bool on = std::abs(shownHz - target) <= 10.0;
+        hzPart = QString("<span style='color:%1'>%2 Hz</span>")
                      .arg(on ? "#8fd48f" : "#e0b060")
-                     .arg(qRound(rxPitchVal_));
+                     .arg(qRound(shownHz));
     }
-    rxWpm_->setText(parts.join("&nbsp;·&nbsp;"));
+    rxWpm_->setText(wpmPart + "&nbsp;·&nbsp;" + hzPart);
 }
 
 // The entry line grows with the window — and its FONT grows with it, so
