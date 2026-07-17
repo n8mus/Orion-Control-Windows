@@ -8,9 +8,11 @@
 #include <QCheckBox>
 #include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QLineEdit>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QStandardPaths>
 #include <algorithm>
 
 namespace ttc {
@@ -22,6 +24,34 @@ QLabel* makeCaption(const QString& text, QWidget* parent) {
     return l;
 }
 } // namespace
+
+// The fleet folder: images whose FILENAME is the display name shown in the
+// SHIP gallery ("Warp speed Mr Scott.jpg" -> "Warp speed Mr Scott").
+QString DisplayPanel::shipDir() {
+    return QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
+           + "/starships";
+}
+
+// Rescan the folder into the gallery combo, keeping the current pick (from
+// display/shipImagePath) selected. Called at build, when BACKGND flips to
+// Ship, and after an import — images dropped into the folder by any other
+// means (a file manager, the assistant fetching one) appear on the next flip.
+void DisplayPanel::reloadShips() {
+    const QSignalBlocker b(ship_);
+    ship_->clear();
+    QDir d(shipDir());
+    const QStringList files = d.entryList(
+        {"*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp", "*.avif"},
+        QDir::Files, QDir::Name);
+    for (const QString& f : files)
+        ship_->addItem(QFileInfo(f).completeBaseName(), d.filePath(f));
+    ship_->addItem(QStringLiteral("Add ship…"));
+    const QString curName = QFileInfo(
+        QSettings().value("display/shipImagePath").toString())
+                                .completeBaseName();
+    const int i = ship_->findText(curName);
+    if (i >= 0) ship_->setCurrentIndex(i);
+}
 
 // Sized ~150% (like the AUDIO popup): these get adjusted mid-operation, so
 // bigger targets beat compactness.
@@ -99,25 +129,34 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     bg_->addItems(PanadapterWidget::backgroundNames());
     g->addWidget(bg_, 5, 1, 1, 2);
 
+    // The fleet gallery (live when BACKGND = Ship): every image in
+    // ~/Pictures/starships listed BY NAME — the filename is the name —
+    // plus "Add ship…" to import a new one into the folder. No file
+    // dialog on ordinary swaps (operator's spec).
+    g->addWidget(makeCaption("SHIP", this), 6, 0);
+    ship_ = new QComboBox(this);
+    g->addWidget(ship_, 6, 1, 1, 2);
+    reloadShips();
+
     // Map brightness (only live for the map backdrops): separate day-side
     // and night-side levels, so the map can pop without drowning the trace.
-    g->addWidget(makeCaption("MAP DAY", this), 6, 0);
+    g->addWidget(makeCaption("MAP DAY", this), 7, 0);
     mapDay_ = new QSlider(Qt::Horizontal, this);
     mapDay_->setRange(30, 120);
     mapDay_->setFixedWidth(225);
     mapDayVal_ = new QLabel(this);
     mapDayVal_->setFixedWidth(70);
-    g->addWidget(mapDay_, 6, 1);
-    g->addWidget(mapDayVal_, 6, 2);
+    g->addWidget(mapDay_, 7, 1);
+    g->addWidget(mapDayVal_, 7, 2);
 
-    g->addWidget(makeCaption("MAP NIGHT", this), 7, 0);
+    g->addWidget(makeCaption("MAP NIGHT", this), 8, 0);
     mapNight_ = new QSlider(Qt::Horizontal, this);
     mapNight_->setRange(0, 60);
     mapNight_->setFixedWidth(225);
     mapNightVal_ = new QLabel(this);
     mapNightVal_->setFixedWidth(70);
-    g->addWidget(mapNight_, 7, 1);
-    g->addWidget(mapNightVal_, 7, 2);
+    g->addWidget(mapNight_, 8, 1);
+    g->addWidget(mapNightVal_, 8, 2);
 
     fill_ = new QCheckBox("Fill spectrum", this);
     peak_ = new QCheckBox("Peak hold", this);
@@ -153,40 +192,42 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
         "X key: CW⇄CWR flip — if the note's pitch doesn't change,\n"
         "you are perfectly zero-beat (by ear, no spectrum needed).");
     call_ = new QCheckBox("Callsign watermark", this);
-    g->addWidget(fill_, 8, 0, 1, 3);
-    g->addWidget(peak_, 9, 0, 1, 3);
-    g->addWidget(grid_, 10, 0, 1, 3);
-    g->addWidget(solar_, 11, 0, 1, 3);
-    g->addWidget(rose_, 12, 0, 1, 3);
-    g->addWidget(plan_, 13, 0, 1, 3);
-    g->addWidget(bigVfo_, 14, 0, 1, 3);
-    g->addWidget(clock_, 15, 0, 1, 3);
-    g->addWidget(wfTime_, 16, 0, 1, 3);
-    g->addWidget(cursor_, 17, 0, 1, 3);
-    g->addWidget(zap_, 18, 0, 1, 3);
-    g->addWidget(call_, 19, 0, 1, 3);
+    g->addWidget(fill_, 9, 0, 1, 3);
+    g->addWidget(peak_, 10, 0, 1, 3);
+    g->addWidget(grid_, 11, 0, 1, 3);
+    g->addWidget(solar_, 12, 0, 1, 3);
+    g->addWidget(rose_, 13, 0, 1, 3);
+    g->addWidget(plan_, 14, 0, 1, 3);
+    g->addWidget(bigVfo_, 15, 0, 1, 3);
+    g->addWidget(clock_, 16, 0, 1, 3);
+    g->addWidget(wfTime_, 17, 0, 1, 3);
+    g->addWidget(cursor_, 18, 0, 1, 3);
+    g->addWidget(zap_, 19, 0, 1, 3);
+    g->addWidget(call_, 20, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 20, 0);
+    g->addWidget(makeCaption("CALL", this), 21, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 20, 1, 1, 2);
+    g->addWidget(callEdit_, 21, 1, 1, 2);
 
     // Station grid square: centers the compass rose (and any future
     // bearing/distance math). 4 or 6 characters.
-    g->addWidget(makeCaption("GRID", this), 21, 0);
+    g->addWidget(makeCaption("GRID", this), 22, 0);
     gridEdit_ = new QLineEdit(this);
     gridEdit_->setMaxLength(6);
     gridEdit_->setToolTip("Your Maidenhead grid square (4 or 6 chars), e.g. EN82fq");
-    g->addWidget(gridEdit_, 21, 1, 1, 2);
+    g->addWidget(gridEdit_, 22, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
         rangeVal_->setText(QString("%1 dB").arg(range_->value()));
         mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));
         mapNightVal_->setText(QString("%1 %").arg(mapNight_->value()));
-        const bool isMap = bg_->currentIndex() >= 2;
-        mapDay_->setEnabled(isMap);
+        const int bg = bg_->currentIndex();
+        const bool isMap = bg >= 2 && bg <= 5;
+        mapDay_->setEnabled(isMap || bg == 6);     // ship art: Day = brightness
         mapNight_->setEnabled(isMap);
+        ship_->setEnabled(bg == 6);
     };
     connect(ref_,   &QSlider::valueChanged, this, [this, updateLabels] {
         updateLabels();
@@ -208,15 +249,17 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(speed_, &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(pal_,   &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(bg_, &QComboBox::currentIndexChanged, this, [this, updateLabels](int idx) {
-        // Last entry = "Map: Custom…" — ask for the image right here. Cancel
-        // with no previous custom pick bounces back to the prior backdrop.
-        if (idx == bg_->count() - 1) {
+        // Index 5 = "Map: Custom…" (a FIXED index): ask for the image right
+        // here. Cancel with no previous pick bounces back to the prior
+        // backdrop. Index 6 = "Ship" — no dialog; the SHIP gallery row
+        // below picks the artwork.
+        if (idx == 5) {
             QSettings s;
             const QString cur = s.value("display/mapCustomPath").toString();
             const QString f = QFileDialog::getOpenFileName(
-                this, "Choose a world map / backdrop image",
+                this, "Choose a world map image",
                 cur.isEmpty() ? QDir::homePath() : cur,
-                "Images (*.jpg *.jpeg *.png *.bmp)");
+                "Images (*.jpg *.jpeg *.png *.bmp *.webp *.avif)");
             if (!f.isEmpty()) {
                 s.setValue("display/mapCustomPath", f);
             } else if (cur.isEmpty()) {
@@ -226,8 +269,35 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
                 return;
             }
         }
+        if (idx == 6) reloadShips();               // folder may have grown
         prevBg_ = idx;
         updateLabels();
+        emitChanged();
+    });
+    connect(ship_, &QComboBox::activated, this, [this](int idx) {
+        // Last entry = "Add ship…": import an image into the fleet folder
+        // (copied in, so the gallery survives the source file moving).
+        if (idx == ship_->count() - 1) {
+            const QString f = QFileDialog::getOpenFileName(
+                this, "Add a ship to the fleet folder", QDir::homePath(),
+                "Images (*.jpg *.jpeg *.png *.bmp *.webp *.avif)");
+            QString sel;
+            if (!f.isEmpty()) {
+                QDir().mkpath(shipDir());
+                const QString dst = shipDir() + "/" + QFileInfo(f).fileName();
+                QFile::copy(f, dst);
+                QSettings().setValue("display/shipImagePath", dst);
+                sel = QFileInfo(f).completeBaseName();
+            }
+            reloadShips();                         // re-sync + restore choice
+            if (!sel.isEmpty()) {
+                const int i = ship_->findText(sel);
+                if (i >= 0) { const QSignalBlocker b(ship_); ship_->setCurrentIndex(i); }
+            }
+        } else {
+            QSettings().setValue("display/shipImagePath",
+                                 ship_->itemData(idx).toString());
+        }
         emitChanged();
     });
     connect(fill_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
@@ -319,9 +389,12 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     rangeVal_->setText(QString("%1 dB").arg(range_->value()));
     mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));
     mapNightVal_->setText(QString("%1 %").arg(mapNight_->value()));
-    const bool isMap = bg_->currentIndex() >= 2;
-    mapDay_->setEnabled(isMap);
+    const int bg = bg_->currentIndex();
+    const bool isMap = bg >= 2 && bg <= 5;
+    mapDay_->setEnabled(isMap || bg == 6);         // ship art: Day = brightness
     mapNight_->setEnabled(isMap);
+    reloadShips();                                 // folder may have grown
+    ship_->setEnabled(bg == 6);
 }
 
 void DisplayPanel::setCallsign(const QString& call) {

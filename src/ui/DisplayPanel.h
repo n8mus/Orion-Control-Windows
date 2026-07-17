@@ -32,6 +32,8 @@ signals:
 
 private:
     void emitChanged();
+    void reloadShips();            // fleet-folder scan -> SHIP gallery combo
+    static QString shipDir();      // ~/Pictures/starships
 
     QSlider*   ref_    = nullptr;
     QLabel*    refVal_ = nullptr;
@@ -41,6 +43,7 @@ private:
     QComboBox* speed_  = nullptr;
     QComboBox* pal_    = nullptr;
     QComboBox* bg_     = nullptr;
+    QComboBox* ship_   = nullptr;  // fleet gallery (live when bg = Ship)
     QSlider*   mapDay_   = nullptr;   // map day-side brightness (maps only)
     QLabel*    mapDayVal_ = nullptr;
     QSlider*   mapNight_ = nullptr;   // map night-side brightness

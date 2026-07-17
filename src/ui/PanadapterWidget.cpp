@@ -73,10 +73,16 @@ QStringList PanadapterWidget::paletteNames() {
 }
 
 QStringList PanadapterWidget::backgroundNames() {
-    // Index >= 2 = a world-map backdrop (kFirstMapBg); "Custom…" (last entry)
-    // loads any user image, path in QSettings display/mapCustomPath.
+    // Stored-enum rule: indices persist in settings — append only. 2..5 =
+    // world-map backdrops (5 = "Map: Custom…", a FIXED index, image path in
+    // display/mapCustomPath). 6 = "Ship" — artwork chosen BY NAME from the
+    // DisplayPanel's fleet gallery (~/Pictures/starships; the filename is
+    // the name), cover-cropped and dimmed under the trace (path lands in
+    // display/shipImagePath; the Day slider doubles as brightness).
+    // Code-drawn ship blueprints sailed here briefly and were struck from
+    // the register as tacky.
     return {"Dark", "Blue Rays", "Map: Classic", "Map: Vegetation",
-            "Map: Night lights", "Map: Custom…"};
+            "Map: Night lights", "Map: Custom…", "Ship"};
 }
 
 namespace {
@@ -106,6 +112,31 @@ QImage renderBlueRays(int w, int h) {
         g.setColorAt(1.00, QColor(0, 0, 0, 0));
         p.fillRect(QRect(0, 0, w, h), g);
     }
+    return img;
+}
+
+// "Ship: Custom…" backdrop: the operator's chosen artwork (any image on
+// disk), cover-cropped to fill the spectrum area, dimmed to backdrop
+// strength (brightPct = the Day slider), with the same fade-to-dark floor
+// the maps use so the trace baseline stays readable. Nothing is committed
+// to the repo — the path lives in QSettings display/shipImagePath.
+QImage renderShipImage(int w, int h, const QImage& art, int brightPct) {
+    if (art.isNull()) return renderBlueRays(w, h);
+    QImage img(w, h, QImage::Format_RGB32);
+    img.fill(QColor(6, 9, 16));
+    QPainter p(&img);
+    QImage scaled = art.scaled(w, h, Qt::KeepAspectRatioByExpanding,
+                               Qt::SmoothTransformation);
+    p.drawImage(QPoint((w - scaled.width()) / 2, (h - scaled.height()) / 2),
+                scaled);
+    // Dim to backdrop strength (Day slider %, same feel as the maps).
+    const int dim = 255 - std::clamp(brightPct, 5, 100) * 255 / 100;
+    p.fillRect(QRect(0, 0, w, h), QColor(4, 7, 14, dim));
+    const int fadeH = std::min(h / 4, 60);
+    QLinearGradient fade(0, h - fadeH, 0, h);
+    fade.setColorAt(0.0, QColor(12, 16, 22, 0));
+    fade.setColorAt(1.0, QColor(12, 16, 22, 235));
+    p.fillRect(QRect(0, h - fadeH, w, fadeH), fade);
     return img;
 }
 
@@ -219,13 +250,16 @@ QImage renderWorldMap(int w, int h, const QImage& earth,
 } // namespace
 
 const QImage& PanadapterWidget::backgroundImage(int w, int h) {
-    const bool isMap = ds_.background >= 2;        // any map variant
+    const bool isMap = ds_.background >= 2 && ds_.background <= 5;
+    const bool isShip = ds_.background == 6;       // Ship: Custom…
     const qint64 minute = isMap
         ? QDateTime::currentSecsSinceEpoch() / 60 : 0;      // grayline advances
     if (bgMode_ != ds_.background || bgW_ != w || bgH_ != h
         || bgMinute_ != minute
         || bgDay_ != ds_.mapDay || bgNight_ != ds_.mapNight
-        || bgSun_ != ds_.showSolar) {
+        || bgSun_ != ds_.showSolar
+        || (isShip && QSettings().value("display/shipImagePath").toString()
+                          != mapSrcKey_)) {      // re-pick applies live
         if (isMap) {
             // Pick + decode the basemap only when the source changes; the
             // custom entry re-reads its path so a new pick applies live.
@@ -243,6 +277,16 @@ const QImage& PanadapterWidget::backgroundImage(int w, int h) {
             }
             bgCache_ = renderWorldMap(w, h, mapSrc_, ds_.mapDay, ds_.mapNight,
                                       ds_.showSolar, solSfi_, solA_, solK_);
+        } else if (isShip) {
+            // Same decode-once cache as the maps; a new picker choice
+            // changes the key and reloads live.
+            const QString key =
+                QSettings().value("display/shipImagePath").toString();
+            if (key != mapSrcKey_) {
+                mapSrc_ = QImage(key).convertToFormat(QImage::Format_RGB32);
+                mapSrcKey_ = key;
+            }
+            bgCache_ = renderShipImage(w, h, mapSrc_, ds_.mapDay);
         } else {
             bgCache_ = renderBlueRays(w, h);
         }
