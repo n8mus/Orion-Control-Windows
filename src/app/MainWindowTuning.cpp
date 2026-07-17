@@ -252,6 +252,25 @@ void MainWindow::tuneAbsolute(uint64_t f) {
     freqDisp_->setFrequency(f);
     pan_->setCenterHz(f);                       // keep grid labels on the dial
     syncBandRegister();                         // mirror the move into the stack
+    // Mode follows the band plan — but ONLY for console-commanded tunes
+    // (every one funnels through here: clicks, spot clicks, band buttons,
+    // freq entry). Dial-follow from the radio's knob never consults this,
+    // so the radio can always overrule. Digital sessions and SAM own their
+    // mode, a deliberate X-key CWL flip counts as CW and is left alone,
+    // and out-of-band/60 m frequencies change nothing. Escape hatch:
+    // QSettings tune/modeByFreq=false.
+    if (!digital_ && !samActive_
+        && QSettings().value("tune/modeByFreq", true).toBool()) {
+        bool known = false;
+        const Mode pm = planModeForFreq(f, known);
+        const bool cwAlready = pm == Mode::CWU
+            && (rigMode_ == Mode::CWU || rigMode_ == Mode::CWL);
+        if (known && pm != rigMode_ && !cwAlready)
+            QTimer::singleShot(120, this, [this, pm] {  // trail the retune:
+                applyMode(pm);                          // the Orion drops cmds
+                panel_->showMode(pm);                   // while it's busy
+            });
+    }
 #ifdef HAVE_SDRPLAY
     sdr_.setCenterFrequency(static_cast<double>(f + kLoOffsetHz));
 #endif
@@ -261,6 +280,11 @@ void MainWindow::tuneAbsolute(uint64_t f) {
 void MainWindow::applyMode(Mode m) {
     radio_->setMode(Rx::Main, m);
     rigMode_ = m;
+    // Prime the poll debounce with the TARGET: steady-state polls keep
+    // pendingPolledMode_ equal to the old mode, so a stale report already
+    // in flight would count as "seen twice" and revert this set on the
+    // spot (live-observed: every console mode press bounced straight back).
+    pendingPolledMode_ = m;
     rigctld_.cacheMode(m);
     refreshPassbandOverlay();
     refreshNotchOverlay();

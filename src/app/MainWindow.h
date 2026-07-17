@@ -199,6 +199,11 @@ private:
 
     // Radio filter state (from polling) and mode-aware passband mapping.
     Mode rigMode_  = Mode::USB;
+    // Last polled mode that differed from rigMode_. A polled change must
+    // arrive twice in a row before it's believed: one torn serial read
+    // parsing as LSB got adopted and band-stamped onto CW registers
+    // (live-observed on 20 m — every recall then flipped the radio to LSB).
+    Mode pendingPolledMode_ = Mode::USB;
     int  rigBwHz_  = 2400;
     int  rigPbtHz_ = 0;
 

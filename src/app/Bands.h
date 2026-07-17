@@ -106,4 +106,34 @@ inline int bandIndexOf(uint64_t hz) {
     return -1;
 }
 
+// ---- Mode follows the band plan -------------------------------------------
+// The dial's segment decides the mode: CW windows are CWU (operator's rule:
+// CW is always upper), everything else is USB above 10 MHz, and below 10 MHz
+// the FT8/data islands are USB with the remaining phone segment LSB. Only
+// console-commanded tunes consult this (see tuneAbsolute) — dial-follow from
+// the radio's own knob never does, so the radio can always overrule.
+struct PlanSeg { uint64_t lo, hi; };
+inline constexpr PlanSeg kPlanCw[] = {          // same windows the skimmer uses
+    {1800000, 1840000},  {3500000, 3570000},  {7000000, 7070000},
+    {10100000, 10130000},{14000000, 14070000},{18068000, 18095000},
+    {21000000, 21070000},{24890000, 24912000},{28000000, 28070000},
+    {50000000, 50100000}};
+inline constexpr PlanSeg kPlanDataLow[] = {     // sub-10 MHz USB data islands
+    {1840000, 1850000},  {3570000, 3600000},  {7070000, 7125000}};
+
+// known=false: out of band, or 60 m (channel logic owns mode there).
+inline Mode planModeForFreq(uint64_t hz, bool& known) {
+    known = false;
+    const int band = bandIndexOf(hz);
+    if (band < 0 || is60m(band)) return Mode::USB;
+    for (const PlanSeg& s : kPlanCw)
+        if (hz >= s.lo && hz < s.hi) { known = true; return Mode::CWU; }
+    known = true;
+    if (hz >= 29520000 && hz <= 29700000) return Mode::FM;  // 10 m repeaters
+    if (hz >= 10000000) return Mode::USB;
+    for (const PlanSeg& s : kPlanDataLow)
+        if (hz >= s.lo && hz < s.hi) return Mode::USB;
+    return Mode::LSB;
+}
+
 } // namespace ttc

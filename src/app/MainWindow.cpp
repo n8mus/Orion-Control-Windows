@@ -1406,6 +1406,14 @@ MainWindow::MainWindow(QWidget* parent)
     // Radio state -> mode-sided passband overlay (LSB hangs below the carrier).
     connect(radio_, &RadioController::modeReported, this, [this](Rx rx, Mode m) {
         if (rx == Rx::Sub) { subMode_ = m; return; }
+        // Believe a polled mode CHANGE only when two consecutive reports
+        // agree — a single torn read must not repaint the panel, restamp
+        // the band register, or flip the passband overlay.
+        if (m != rigMode_ && m != pendingPolledMode_) {
+            pendingPolledMode_ = m;
+            return;
+        }
+        pendingPolledMode_ = m;
         rigctld_.cacheMode(m);                      // clients always see true mode
         if (samActive_ && m == samEngine_)          // SAM's engine reporting in:
             panel_->clearModeSelection();           // keep SAM as the lit mode

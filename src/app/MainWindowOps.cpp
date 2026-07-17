@@ -275,47 +275,21 @@ void MainWindow::syncBandRegister() {
 }
 
 void MainWindow::recallStack(int band, int reg) {
+    // FREQUENCY ONLY. The Orion's real band stack is unreadable over CAT,
+    // and the shadow copy we kept here applied its stored mode/filter on
+    // every recall — which fought the radio and the operator whenever the
+    // stored mode wasn't what they wanted next (poisoned stamps put LSB on
+    // CW registers; legitimate phone stamps ambushed CW sessions the same
+    // way). Operator's verdict: the radio owns mode. A band button hops to
+    // the last frequency used on that band and touches nothing else.
     const StackDef& seed = kBands[band].stack[reg];
     QSettings s;
     const QString key = QString("band/%1/%2/")
                             .arg(kBands[band].label).arg(kStackNames[reg]);
     const uint64_t f =
         s.value(key + "freq", QVariant::fromValue<qulonglong>(seed.hz)).toULongLong();
-    Mode m = static_cast<Mode>(
-        s.value(key + "mode", static_cast<int>(seed.mode)).toInt());
-    // Operator's rule: CW is always CWU, every band — one tuning direction
-    // to keep in your head. CWL is reachable only by the deliberate X-key
-    // flip (QRM dodging / aural zero-beat); the band stamp fires 1.5 s
-    // after any change, so a register stamped mid-flip must not strand
-    // the next recall in CWL.
-    if (m == Mode::CWL) m = Mode::CWU;
-    const int bw  = std::clamp(s.value(key + "bw",  seed.bwHz).toInt(),
-                               100, bwMaxFor(m));
-    const int pbt = std::clamp(s.value(key + "pbt", seed.pbtHz).toInt(), -8000, 8000);
-
-    // The Orion silently drops CAT commands that arrive while it is busy with
-    // a mode switch (it reconfigures the DSP and recalls the per-mode filter —
-    // set commands have no ACK, so nothing notices). Bursting *RMM then *AF
-    // meant the radio never retuned on a recall while the console's stack
-    // letter cycled anyway. Sequence it instead: frequency first while the
-    // radio is idle, mode once the tune has landed, this register's filter
-    // once the mode switch has settled (overriding the Orion's own per-mode
-    // filter recall; applyMode's 400 ms re-query then confirms it).
     tuneAbsolute(f);                            // syncs curBand_ (may guess a register)
     curReg_ = reg;                              // explicit recall wins over the guess
-    QTimer::singleShot(120, this, [this, m] {
-        applyMode(m);
-        panel_->showMode(m);
-    });
-    QTimer::singleShot(450, this, [this, bw, pbt] {
-        radio_->setBandwidthHz(Rx::Main, bw);
-        radio_->setPbtHz(Rx::Main, pbt);
-    });
-    rigBwHz_  = bw;                             // optimistic UI; poll confirms
-    rigPbtHz_ = pbt;
-    rigctld_.cacheBandwidth(bw);
-    panel_->showPbt(pbt);
-    refreshPassbandOverlay();
     panel_->showBandStack(reg);
     s.setValue(QString("band/%1/reg").arg(kBands[band].label), reg);
     statusBar()->showMessage(QString("band %1m stack %2  ->  %3 MHz")
