@@ -162,8 +162,24 @@ void MainWindow::setupLogUi() {
         if (!park.isEmpty())
             adif += tag("SIG", "POTA") + tag("SIG_INFO", park);
         adif += "<EOR>";
-        logUdp_->writeDatagram(adif.toUtf8(), QHostAddress::LocalHost,
-            quint16(QSettings().value("log/port", 2334).toInt()));
+        const quint16 port =
+            quint16(QSettings().value("log/port", 2334).toInt());
+        // UDP is fire-and-forget: a LOG press with cqrlog closed vanished
+        // into the void while we reported success (live-found — operator
+        // logged a call two minutes before starting cqrlog). If we can
+        // BIND the bridge port, nobody is listening: keep the fields and
+        // say so instead of lying.
+        {
+            QUdpSocket probe;
+            if (probe.bind(QHostAddress::LocalHost, port)) {
+                statusBar()->showMessage(
+                    QString("LOG: cqrlog is not listening on UDP %1 — "
+                            "start cqrlog, then press LOG again (QSO kept)")
+                        .arg(port), 10000);
+                return;
+            }
+        }
+        logUdp_->writeDatagram(adif.toUtf8(), QHostAddress::LocalHost, port);
         statusBar()->showMessage(
             QString("QSO %1 sent to cqrlog (%2 %3 MHz)")
                 .arg(call, mode)
@@ -205,6 +221,18 @@ void MainWindow::setupCwUi() {
             cwWin_->setMyCall(QSettings()
                 .value("station/callsign", "N8EM").toString());
             cwWin_->setHisCall(logCall_ ? logCall_->text() : QString());
+            // Double-clicked call in the decode pane rides the same rails
+            // as a spot click: LOG call field, QSO clock armed, %c macro.
+            connect(cwWin_, &CwWindow::callDoubleClicked, this,
+                    [this](const QString& call) {
+                        if (!logCall_) return;
+                        logCall_->setText(call);
+                        qsoStartUtc_ = QDateTime::currentDateTimeUtc();
+                        cwWin_->setHisCall(call);
+                        statusBar()->showMessage(
+                            QString("log call ← %1 (from CW copy)")
+                                .arg(call), 5000);
+                    });
             if (cwDec_) {                  // SDR-fed CW reader plumbing
                 connect(cwDec_, &CwDecoder::textDecoded,
                         cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);

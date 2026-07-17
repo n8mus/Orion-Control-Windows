@@ -11,6 +11,9 @@
 #include <QHostAddress>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QRegularExpression>
+#include <QTextBlock>
 #include <QLabel>
 #include <QMenu>
 #include <QLineEdit>
@@ -253,6 +256,9 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
                        "#9fe89f; border: 1px solid #3a4a5e; border-radius: "
                        "3px; font-family: monospace; font-size: 16px; }");
     g->addWidget(rx_, 6, 0, 1, 5);
+    rx_->setToolTip("Decoded CW. Double-click a callsign to put it in the "
+                    "LOG panel\n(and the %c macro); right-click to erase.");
+    rx_->viewport()->installEventFilter(this);   // double-click call capture
     connect(rxClear, &QPushButton::clicked, rx_, &QPlainTextEdit::clear);
     // Erase where the mouse already is: right-click the decode text
     // itself (in addition to the Clear button on the row above).
@@ -487,6 +493,42 @@ void CwWindow::updateRxInfo() {
 
 // The entry line grows with the window — and its FONT grows with it, so
 // a big window means CW you can read from across the shack.
+// The fldigi gesture: double-click a decoded token; if it's shaped like a
+// callsign it goes to the owner (LOG panel + %c macro). Token = the
+// whitespace-delimited run around the click — Qt's own word selection
+// would split "W1AW/4" at the slash and "N8EM" survives only by luck of
+// the word-character table, so we cut the token ourselves.
+bool CwWindow::eventFilter(QObject* obj, QEvent* ev) {
+    if (rx_ && obj == rx_->viewport()
+        && ev->type() == QEvent::MouseButtonDblClick) {
+        auto* me = static_cast<QMouseEvent*>(ev);
+        const QTextCursor c = rx_->cursorForPosition(me->pos());
+        const QString line = c.block().text();
+        int i = std::min(c.positionInBlock(), int(line.size()) - 1);
+        if (line.isEmpty() || i < 0) return true;
+        int a = i, b = i;
+        while (a > 0 && !line[a - 1].isSpace()) --a;
+        while (b < int(line.size()) && !line[b].isSpace()) ++b;
+        QString tok = line.mid(a, b - a).toUpper();
+        tok.remove(QRegularExpression(QStringLiteral("[^A-Z0-9/]")));
+        // Callsign shape incl. portable forms (K2J/4, F/N8EM). Needs the
+        // digit-in-the-middle structure, so CQ/TU/73/5NN never match.
+        static const QRegularExpression callRe(QStringLiteral(
+            "^(?:[A-Z0-9]{1,3}/)?"
+            "(?:[A-Z]{1,2}|[0-9][A-Z]|[A-Z][0-9])[0-9]{1,2}[A-Z]{1,4}"
+            "(?:/[A-Z0-9]{1,4})?$"));
+        if (callRe.match(tok).hasMatch()) {
+            QTextCursor sel = c;               // show what was grabbed
+            sel.setPosition(c.block().position() + a);
+            sel.setPosition(c.block().position() + b, QTextCursor::KeepAnchor);
+            rx_->setTextCursor(sel);
+            emit callDoubleClicked(tok);
+        }
+        return true;                           // suppress Qt word-select
+    }
+    return QDialog::eventFilter(obj, ev);
+}
+
 void CwWindow::resizeEvent(QResizeEvent* e) {
     QDialog::resizeEvent(e);
     QFont f = line_->font();

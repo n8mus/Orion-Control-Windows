@@ -56,6 +56,9 @@ signals:
     void txImminent();
     void rxNrChanged(bool on);              // RNNoise toggle (RADIO source)
     void zeroBeatRequested();               // 0-BEAT button (Z lives here now)
+    // Double-click on a callsign-shaped token in the decode pane: the
+    // fldigi move — copy says who they are, one gesture logs them.
+    void callDoubleClicked(const QString& call);
     // Decode-engine adjustments changed (engine, som, deep, attack, decay).
     void rxDecodeConfigChanged(bool eng, bool som, bool deep, int atk,
                                int dcy);
@@ -65,6 +68,7 @@ protected:
     void hideEvent(QHideEvent* e) override;
     void keyPressEvent(QKeyEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
+    bool eventFilter(QObject* obj, QEvent* ev) override;  // rx_ dbl-click
 
 private:
     QString substitute(QString t) const; // %mc / %c
