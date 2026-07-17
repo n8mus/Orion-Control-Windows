@@ -16,3 +16,10 @@ NOTE ON LICENSING: this project is GPLv2-or-later because it is intended to
 build on the WDSP DSP library and the Thetis/PowerSDR (OpenHPSDR) lineage,
 which are GPLv2. Keeping this license lets us reuse that code directly. This
 constrains any future closed/commercial distribution — a deliberate choice.
+
+---
+
+The CW decode engine (src/cw/FldigiCwEngine.h/.cpp) is a port of fldigi's
+CW modem, Copyright (C) W1HKJ (David Freese) and contributors, licensed
+GPL-3.0-or-later. In combination, the work as a whole is distributed under
+the terms of the GNU General Public License version 3.
