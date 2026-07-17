@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "net/RotorClient.h"
 
+#include <QDateTime>
 #include <QTimer>
 
 namespace ttc {
+
+// A slow rotor (DCU-3 at 4800 Bd) can leave replies from a previous
+// backlog in flight; matched against new commands they read the
+// elevation line as azimuth and the needle snaps to North. When the
+// front command has waited this long, drop the connection — a
+// reconnect is the only way to guarantee both sides start clean.
+static constexpr qint64 kStaleMs = 4000;
 
 RotorClient::RotorClient(QObject* parent) : QObject(parent) {
     timer_ = new QTimer(this);
@@ -56,12 +64,18 @@ void RotorClient::poll() {
         return;
     }
     if (sock_.state() != QAbstractSocket::ConnectedState) return;
-    if (queue_.size() > 2) return;                // don't stack on a stall
+    if (!queue_.isEmpty()) {
+        if (QDateTime::currentMSecsSinceEpoch() - frontSentMs_ > kStaleMs)
+            sock_.abort();                        // resync via reconnect
+        return;                                   // one poll in flight max
+    }
     send(QStringLiteral("p"), 2);                 // az + el lines
 }
 
 void RotorClient::send(const QString& cmd, int expectLines) {
     if (sock_.state() != QAbstractSocket::ConnectedState) return;
+    if (queue_.isEmpty())
+        frontSentMs_ = QDateTime::currentMSecsSinceEpoch();
     queue_.push_back({cmd, expectLines});
     sock_.write((cmd + QLatin1Char('\n')).toLatin1());
 }
@@ -90,12 +104,19 @@ void RotorClient::onReadyRead() {
         gotLines_ << line;
         if (!rprt && gotLines_.size() < queue_.first().lines) continue;
         const Pending done = queue_.takeFirst();
+        if (!queue_.isEmpty())
+            frontSentMs_ = QDateTime::currentMSecsSinceEpoch();
         const QStringList lines = gotLines_;
         gotLines_.clear();
-        if (done.cmd == QLatin1String("p") && !rprt && lines.size() >= 1) {
-            bool ok = false;
-            const double az = lines[0].toDouble(&ok);
-            if (ok && az != az_) {
+        // A position reply must be exactly az + el, both numeric and in
+        // range — a desynced stream (elevation read as azimuth) fails
+        // this and is dropped instead of snapping the needle to North.
+        if (done.cmd == QLatin1String("p") && !rprt && lines.size() == 2) {
+            bool okAz = false, okEl = false;
+            const double az = lines[0].toDouble(&okAz);
+            const double el = lines[1].toDouble(&okEl);
+            if (okAz && okEl && az >= 0.0 && az < 360.0
+                && el >= -90.0 && el <= 90.0 && az != az_) {
                 az_ = az;
                 emit azimuthChanged(az_);
             }

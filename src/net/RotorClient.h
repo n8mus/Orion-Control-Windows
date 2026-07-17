@@ -50,6 +50,7 @@ private:
     QVector<Pending> queue_;               // [0] is in flight
     QStringList gotLines_;
     QByteArray buf_;
+    qint64 frontSentMs_ = 0;               // when queue_[0] hit the wire
 };
 
 } // namespace ttc

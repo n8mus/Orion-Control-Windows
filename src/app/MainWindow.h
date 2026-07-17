@@ -63,6 +63,12 @@ private:
     // called once from the constructor. New tools: add a function there
     // and a call in the constructor; buttons go on topLay2_.
     void setupLogUi();
+    // Populate-only nudge to cqrlog's New QSO window ("CQRLOOKUP:CALL..."
+    // on the same bridge port): cqrlog runs its callbook lookup and shows
+    // SP/LP rotor buttons; park+grid ride along from POTA spots so the
+    // azimuth points at the park, not the activator's home QTH.
+    void sendCqrLookup(const QString& call, const QString& park = {},
+                       const QString& grid = {});
     void setupCwUi();
     void setupSkimUi(const QString& stationCall);
     void setupDigiUi();

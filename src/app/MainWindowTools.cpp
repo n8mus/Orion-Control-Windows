@@ -193,15 +193,37 @@ void MainWindow::setupLogUi() {
     connect(logGo, &QPushButton::clicked, this, doLog);
     for (QLineEdit* e : {logCall_, logRstS_, logRstR_, logPark_})
         connect(e, &QLineEdit::returnPressed, this, doLog);
-    // Spot click -> prefill call (and park for POTA spots), arm the clock.
+    // Spot click -> prefill call (and park for POTA spots), arm the clock,
+    // and point cqrlog's New QSO window at the same station.
     connect(pan_, &PanadapterWidget::spotClicked, this,
             [this](const QString& call, QChar kind, const QString& tg) {
                 logCall_->setText(call);
                 logPark_->setText(kind == QChar('P') ? tg : QString());
                 qsoStartUtc_ = QDateTime::currentDateTimeUtc();
                 if (cwWin_) cwWin_->setHisCall(call);
+                QString park, grid;
+                if (kind == QChar('P')) {
+                    park = tg;
+                    for (const Spot& s : potaClient_.spots())
+                        if (s.call == call) { grid = s.grid; break; }
+                }
+                sendCqrLookup(call, park, grid);
             });
 
+}
+
+void MainWindow::sendCqrLookup(const QString& call, const QString& park,
+                               const QString& grid) {
+    const QString c = call.trimmed().toUpper();
+    if (c.isEmpty() || !logUdp_) return;
+    QString msg = "CQRLOOKUP:" + c;
+    if (!park.isEmpty()) msg += ";PARK:" + park.trimmed().toUpper();
+    if (!grid.isEmpty()) msg += ";GRID:" + grid.trimmed();
+    // Fire-and-forget on purpose: a click shouldn't nag when cqrlog is
+    // closed — the LOG button already does the is-anyone-listening probe.
+    logUdp_->writeDatagram(
+        msg.toUtf8(), QHostAddress::LocalHost,
+        quint16(QSettings().value("log/port", 2334).toInt()));
 }
 
 void MainWindow::setupCwUi() {
@@ -229,6 +251,7 @@ void MainWindow::setupCwUi() {
                         logCall_->setText(call);
                         qsoStartUtc_ = QDateTime::currentDateTimeUtc();
                         cwWin_->setHisCall(call);
+                        sendCqrLookup(call);
                         statusBar()->showMessage(
                             QString("log call ← %1 (from CW copy)")
                                 .arg(call), 5000);

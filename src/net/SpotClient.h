@@ -19,6 +19,7 @@ struct Spot {
     QString tag;
     double  lat = 999.0;     // station location if known (999 = unknown);
     double  lon = 999.0;     // POTA park coords, or cty.dat country center
+    QString grid;            // park grid6 from the POTA API; empty otherwise
 };
 
 // Minimal DX-cluster telnet client (the same feed KE9NS PowerSDR's Spotter
