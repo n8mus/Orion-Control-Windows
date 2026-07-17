@@ -35,6 +35,7 @@
 #include <QThread>
 #include <cstring>
 #include "ui/DisplayPanel.h"
+#include "ui/SetupDialog.h"
 #include "cw/CwDecoder.h"
 #include "cw/SkimmerEngine.h"
 #include "cw/SkimServer.h"
@@ -1001,6 +1002,8 @@ MainWindow::MainWindow(QWidget* parent)
                         .arg(QString(ship.label).mid(7)));
             });
         }
+        auto* setupAct = sdrMenu->addAction("Station setup…");
+        connect(setupAct, &QAction::triggered, this, &MainWindow::openSetup);
         sdrMenu->addSeparator();
     }
     auto* antGroup = new QActionGroup(this);
@@ -2428,7 +2431,9 @@ MainWindow::MainWindow(QWidget* parent)
                   ? "/dev/orion"
                   : "/dev/serial/by-id/usb-FTDI_FT4232H_Device_FT73ZILE-if03-port0")
               .toString().toStdString();
-    if (radio_->open(radioDev)) {
+    radioDevUsed_ = QString::fromStdString(radioDev);
+    radioUp_ = radio_->open(radioDev);
+    if (radioUp_) {
         radio_->queryFrequency(Rx::Main);            // one-shot sync at startup
         radio_->queryFrequency(Rx::Sub);             // VFO B readout
         radio_->queryVfoAssignment();                // routing matrices
@@ -2541,6 +2546,26 @@ MainWindow::MainWindow(QWidget* parent)
         audioPanel_->setEnabled(false);            // Orion output routing / monitor
         routing_->setSplitOnly(true);              // ANT + sub rows are Orion-only
     }
+
+    // First run on a new station: open the setup dialog once the window is
+    // up (alpha testers must point the console at THEIR hardware — the
+    // settings defaults are this station's). Completing it stamps
+    // setup/done; afterwards it lives in SDR menu → Station setup…
+    // Never under selftest: a modal dialog wedges the offscreen harness
+    // (its clean config always looks like a first run).
+    if (!QSettings().contains("setup/done") && !std::getenv("TTC_SELFTEST"))
+        QTimer::singleShot(800, this, &MainWindow::openSetup);
+}
+
+void MainWindow::openSetup() {
+    const QString keyerDev =
+        (cwWin_ && cwWin_->keyerOpen())
+            ? QSettings().value("cw/port").toString() : QString();
+    SetupDialog dlg(radioDevUsed_, keyerDev, radioUp_, this);
+    if (dlg.exec() == QDialog::Accepted)
+        statusBar()->showMessage(
+            "setup saved — radio, keyer and cluster changes apply on the "
+            "next launch", 8000);
 }
 
 MainWindow::~MainWindow() {

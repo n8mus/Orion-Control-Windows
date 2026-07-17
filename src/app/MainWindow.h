@@ -84,6 +84,7 @@ private:
     void stopManualTune();
     void setDigitalMode(bool on);      // line-in for digital vs mic for voice
     void applyTxProfile(int slot);     // recall a stored TX-audio bundle
+    void openSetup();                  // station-setup dialog (first run + SDR menu)
     void saveTxProfile(int slot);      // store current TX BW/PROC/MIC/PWR
     void pushVfoB();                   // VFO B dial+filter+TX state -> panadapter
     void saveBandMemory();             // stash freq/mode/filter in curBand_/curReg_
@@ -260,6 +261,8 @@ private:
     bool     panicked_ = false;            // event-callback slam may be live
     std::atomic<bool> txMonEnabled_{true}; // checkbox mirror (SDR thread reads)
     std::atomic<qint64> txCtxMs_{0};       // last TX-context ms (SDR thread reads)
+    QString  radioDevUsed_;                // serial path this instance opened
+    bool     radioUp_ = false;             // ...and whether the open succeeded
     int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns
     unsigned lastOverloads_ = 0;
     IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)

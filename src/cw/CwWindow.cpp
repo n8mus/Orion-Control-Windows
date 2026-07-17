@@ -406,6 +406,8 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     }
 }
 
+bool CwWindow::keyerOpen() const { return wk_->isOpen(); }
+
 void CwWindow::openKeyer() {
     if (wk_->isOpen()) return;
     QSettings s;

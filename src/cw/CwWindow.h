@@ -38,6 +38,7 @@ public:
     void setMyCall(const QString& call)  { myCall_ = call; }
     void setHisCall(const QString& call) { hisCall_ = call; }
     void openKeyer();                    // connect + handshake (idempotent)
+    bool keyerOpen() const;              // holds the serial port right now?
 
 public slots:
     void appendRx(const QString& text);  // decoded CW from the SDR reader
