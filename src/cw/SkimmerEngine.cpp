@@ -12,14 +12,23 @@
 namespace ttc {
 
 namespace {
-// US CW/data segments (where a skimmer is worth pointing). Wider band
-// edges live in Bands.h; these are the slices where straight CW happens.
+// Practical US CW windows (where straight CW actually happens — RBN
+// convention), each stopping BELOW the band's FT8/digital hotspot. The
+// first table used the full license allocations (40 m up to 7.125 etc.)
+// and the skimmer parked channels on the 7.074 FT8 blob all evening
+// (operator report: "on 40 m it is going way higher — wasted channels").
 struct Seg { qint64 lo, hi; };
 const Seg kCwSegs[] = {
-    {1800000, 1840000},   {3500000, 3600000},   {7000000, 7125000},
-    {10100000, 10130000}, {14000000, 14150000}, {18068000, 18110000},
-    {21000000, 21200000}, {24890000, 24930000}, {28000000, 28300000},
-    {50050000, 50100000},
+    {1800000, 1840000},   // 160 m
+    {3500000, 3570000},   // 80 m   (FT8 3.573)
+    {7000000, 7070000},   // 40 m   (FT8 7.074)
+    {10100000, 10130000}, // 30 m   (FT8 10.136)
+    {14000000, 14070000}, // 20 m   (FT8 14.074)
+    {18068000, 18095000}, // 17 m   (FT8 18.100)
+    {21000000, 21070000}, // 15 m   (FT8 21.074)
+    {24890000, 24912000}, // 12 m   (FT8 24.915)
+    {28000000, 28070000}, // 10 m   (FT8 28.074)
+    {50050000, 50100000}, // 6 m
 };
 
 // Callsign shape: 1-2 letter (or letter-digit) prefix, area digit(s),
@@ -110,6 +119,12 @@ void SkimmerEngine::updateFromSpectrum(const std::vector<float>& db,
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     for (auto& c : ch_) {
         if (!c.active) continue;
+        // Outside the CW window (parked on FT8 under the old wider table,
+        // or the dial hopped bands): reclaim immediately.
+        if (segLo != 0 && (c.hz < segLo || c.hz > segHi)) {
+            freeChannel(c);
+            continue;
+        }
         const qint64 idleSince = std::max(c.lastCharMs, c.assignedMs);
         if (nowMs - idleSince > 90000) { freeChannel(c); continue; }
         if (c.call.isEmpty() && nowMs - c.assignedMs > 45000
