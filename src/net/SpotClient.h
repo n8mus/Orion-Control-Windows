@@ -31,6 +31,7 @@ class SpotClient : public QObject {
     Q_OBJECT
 public:
     explicit SpotClient(QObject* parent = nullptr);
+    ~SpotClient() override;
 
     void configure(const QString& host, quint16 port, const QString& login);
     void setEnabled(bool on);

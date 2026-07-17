@@ -24,6 +24,19 @@ const QRegularExpression kHzOffRe(QStringLiteral(R"((\d{2,4})\s*HZ\b)"));
 const QRegularExpression kParkRe(QStringLiteral(R"(\b([A-Z0-9]{1,3}-\d{3,5})\b)"));
 } // namespace
 
+// Members destruct in REVERSE declaration order: the three QTimers die
+// BEFORE sock_ (declared first). A connected socket's ~QTcpSocket then
+// emits disconnected()/errorOccurred() mid-teardown, and the reconnect
+// lambda called start() on an already-destroyed QTimer — a use-after-free
+// planted at every exit with the cluster feed up, detected moments later
+// as "corrupted double-linked list" inside the same destructor (the three
+// 2026-07-16 cores; run to ground by ASan on the first pass). Sever our
+// connections before any member dies; abort() closes without ceremony.
+SpotClient::~SpotClient() {
+    sock_.disconnect(this);
+    sock_.abort();
+}
+
 SpotClient::SpotClient(QObject* parent) : QObject(parent) {
     connect(&sock_, &QTcpSocket::readyRead, this, &SpotClient::onData);
     connect(&sock_, &QTcpSocket::connected, this, [this] {
