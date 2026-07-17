@@ -19,7 +19,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ make qt6-base-dev qt6-serialport-dev \
-            librnnoise-dev libgl1-mesa-dev
+            libgl1-mesa-dev autoconf automake libtool curl
+
+      # Ubuntu doesn't package rnnoise — build the Xiph release from
+      # source (autogen fetches the model data).
+      - name: Build rnnoise
+        run: |
+          git clone --depth 1 https://gitlab.xiph.org/xiph/rnnoise.git /tmp/rnnoise
+          cd /tmp/rnnoise
+          ./autogen.sh
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
 
       - name: Reference check
         run: |
