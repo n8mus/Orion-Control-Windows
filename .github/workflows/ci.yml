@@ -1,6 +1,6 @@
 # Build + quick test tier on every push. No SDRplay on CI (proprietary,
 # user-installed) — the core app must always build without it. The layout
-# step enforces the 1808 px width budget; the reference check enforces the
+# step enforces the layout budget on a pinned-font ruler; the reference check enforces the
 # repo's no-proprietary-software-references rule.
 name: CI
 on:
@@ -19,7 +19,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ make qt6-base-dev qt6-serialport-dev \
-            libgl1-mesa-dev autoconf automake libtool curl
+            libgl1-mesa-dev autoconf automake libtool curl fonts-dejavu-core
 
       # Ubuntu doesn't package rnnoise — build the Xiph release from
       # source (autogen fetches the model data).
@@ -55,7 +55,11 @@ jobs:
           TTC_CWLEGACY=1 ./build/cwtest --quick | tee cw.out
           grep -q "TOTAL: 100%" cw.out
 
-      - name: Layout budget (max 1808 px)
+      # Pinned-font ruler (DejaVu Sans 10 via TTC_SELFTEST): reads 1848
+      # on every platform today; the bar catches layout GROWTH. The
+      # operational 1808 budget on the dev box's default font is enforced
+      # there (see CLAUDE.md width budget).
+      - name: Layout budget (pinned ruler, max 1850 px)
         run: |
           out=$(QT_QPA_PLATFORM=offscreen TTC_SELFTEST=3 \
                 TTC_RIGCTLD_PORT=14599 TTC_RADIO=orion \
@@ -63,4 +67,4 @@ jobs:
                 ./build/tentec-console 2>&1 | grep "\[layout\]")
           echo "$out"
           min=$(echo "$out" | sed -n 's/.*layout-min \([0-9]*\)x.*/\1/p')
-          test -n "$min" && test "$min" -le 1808
+          test -n "$min" && test "$min" -le 1850

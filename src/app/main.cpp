@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFont>
 #include <QIcon>
 #include <QScreen>
 #include <QStandardPaths>
@@ -75,6 +76,13 @@ int main(int argc, char** argv) {
     fprintf(stderr, "USS Orion console starting  %s  (built %s %s)\n",
             qPrintable(QDateTime::currentDateTime().toString(Qt::ISODate)),
             __DATE__, __TIME__);
+
+    // Pin the selftest font BEFORE any widget exists, so the layout-budget
+    // number is the same ruler on every platform: Ubuntu's default metrics
+    // measured 1841 where Arch measured 1808 for identical code (first CI
+    // run). DejaVu Sans ships on both.
+    if (std::getenv("TTC_SELFTEST"))
+        QApplication::setFont(QFont("DejaVu Sans", 10));
 
     ttc::MainWindow w;
     w.resize(1360, 600);                   // room for the dual-VFO/routing strip
