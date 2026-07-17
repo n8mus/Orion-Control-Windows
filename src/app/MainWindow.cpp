@@ -1219,11 +1219,13 @@ MainWindow::MainWindow(QWidget* parent)
         "While transmitting, drop the RSP2 gain hard so your own signal\n"
         "shows cleanly on the panadapter (keying envelope, speech width)\n"
         "instead of overload hash. Restores receive gain ~1 s after unkey.");
-    sdr_.setTxPanic(txMonAct_->isChecked());
+    // Panic arming is TX-scoped by the txTick below — never armed on a
+    // plain receive, no matter how hot the band runs the ADC.
+    sdr_.setTxPanic(false);
     txMonEnabled_.store(txMonAct_->isChecked(), std::memory_order_relaxed);
     connect(txMonAct_, &QAction::toggled, this, [this](bool on) {
         QSettings().setValue("sdr/txMon", on);
-        sdr_.setTxPanic(on);
+        if (!on) sdr_.setTxPanic(false);
         txMonEnabled_.store(on, std::memory_order_relaxed);
         if (!on && txMonOn_) {
             txMonOn_ = false;
@@ -1275,18 +1277,26 @@ MainWindow::MainWindow(QWidget* parent)
             panicked_ = false;             // disabled = nothing slams; a
             return;                        // latched flag was muting Auto
         }                                  // LNA (live-found: stuck LNA 0)
-        if (burst > 0) panicked_ = true;   // callback may have slammed gain
-        // Unconfirmed panic (RX overload): restore the receive gains and
-        // BACK OFF the panic trigger for 5 s — chronic RX overload is Auto
-        // LNA's job (its attack steps the LNA), not the TX monitor's.
+        // Arm the callback's panic slam ONLY around actual transmit
+        // context. Armed-at-all-times meant the SWBC-hour band's chronic
+        // RX overloads slammed the hardware gains, the restore needed
+        // 300 ms of overload silence the band never granted, and the
+        // latched panic muted Auto LNA — the one mechanism that would
+        // have tamed the band. Display blanked, meter dead, deadlock
+        // (live-found 2026-07-16 ~21:00 on 40 m).
+        sdr_.setTxPanic(tx || now - lastTxMs_ < 3000);
+        if (tx || txMonOn_)
+            txCtxMs_.store(now, std::memory_order_relaxed);
+        if (burst > 0 && (tx || txMonOn_))
+            panicked_ = true;              // callback may have slammed gain
+        // Unconfirmed panic: restore the receive gains once the overloads
+        // settle — or unconditionally 5 s past the last TX sign; chronic
+        // RX overload is Auto LNA's business, not the TX monitor's.
         if (panicked_ && !txMonOn_ && !tx
-            && now - sdr_.lastOverloadMs() > 300) {
+            && (now - sdr_.lastOverloadMs() > 300
+                || now - lastTxMs_ > 5000)) {
             panicked_ = false;
             sdr_.setGainLive(sdr_.gainReduction(), sdr_.lnaState());
-            sdr_.setTxPanic(false);
-            QTimer::singleShot(5000, this, [this] {
-                if (txMonAct_->isChecked()) sdr_.setTxPanic(true);
-            });
         }
         if (tx && !txMonOn_) {
             txMonOn_ = true;
@@ -2302,12 +2312,16 @@ MainWindow::MainWindow(QWidget* parent)
             // Clipped frames are hash, not signal: while the ADC reports
             // overload (the first ms of TX before the panic slam lands),
             // freeze the display instead of painting the splash. ONLY when
-            // the TX monitor is enabled — chronic RX overload must stay
-            // VISIBLE (the operator needs to see it, and unchecking the
-            // feature must actually disable all of it; live-found).
-            if (txMonEnabled_.load(std::memory_order_relaxed)
-                && QDateTime::currentMSecsSinceEpoch()
-                       - sdr_.lastOverloadMs() < 150) return;
+            // the TX monitor is enabled AND a transmission is actually in
+            // play — chronic RX overload must stay VISIBLE and must not
+            // starve the meter (live-found twice: the SWBC hour held the
+            // gate shut and the S-meter read S1 against the Orion's S9).
+            {
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                if (txMonEnabled_.load(std::memory_order_relaxed)
+                    && nowMs - txCtxMs_.load(std::memory_order_relaxed) < 2000
+                    && nowMs - sdr_.lastOverloadMs() < 150) return;
+            }
             lastSdrMeasDb_ = meas;
             smeter_->setSdrLevel(meas + sdrCalDb_);
             lastSpectrum_ = std::move(copy);          // CW zap reads this
@@ -2322,11 +2336,13 @@ MainWindow::MainWindow(QWidget* parent)
         spectrum_.addSamples(iq);
         // During ADC clip (TX onset) the stream is broadband hash — keep
         // it out of the decoders; the display freeze handles the eyes.
-        // Gated on the TX monitor toggle like the freeze.
+        // Gated on the TX monitor toggle AND real TX context, like the
+        // freeze (RX overloads must not gag the skimmer all evening).
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         const bool clipped =
             txMonEnabled_.load(std::memory_order_relaxed)
-            && QDateTime::currentMSecsSinceEpoch() - sdr_.lastOverloadMs()
-                   < 150;
+            && nowMs - txCtxMs_.load(std::memory_order_relaxed) < 2000
+            && nowMs - sdr_.lastOverloadMs() < 150;
         if (!clipped) {
             cwDec_->processIq(iq.data(), iq.size());
             skim_->processIq(iq.data(), iq.size());

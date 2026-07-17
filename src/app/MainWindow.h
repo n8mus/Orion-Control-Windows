@@ -259,6 +259,7 @@ private:
     qint64   lastPitchMs_ = 0;
     bool     panicked_ = false;            // event-callback slam may be live
     std::atomic<bool> txMonEnabled_{true}; // checkbox mirror (SDR thread reads)
+    std::atomic<qint64> txCtxMs_{0};       // last TX-context ms (SDR thread reads)
     int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns
     unsigned lastOverloads_ = 0;
     IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)
