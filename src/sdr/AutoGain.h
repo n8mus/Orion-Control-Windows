@@ -13,8 +13,11 @@ namespace ttc {
 //
 //   attack : peaks hotter than -4 dBFS -> one step MORE attenuation,
 //            fast (clipping must never persist).
-//   release: peaks colder than -16 dBFS for a sustained 30 s -> one
+//   release: peaks colder than -12 dBFS for a sustained 30 s -> one
 //            step LESS attenuation, slow (band pauses must not pump).
+//            Was -16: with attack at -4 that left a 12 dB dead zone a
+//            busy night band never leaves, so post-SWBC attenuation
+//            stuck at LNA 5 for hours (live-found 2026-07-16 ~23:30).
 //   lockout: after an attack, releases won't go back below the level
 //            that clipped for 10 minutes (no ping-pong when one loud
 //            broadcaster fades in and out).
@@ -85,7 +88,7 @@ public:
     }
 
     static constexpr double kAttackDb  = -4.0;
-    static constexpr double kReleaseDb = -16.0;
+    static constexpr double kReleaseDb = -12.0;
     static constexpr qint64 kReleaseMs = 30000;
     static constexpr qint64 kHoldMs    = 2500;
     static constexpr qint64 kLockoutMs = 600000;
