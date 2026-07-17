@@ -5,6 +5,8 @@
 #include <QFile>
 #include <QFont>
 #include <QIcon>
+#include <QLockFile>
+#include <QMessageBox>
 #include <QScreen>
 #include <QStandardPaths>
 #include <QTimer>
@@ -54,6 +56,27 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName("tentec-console");
     QApplication::setWindowIcon(QIcon(":/icon.png"));
 
+    // One instance per station: the CAT serial port (TIOCEXCL) and the
+    // SDR tuner are both exclusive, so a second launch comes up as a
+    // silently radio-less ghost — which is exactly how the operator's
+    // restart landed next to a leftover instance (live-found 2026-07-16
+    // ~23:25). Refuse loudly instead. QLockFile clears stale locks from
+    // dead processes on its own. Selftests skip the guard: they run
+    // against /dev/null beside the live console by design. MUST run
+    // before the session-log redirect below — a refused second instance
+    // was rotating the LIVE console's log on its way out (test-found).
+    QLockFile lock(QDir::temp().filePath("tentec-console.lock"));
+    if (!std::getenv("TTC_SELFTEST") && !lock.tryLock(100)) {
+        fprintf(stderr, "REFUSED: another console instance is running "
+                        "(one per station — serial + SDR are exclusive)\n");
+        QMessageBox::critical(nullptr, "USS Orion console",
+            "Another console instance is already running.\n\n"
+            "One instance per station — the radio's serial port and the "
+            "SDR are exclusive. Find the other window (or close it) and "
+            "try again.");
+        return 1;
+    }
+
     // Session log: when stderr is NOT a terminal (desktop-icon launch),
     // redirect it to a per-session file so "it crashed / it printed
     // something" reports come with the actual output. Terminal launches
@@ -83,6 +106,7 @@ int main(int argc, char** argv) {
     // run). DejaVu Sans ships on both.
     if (std::getenv("TTC_SELFTEST"))
         QApplication::setFont(QFont("DejaVu Sans", 10));
+
 
     ttc::MainWindow w;
     w.resize(1360, 600);                   // room for the dual-VFO/routing strip
