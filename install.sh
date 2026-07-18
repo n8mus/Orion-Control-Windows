@@ -82,8 +82,11 @@ fi
 # ---- 4. download the latest console AppImage ------------------------------
 say "Fetching the latest console release from GitHub..."
 mkdir -p "$APPDIR" "$ICONDIR" "$DESKDIR"
-ASSET_URL="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-             | jq -r '.assets[] | select(.name|endswith(".AppImage")) | .browser_download_url' | head -1)"
+# /releases (all) not /releases/latest — the latter skips pre-releases, and
+# the alpha builds are pre-releases. Newest release with an AppImage wins.
+ASSET_URL="$(curl -fsSL "https://api.github.com/repos/$REPO/releases" \
+             | jq -r '[.[] | .assets[]? | select(.name|endswith(".AppImage"))
+                      | .browser_download_url][0]')"
 [ -n "${ASSET_URL:-}" ] && [ "$ASSET_URL" != "null" ] || \
   die "No AppImage found in the latest release yet. Check https://github.com/$REPO/releases"
 curl -fSL "$ASSET_URL" -o "$APP"
