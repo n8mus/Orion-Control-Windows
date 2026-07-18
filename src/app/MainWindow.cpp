@@ -2274,10 +2274,23 @@ MainWindow::MainWindow(QWidget* parent)
                     // settle; stale reads must not "confirm" the old frequency and
                     // yank the tune back. Ignore dial-follow during that window.
                     if (sinceTune_.isValid() && sinceTune_.elapsed() < 1500) return;
-                    // The Orion occasionally emits a mangled frame that still parses
-                    // as a plausible frequency. Require two consecutive identical
-                    // reads before following a dial change (~200 ms, imperceptible).
-                    if (hz != pendingHz_) { pendingHz_ = hz; return; }
+                    // A smooth knob spin moves only tens of kHz between polls, so
+                    // follow those single reads live — freezing until two reads
+                    // agree is what made the pan lag behind the dial. A stray
+                    // mangled frame within this window is harmless (it self-
+                    // corrects on the next poll). Only a big jump (band change, or
+                    // a garbled frame that still parsed as a plausible frequency)
+                    // waits for two consecutive identical reads before we yank the
+                    // dial there.
+                    constexpr uint64_t kFollowJumpHz = 100000;   // 100 kHz
+                    const uint64_t delta =
+                        hz > centerHz_ ? hz - centerHz_ : centerHz_ - hz;
+                    if (delta > kFollowJumpHz && hz != pendingHz_) {
+                        pendingHz_ = hz;
+                        return;
+                    }
+                    pendingHz_ = hz;
+                    sinceDialMove_.restart();            // burst the ?AF poll (B)
                     const uint64_t prevDial = centerHz_;
                     centerHz_ = hz;
                     rigctld_.cacheFrequency(hz);     // cache only debounce-confirmed values
@@ -2539,7 +2552,14 @@ MainWindow::MainWindow(QWidget* parent)
             // to the AGC/RF-gain/attenuator round-robin so front-panel knob
             // changes eventually reflect in the sidebar.
             const int phase = pollTick_ % 5;
-            if (phase == 1 || phase == 3) {
+            // Burst (B): while the dial is actively moving, lend the two
+            // S-meter slots to frequency so the pan tracks the knob at ~4 Hz
+            // instead of 2. Pure slot reallocation — total query rate is
+            // unchanged, so no extra UART load; the S-meter just goes stale
+            // for the <800 ms you're spinning, which you can't read anyway.
+            const bool burst =
+                sinceDialMove_.isValid() && sinceDialMove_.elapsed() < 800;
+            if ((phase == 1 || phase == 3) && !burst) {
                 if (pollTick_ % 25 == 3) {
                     switch ((pollTick_ / 25) % 13) {
                         case 0:  radio_->queryAgc(Rx::Main);

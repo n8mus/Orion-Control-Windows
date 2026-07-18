@@ -207,6 +207,7 @@ private:
     uint64_t pendingHz_ = 0;                   // change must be seen twice (glitch filter)
     int pollTick_ = 0;                         // schedules mode/filter queries between ?AF
     QElapsedTimer sinceTune_;                  // suppress dial-follow right after a click
+    QElapsedTimer sinceDialMove_;              // radio-knob activity -> burst the ?AF poll
     QElapsedTimer sinceFilterEdit_;            // suppress overlay refresh right after a drag
 
     // Radio filter state (from polling) and mode-aware passband mapping.
