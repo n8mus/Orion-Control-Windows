@@ -42,8 +42,11 @@ jobs:
           sh sdr.run --noexec --target sdr_api || sh sdr.run --tar xf || true
           sudo mkdir -p /usr/local/include /usr/local/lib
           sudo cp $(find sdr_api -name '*.h') /usr/local/include/ 2>/dev/null || true
-          SO=$(find sdr_api -name 'libsdrplay_api.so*' | head -1)
+          # Pick the x86_64 build specifically — the archive also ships armhf,
+          # and a bare `find | head` would grab the wrong architecture.
+          SO=$(find sdr_api -name 'libsdrplay_api.so*' | grep -i x86_64 | head -1)
           echo "found SDRplay lib: $SO"
+          test -n "$SO" || { echo "no x86_64 SDRplay lib found"; exit 1; }
           sudo cp "$SO" /usr/local/lib/
           B=$(basename "$SO")
           sudo ln -sf "/usr/local/lib/$B" /usr/local/lib/libsdrplay_api.so.3
@@ -53,7 +56,9 @@ jobs:
       - name: Configure + build (with SDRplay)
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SDRPLAY=ON \
-            -DCMAKE_PREFIX_PATH=/usr/local
+            -DCMAKE_PREFIX_PATH=/usr/local \
+            -DCMAKE_CXX_FLAGS=-I/usr/local/include \
+            -DCMAKE_EXE_LINKER_FLAGS=-L/usr/local/lib
           cmake --build build -j"$(nproc)"
 
       - name: Assemble AppDir
