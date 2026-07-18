@@ -129,7 +129,8 @@ void MainWindow::setDigitalMode(bool on) {
         radio_->setMicGain(0);
         radio_->setSpeechProc(0);
         radio_->setAuxInputGain(100);
-        txBar_->showSpeechProc(0);
+        txBar_->showMicGain(0);        // readout matches the radio (was stuck
+        txBar_->showSpeechProc(0);     // on the remembered voice value)
         statusBar()->showMessage("DIGITAL: line-in 100, mic/speech off");
     } else {
         digital_ = false;
