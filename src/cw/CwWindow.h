@@ -9,6 +9,7 @@ class QSpinBox;
 class QPushButton;
 class QCheckBox;
 class QComboBox;
+class QSlider;
 class QUdpSocket;
 class QPlainTextEdit;
 
@@ -62,6 +63,8 @@ signals:
     // Decode-engine adjustments changed (engine, som, deep, attack, decay).
     void rxDecodeConfigChanged(bool eng, bool som, bool deep, int atk,
                                int dcy);
+    // Noise squelch changed (fldigi metric gate, 0..40 on the SQL slider).
+    void rxSquelchChanged(int sql);
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -93,6 +96,7 @@ private:
     QCheckBox* nr_ = nullptr;            // RNNoise ahead of the decoder
     QComboBox* atk_ = nullptr;           // tracker attack speed
     QComboBox* dcy_ = nullptr;           // tracker decay speed
+    QSlider*   sql_ = nullptr;           // noise squelch (metric gate)
     QPlainTextEdit* rx_ = nullptr;       // decoded-CW readout
     QCheckBox* rxOn_ = nullptr;
     QLabel* rxWpm_ = nullptr;

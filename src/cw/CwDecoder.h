@@ -49,6 +49,10 @@ public:
     // the full matrix. TTC_CWLEGACY / TTC_CWENGINE override for tests.
     void setEngineMode(bool fldigi) { legacy_ = !fldigi; }
     void setSom(bool on) { eng_.setSom(on); }
+    // Noise squelch on the fldigi signal metric (0..100). Higher = the
+    // reader needs a stronger signal before it registers keying, so a
+    // quiet band stops printing stray letters. Fldigi engine only.
+    void setSquelch(double s) { eng_.setSquelch(s); }
     void setAttack(int idx) { eng_.setAttack(idx); }
     void setDecay(int idx) { eng_.setDecay(idx); }
     // DEEP: narrow the matched filter well below real-time comfort —

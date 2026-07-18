@@ -8,6 +8,7 @@
 #include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QSlider>
 #include <QHostAddress>
 #include <QInputDialog>
 #include <QKeyEvent>
@@ -225,6 +226,30 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     trkLay->addWidget(atk_);
     trkLay->addWidget(dcy_);
     g->addWidget(trk, 5, 3);
+    // Noise squelch: how strong a signal the reader needs before it prints.
+    // Turn UP on a quiet band to stop stray letters into noise; DOWN to dig
+    // out weak ones. Gates the fldigi engine's signal metric (0..40 here).
+    auto* sqW = new QWidget(this);
+    auto* sqLay = new QHBoxLayout(sqW);
+    sqLay->setContentsMargins(0, 0, 0, 0);
+    sqLay->setSpacing(4);
+    sqLay->addWidget(new QLabel("SQL", sqW));
+    sql_ = new QSlider(Qt::Horizontal, sqW);
+    sql_->setRange(0, 40);
+    sql_->setValue(QSettings().value("cw/squelch", 12).toInt());
+    sql_->setToolTip("Noise squelch: higher = needs a stronger signal to "
+                     "print,\nso a quiet band stops throwing random letters. "
+                     "Lower to\ndig out weak CW. (fldigi engine)");
+    auto* sqVal = new QLabel(QString::number(sql_->value()), sqW);
+    sqVal->setMinimumWidth(20);
+    sqLay->addWidget(sql_);
+    sqLay->addWidget(sqVal);
+    g->addWidget(sqW, 5, 4);
+    connect(sql_, &QSlider::valueChanged, this, [this, sqVal](int v) {
+        sqVal->setText(QString::number(v));
+        QSettings().setValue("cw/squelch", v);
+        emit rxSquelchChanged(v);
+    });
     const auto decodeChanged = [this] {
         QSettings s;
         s.setValue("cw/engine", fldEng_->isChecked());

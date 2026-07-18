@@ -329,14 +329,20 @@ void MainWindow::setupCwUi() {
                         d->setDecay(dcy);
                     }
                 };
+                const auto applySql = [this](int sql) {
+                    for (CwDecoder* d : {cwDec_, audioDec_})
+                        d->setSquelch(double(sql));
+                };
                 QSettings cs;
                 applyCfg(cs.value("cw/engine", true).toBool(),
                          cs.value("cw/som", true).toBool(),
                          cs.value("cw/deep", false).toBool(),
                          cs.value("cw/attack", 1).toInt(),
                          cs.value("cw/decay", 1).toInt());
+                applySql(cs.value("cw/squelch", 12).toInt());
                 connect(cwWin_, &CwWindow::rxDecodeConfigChanged, this,
                         applyCfg);
+                connect(cwWin_, &CwWindow::rxSquelchChanged, this, applySql);
             }
         }
         cwWin_->show();

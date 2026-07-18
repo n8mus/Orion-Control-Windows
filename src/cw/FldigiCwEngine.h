@@ -53,7 +53,7 @@ private:
     // trackers (fldigi decode_stream)
     double sigAvg_ = 0.0, noiseFloor_ = 0.0, agcPeak_ = 0.0;
     double metric_ = 0.0;
-    double squelch_ = 8.0;
+    double squelch_ = 12.0;   // metric gate; operator-adjustable (SQL slider)
     int    attack_ = 800, decay_ = 4000;   // decayavg weights at 2 ksps
     bool   useSom_ = true;
 
