@@ -53,6 +53,20 @@ void MainWindow::onTuneRequested(int offsetHz, bool exact) {
             offsetHz = snapped;
         }
     }
+    // Click-to-tune on the non-CW modes (SSB/AM/FM/digital): operators sit on
+    // round kHz, but a pixel-click maps to an arbitrary Hz (click a 14.244
+    // station, land on 14.244.340). Snap the absolute target to the nearest
+    // 1 kHz so a click drops you right on frequency. Excludes the tight modes
+    // (CW keeps its carrier zap above; SAM keeps a precise zero-beat) and any
+    // exact tune — Shift+click for the odd-split station, and the wheel's
+    // 100 Hz fine steps pass exact=true so they nudge off the round kHz.
+    const bool tight = samActive_
+                    || rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
+    if (!exact && !tight) {
+        const int64_t target = static_cast<int64_t>(centerHz_) + offsetHz;
+        const int64_t snapped = ((target + 500) / 1000) * 1000;
+        offsetHz = static_cast<int>(snapped - static_cast<int64_t>(centerHz_));
+    }
     tuneAbsolute(centerHz_ + offsetHz);
 }
 
