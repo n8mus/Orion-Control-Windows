@@ -55,6 +55,7 @@ private:
     QCheckBox* solar_  = nullptr;
     QCheckBox* rose_   = nullptr;
     QCheckBox* plan_   = nullptr;
+    QCheckBox* priv_   = nullptr;
     QCheckBox* bigVfo_ = nullptr;
     QCheckBox* clock_  = nullptr;
     QCheckBox* wfTime_ = nullptr;

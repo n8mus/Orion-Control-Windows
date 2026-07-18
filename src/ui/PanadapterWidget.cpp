@@ -1087,26 +1087,76 @@ void PanadapterWidget::drawFreqGrid(QPainter& p, int hSpec) {
 // and the waterfall with ticks + MHz labels. The strip is also the split
 // handle — drag it up/down to resize spectrum vs waterfall.
 namespace {
-// US band-plan segments for the scale-strip tint: CW/data portions blue,
-// phone portions green (simplified, General/Extra not distinguished).
-struct PlanSeg { qint64 lo, hi; bool phone; };
+// US band-plan segments for the scale-strip tint, colored to the ARRL
+// "US Amateur Radio Bands" chart: RTTY/data = red, phone/image = green,
+// CW-only = blue, Novice/Tech SSB = amber, 60 m USB channels = cyan.
+enum class PMode { Data, Phone, Cw, SsbNT, Usb60 };
+struct PlanSeg { qint64 lo, hi; PMode mode; };
 constexpr PlanSeg kUsPlan[] = {
-    {1800000, 1843000, false},  {1843000, 2000000, true},
-    {3500000, 3600000, false},  {3600000, 4000000, true},
-    {7000000, 7125000, false},  {7125000, 7300000, true},
-    {10100000, 10150000, false},
-    {14000000, 14150000, false}, {14150000, 14350000, true},
-    {18068000, 18110000, false}, {18110000, 18168000, true},
-    {21000000, 21200000, false}, {21200000, 21450000, true},
-    {24890000, 24930000, false}, {24930000, 24990000, true},
-    {28000000, 28300000, false}, {28300000, 29700000, true},
-    {50000000, 50100000, false}, {50100000, 54000000, true},
+    {1800000, 2000000, PMode::Phone},                                 // 160
+    {3500000, 3600000, PMode::Data},   {3600000, 4000000, PMode::Phone}, // 80/75
+    {5330500, 5406400, PMode::Usb60},                                 // 60 (channels)
+    {7000000, 7125000, PMode::Data},   {7125000, 7300000, PMode::Phone}, // 40
+    {10100000, 10150000, PMode::Data},                                // 30 (no phone)
+    {14000000, 14150000, PMode::Data}, {14150000, 14350000, PMode::Phone}, // 20
+    {18068000, 18110000, PMode::Data}, {18110000, 18168000, PMode::Phone}, // 17
+    {21000000, 21200000, PMode::Data}, {21200000, 21450000, PMode::Phone}, // 15
+    {24890000, 24930000, PMode::Data}, {24930000, 24990000, PMode::Phone}, // 12
+    {28000000, 28300000, PMode::Data}, {28300000, 29700000, PMode::Phone}, // 10
+    {50000000, 50100000, PMode::Cw},   {50100000, 54000000, PMode::Phone}, // 6
+};
+// ARRL chart colors (opaque; a translucent copy tints the strip).
+inline QColor planColor(PMode m) {
+    switch (m) {
+        case PMode::Data:  return QColor(214,  67,  67);   // RTTY and data (red)
+        case PMode::Phone: return QColor( 58, 182, 105);   // phone and image (green)
+        case PMode::Cw:    return QColor( 96, 152, 236);   // CW only (blue)
+        case PMode::SsbNT: return QColor(232, 196,  66);   // Novice/Tech SSB (amber)
+        case PMode::Usb60: return QColor( 78, 200, 230);   // 60 m USB (cyan)
+    }
+    return QColor(120, 120, 120);
+}
+// US license-class privilege edges: the frequency where a class first gains
+// PHONE privileges on that band (from the ARRL chart's E/A/G/T markers).
+// Drawn as guide lines "in the map" so the operator sees who can work where.
+struct PrivEdge { qint64 hz; const char* cls; };
+constexpr PrivEdge kUsPriv[] = {
+    {3600000, "E"},  {3700000, "A"},  {3800000, "G"},         // 75 m phone
+    {7125000, "E/A"},{7175000, "G"},                          // 40 m phone
+    {14150000,"E"},  {14175000,"A"},  {14225000,"G"},         // 20 m phone
+    {21200000,"E"},  {21225000,"A"},  {21275000,"G"},         // 15 m phone
+    {28300000,"G+"}, {28500000,"N/T"},                        // 10 m phone / N-T SSB top
+    {50100000,"all"},                                         // 6 m phone
 };
 } // namespace
 
+void PanadapterWidget::drawPrivileges(QPainter& p, int hSpec) {
+    // Faint vertical guides across the spectrum at US license-class phone
+    // edges, each tagged with the class letter — so at a glance you can see
+    // where an Extra / Advanced / General / Tech may transmit on this band.
+    if (!ds_.showPrivileges || centerHz_ == 0) return;
+    const qint64 half = viewSpanHz_ / 2;
+    QFont f = p.font();
+    f.setPixelSize(9);
+    f.setBold(true);
+    p.setFont(f);
+    for (const PrivEdge& e : kUsPriv) {
+        if (e.hz < qint64(centerHz_) - half || e.hz > qint64(centerHz_) + half)
+            continue;
+        const int x = hzToX(int(e.hz - qint64(centerHz_)));
+        p.setPen(QPen(QColor(70, 190, 120, 90), 1, Qt::DashLine));
+        p.drawLine(x, 12, x, hSpec);
+        p.setPen(QColor(150, 235, 180, 220));
+        p.drawText(x + 2, 11, QString::fromLatin1(e.cls));
+    }
+}
+
 void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
     p.fillRect(QRect(0, hSpec, width(), kScaleBandH), QColor(20, 27, 36));
-    // Band-plan tint under the ticks: blue = CW/data, green = phone.
+    // Band-plan tint under the ticks, ARRL colors (red data / green phone /
+    // blue CW / amber N-T SSB / cyan 60 m). Bolder than before: a stronger
+    // fill plus a full-opacity 2 px accent bar so the segments read at a
+    // glance instead of a faint wash.
     if (ds_.showBandPlan && centerHz_ != 0) {
         const qint64 half = viewSpanHz_ / 2;
         for (const PlanSeg& s : kUsPlan) {
@@ -1117,9 +1167,11 @@ void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
             const int x1 = std::min(width(),
                 hzToX(int(std::min(s.hi - qint64(centerHz_), half))));
             if (x1 <= x0) continue;
-            p.fillRect(QRect(x0, hSpec + 1, x1 - x0, kScaleBandH - 2),
-                       s.phone ? QColor(62, 207, 122, 38)
-                               : QColor(96, 160, 255, 44));
+            QColor c = planColor(s.mode);
+            c.setAlpha(95);                                    // strip body
+            p.fillRect(QRect(x0, hSpec + 1, x1 - x0, kScaleBandH - 3), c);
+            c.setAlpha(235);                                   // accent bar
+            p.fillRect(QRect(x0, hSpec + kScaleBandH - 3, x1 - x0, 2), c);
         }
     }
     p.setPen(QColor(255, 255, 255, 50));
@@ -1338,6 +1390,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     // panel: red = the transmitting VFO, green = the receiving one. Normal
     // (TX+RX both on A) keeps the plain center marker and shows B, when it's
     // in view, as a quiet blue sub-RX line.
+    drawPrivileges(p, hSpec);
     drawScaleBand(p, hSpec);
     {
         const QFont savedFont = p.font();

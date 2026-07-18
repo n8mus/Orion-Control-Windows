@@ -171,8 +171,13 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
                       "station;\nclick inside the rose for a manual heading, "
                       "right-click clears.");
     plan_ = new QCheckBox("Band-plan shading", this);
-    plan_->setToolTip("Tint the frequency scale: blue = CW/data segments, "
-                      "green = phone (US allocations)");
+    plan_->setToolTip("Tint the frequency scale to the ARRL band chart:\n"
+                      "red = RTTY/data, green = phone, blue = CW-only, "
+                      "cyan = 60 m USB");
+    priv_ = new QCheckBox("License privileges", this);
+    priv_->setToolTip("Guide lines across the spectrum at US license-class "
+                      "phone edges,\ntagged E / A / G / T — where each class "
+                      "may transmit on this band");
     bigVfo_ = new QCheckBox("Large VFO digits", this);
     clock_ = new QCheckBox("Clock (radio panel)", this);
     cursor_ = new QCheckBox("Cursor line + zap preview", this);
@@ -198,25 +203,26 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     g->addWidget(solar_, 12, 0, 1, 3);
     g->addWidget(rose_, 13, 0, 1, 3);
     g->addWidget(plan_, 14, 0, 1, 3);
-    g->addWidget(bigVfo_, 15, 0, 1, 3);
-    g->addWidget(clock_, 16, 0, 1, 3);
-    g->addWidget(wfTime_, 17, 0, 1, 3);
-    g->addWidget(cursor_, 18, 0, 1, 3);
-    g->addWidget(zap_, 19, 0, 1, 3);
-    g->addWidget(call_, 20, 0, 1, 3);
+    g->addWidget(priv_, 15, 0, 1, 3);
+    g->addWidget(bigVfo_, 16, 0, 1, 3);
+    g->addWidget(clock_, 17, 0, 1, 3);
+    g->addWidget(wfTime_, 18, 0, 1, 3);
+    g->addWidget(cursor_, 19, 0, 1, 3);
+    g->addWidget(zap_, 20, 0, 1, 3);
+    g->addWidget(call_, 21, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 21, 0);
+    g->addWidget(makeCaption("CALL", this), 22, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 21, 1, 1, 2);
+    g->addWidget(callEdit_, 22, 1, 1, 2);
 
     // Station grid square: centers the compass rose (and any future
     // bearing/distance math). 4 or 6 characters.
-    g->addWidget(makeCaption("GRID", this), 22, 0);
+    g->addWidget(makeCaption("GRID", this), 23, 0);
     gridEdit_ = new QLineEdit(this);
     gridEdit_->setMaxLength(6);
     gridEdit_->setToolTip("Your Maidenhead grid square (4 or 6 chars), e.g. EN82fq");
-    g->addWidget(gridEdit_, 22, 1, 1, 2);
+    g->addWidget(gridEdit_, 23, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
@@ -306,6 +312,7 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(solar_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(rose_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(plan_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(priv_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(bigVfo_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(clock_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(wfTime_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
@@ -341,6 +348,7 @@ DisplaySettings DisplayPanel::settings() const {
     s.showSolar  = solar_->isChecked();
     s.showRose   = rose_->isChecked();
     s.showBandPlan = plan_->isChecked();
+    s.showPrivileges = priv_->isChecked();
     s.traceColor = trace_->currentIndex();
     s.bigVfo     = bigVfo_->isChecked();
     s.showClock  = clock_->isChecked();
@@ -359,7 +367,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
         b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_),
         b11(mapDay_), b12(mapNight_), b13(solar_), b14(rose_),
         b15(plan_), b16(bigVfo_), b17(trace_), b18(clock_), b19(zap_),
-        b20(wfTime_), b21(cursor_);
+        b20(wfTime_), b21(cursor_), b22(priv_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -379,6 +387,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     solar_->setChecked(s.showSolar);
     rose_->setChecked(s.showRose);
     plan_->setChecked(s.showBandPlan);
+    priv_->setChecked(s.showPrivileges);
     bigVfo_->setChecked(s.bigVfo);
     clock_->setChecked(s.showClock);
     wfTime_->setChecked(s.showWfTime);

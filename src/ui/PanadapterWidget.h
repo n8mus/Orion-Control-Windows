@@ -33,6 +33,7 @@ struct DisplaySettings {
     bool  showSolar  = true;    // space-weather panel in the spectrum corner
     bool  showRose   = true;    // compass rose (azimuthal world + bearing)
     bool  showBandPlan = true;  // US band-plan tints in the freq-scale strip
+    bool  showPrivileges = true;// license-class (E/A/G/T) edge guides in the map
     int   traceColor = 0;       // 0 soft, 1 white, 2 green, 3 yellow, 4 cyan
     bool  bigVfo     = false;   // ~25 % larger VFO digits (applied by owner)
     bool  showClock  = true;    // UTC/local clock (radio panel bottom)
@@ -215,6 +216,7 @@ private:
     void   drawBandZones(QPainter& p, int hSpec);  // regulatory zone boxes
     void   drawFreqGrid(QPainter& p, int hSpec);   // gridlines, spectrum area only
     void   drawScaleBand(QPainter& p, int hSpec);  // freq scale strip on the divider
+    void   drawPrivileges(QPainter& p, int hSpec); // license-class edge guides
     void   drawDbScale(QPainter& p, int hSpec);    // horizontal dB lines + labels
     void   drawSpots(QPainter& p, int hSpec);      // cluster spot lines + callsigns
     void   drawMarkers(QPainter& p, int hSpec);    // pinned frequency lines

@@ -411,6 +411,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/solar",      d.showSolar);
         s.setValue("display/rose",       d.showRose);
         s.setValue("display/bandplan",   d.showBandPlan);
+        s.setValue("display/privileges", d.showPrivileges);
         s.setValue("display/trace",      d.traceColor);
         s.setValue("display/bigVfo",     d.bigVfo);
         s.setValue("display/clock",      d.showClock);
@@ -483,6 +484,7 @@ MainWindow::MainWindow(QWidget* parent)
         d.showSolar  = s.value("display/solar",      d.showSolar).toBool();
         d.showRose   = s.value("display/rose",       d.showRose).toBool();
         d.showBandPlan = s.value("display/bandplan", d.showBandPlan).toBool();
+        d.showPrivileges = s.value("display/privileges", d.showPrivileges).toBool();
         d.traceColor = s.value("display/trace",      d.traceColor).toInt();
         d.bigVfo     = s.value("display/bigVfo",     d.bigVfo).toBool();
         d.showClock  = s.value("display/clock",      d.showClock).toBool();
