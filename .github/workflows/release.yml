@@ -2,7 +2,9 @@
 # Release. Built with SDRplay support so the panadapter works, but the
 # proprietary libsdrplay_api is EXCLUDED from the bundle (never redistribute
 # it) — the user's own SDRplay API install provides it at runtime, which
-# install.sh sets up. Built on ubuntu-22.04 for a broad glibc baseline.
+# install.sh sets up. Built on ubuntu-24.04 (matches CI; Qt6 SerialPort is
+# only packaged there) — so the AppImage needs glibc >= 2.39 (Ubuntu 24.04+,
+# Fedora 40+, current Arch). Fine for the alpha's current-distro testers.
 name: Release
 on:
   push:
@@ -12,7 +14,7 @@ permissions:
 
 jobs:
   appimage:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -67,7 +69,7 @@ jobs:
           curl -fSL -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           curl -fSL -o linuxdeploy-plugin-qt https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy linuxdeploy-plugin-qt
-          export QMAKE=/usr/lib/qt6/bin/qmake6
+          export QMAKE="$(command -v qmake6 || echo /usr/lib/qt6/bin/qmake6)"
           export OUTPUT="tentec-console-${GITHUB_REF_NAME}-x86_64.AppImage"
           ./linuxdeploy --appdir AppDir --plugin qt \
             --desktop-file AppDir/usr/share/applications/tentec-console.desktop \
