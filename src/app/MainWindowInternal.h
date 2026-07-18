@@ -11,7 +11,14 @@ namespace ttc {
 
 // Offset-LO tuning (PowerSDR if_freq): the SDR always captures this far above
 // the dial so its zero-IF DC artifact can never sit on the tuned frequency.
-inline constexpr int kLoOffsetHz = 60000;
+// The RSP2 captures this far ABOVE the dial so the zero-IF DC spike sits at
+// the LO, off to the side of the dial. 135 kHz (was 60) pushes it clear of
+// even the widest view: 500 kHz capture -> max view 500-2*135 = 230 kHz
+// (±115), so the spike at +135 stays ~20 kHz off the top edge, always
+// out of frame. RX is unaffected — the decoder/skimmer/S-meter listen at
+// the dial (loOffHz_ below the LO) wherever the LO sits. Keep loOffHz_'s
+// startup value (MainWindow.h) in sync with this.
+inline constexpr int kLoOffsetHz = 135000;
 
 inline int pbtRfSign(Mode m) {
     return (m == Mode::LSB || m == Mode::CWL) ? -1 : +1;

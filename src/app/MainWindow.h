@@ -149,7 +149,7 @@ private:
     // spectrum-bin mapping must use it, never the constant.
     QToolButton* ctunBtn_ = nullptr;
     bool     ctun_ = false;
-    int      loOffHz_ = 60000;                // = kLoOffsetHz at startup
+    int      loOffHz_ = 135000;               // = kLoOffsetHz at startup (keep in sync)
     uint64_t sdrLoHz_ = 0;                    // absolute capture LO (0 = not running)
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
