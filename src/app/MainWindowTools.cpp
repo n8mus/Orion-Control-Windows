@@ -4,6 +4,8 @@
 // function here (and a one-line call there) — buttons go on topLay2_,
 // never the first deck, or the window minimum outgrows the screen.
 #include "app/MainWindow.h"
+#include <QKeyEvent>
+#include <QCheckBox>
 #include "cw/AudioCwSource.h"
 #include "app/MainWindowInternal.h"
 #include "app/Bands.h"
@@ -63,143 +65,29 @@ void MainWindow::setupLogUi() {
     // park prefill from the last clicked spot; TIME_ON is when the call
     // landed in the field, TIME_OFF is when LOG is pressed.
     auto* logBtn = new QToolButton(topStrip_);
-    logBtn->setText("LOG ▾");
-    logBtn->setPopupMode(QToolButton::InstantPopup);
+    logBtn->setText("LOG");
     logBtn->setFocusPolicy(Qt::NoFocus);
     logBtn->setStyleSheet(QString(kToolBtnStyle));
     logBtn->setToolTip("Log a QSO to cqrlog (call/park prefill from the last "
                        "clicked spot;\nEnter in any field = log)");
-    auto* logMenu = new QMenu(logBtn);
-    styleMenu(logMenu);
-    auto* logW = new QWidget;
-    logW->setStyleSheet(
-        "QWidget { background: #141b24; color: #c8d4e0; font-size: 13px; }"
-        "QLineEdit { background: #1c2430; border: 1px solid #2a3644;"
-        " border-radius: 3px; padding: 4px 8px; }"
-        "QLabel { color: #8fa3b8; font-weight: bold; font-size: 12px; }"
-        "QPushButton { background: #2f6d9e; border: 1px solid #5db2f0;"
-        " border-radius: 3px; padding: 5px 14px; font-weight: bold; }"
-        "QPushButton:hover { background: #3a7fb5; }");
-    auto* lg = new QGridLayout(logW);
-    lg->setContentsMargins(14, 12, 14, 12);
-    lg->setHorizontalSpacing(10);
-    lg->setVerticalSpacing(9);
-    lg->addWidget(new QLabel("CALL", logW), 0, 0);
-    logCall_ = new QLineEdit(logW);
-    logCall_->setMaxLength(14);
-    lg->addWidget(logCall_, 0, 1, 1, 3);
-    lg->addWidget(new QLabel("RST S", logW), 1, 0);
-    logRstS_ = new QLineEdit(logW);
-    logRstS_->setFixedWidth(64);
-    lg->addWidget(logRstS_, 1, 1);
-    lg->addWidget(new QLabel("RST R", logW), 1, 2);
-    logRstR_ = new QLineEdit(logW);
-    logRstR_->setFixedWidth(64);
-    lg->addWidget(logRstR_, 1, 3);
-    lg->addWidget(new QLabel("PARK", logW), 2, 0);
-    logPark_ = new QLineEdit(logW);
-    logPark_->setMaxLength(20);
-    logPark_->setToolTip("POTA park reference of the station you worked "
-                         "(prefilled from POTA spots) — leave blank otherwise");
-    lg->addWidget(logPark_, 2, 1, 1, 3);
-    auto* logGo = new QPushButton("Log to cqrlog", logW);
-    lg->addWidget(logGo, 3, 0, 1, 4);
-    auto* logAct = new QWidgetAction(logMenu);
-    logAct->setDefaultWidget(logW);
-    logMenu->addAction(logAct);
-    logBtn->setMenu(logMenu);
     topLay2_->addWidget(logBtn);
     logUdp_ = new QUdpSocket(this);
-    // RST defaults follow the mode each time the panel opens (only when the
-    // field still holds a default — a typed report is never overwritten).
-    connect(logMenu, &QMenu::aboutToShow, this, [this] {
-        const bool cw = rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
-        const QStringList defs{"", "59", "599"};
-        if (defs.contains(logRstS_->text().trimmed()))
-            logRstS_->setText(cw ? "599" : "59");
-        if (defs.contains(logRstR_->text().trimmed()))
-            logRstR_->setText(cw ? "599" : "59");
-        logCall_->setFocus();
+    // Pre-bind so the first datagram isn't lost (an unbound socket auto-binds
+    // on first write and can drop that very first send).
+    logUdp_->bind(QHostAddress::LocalHost, 0);
+    // LOG -> fresh New QSO in cqrlog: clear its form, bring it forward, put
+    // the cursor in its callsign field. The console is the SDR/spotting
+    // front end; the QSO is typed and worked in cqrlog. This replaces the
+    // old console logging form (and all its focus/sync friction) — spot
+    // clicks and CW double-clicks feed calls to cqrlog the same way.
+    connect(logBtn, &QToolButton::clicked, this, [this] {
+        logUdp_->writeDatagram("CQRNEWQSO", QHostAddress::LocalHost,
+            quint16(QSettings().value("log/port", 2334).toInt()));
+        statusBar()->showMessage("new QSO in cqrlog", 2500);
     });
-    // QSO start clock: arms when a call first lands in the field.
-    connect(logCall_, &QLineEdit::textEdited, this, [this](const QString& t) {
-        if (!t.trimmed().isEmpty() && !qsoStartUtc_.isValid())
-            qsoStartUtc_ = QDateTime::currentDateTimeUtc();
-        if (t.trimmed().isEmpty()) qsoStartUtc_ = QDateTime();
-        if (cwWin_) cwWin_->setHisCall(t.trimmed().toUpper());  // %c macro
-    });
-    const auto doLog = [this, logMenu] {
-        const QString call = logCall_->text().trimmed().toUpper();
-        if (call.isEmpty()) {
-            statusBar()->showMessage("LOG: no callsign", 3000);
-            return;
-        }
-        const auto tag = [](const char* t, const QString& v) {
-            return QString("<%1:%2>%3").arg(t).arg(v.size()).arg(v);
-        };
-        QString mode, submode;
-        switch (rigMode_) {
-            case Mode::CWU: case Mode::CWL: mode = "CW"; break;
-            case Mode::USB: mode = "SSB"; submode = "USB"; break;
-            case Mode::LSB: mode = "SSB"; submode = "LSB"; break;
-            case Mode::AM:  mode = "AM"; break;
-            case Mode::FM:  mode = "FM"; break;
-        }
-        const QDateTime now = QDateTime::currentDateTimeUtc();
-        const QDateTime on  = qsoStartUtc_.isValid() ? qsoStartUtc_ : now;
-        QString adif = tag("CALL", call)
-            + tag("FREQ", QString::number(centerHz_ / 1e6, 'f', 6))
-            + tag("MODE", mode);
-        if (!submode.isEmpty()) adif += tag("SUBMODE", submode);
-        adif += tag("QSO_DATE", on.toString("yyyyMMdd"))
-              + tag("TIME_ON",  on.toString("hhmm"))
-              + tag("TIME_OFF", now.toString("hhmm"));
-        if (!logRstS_->text().trimmed().isEmpty())
-            adif += tag("RST_SENT", logRstS_->text().trimmed());
-        if (!logRstR_->text().trimmed().isEmpty())
-            adif += tag("RST_RCVD", logRstR_->text().trimmed());
-        const QString park = logPark_->text().trimmed().toUpper();
-        if (!park.isEmpty())
-            adif += tag("SIG", "POTA") + tag("SIG_INFO", park);
-        adif += "<EOR>";
-        const quint16 port =
-            quint16(QSettings().value("log/port", 2334).toInt());
-        // UDP is fire-and-forget: a LOG press with cqrlog closed vanished
-        // into the void while we reported success (live-found — operator
-        // logged a call two minutes before starting cqrlog). If we can
-        // BIND the bridge port, nobody is listening: keep the fields and
-        // say so instead of lying.
-        {
-            QUdpSocket probe;
-            if (probe.bind(QHostAddress::LocalHost, port)) {
-                statusBar()->showMessage(
-                    QString("LOG: cqrlog is not listening on UDP %1 — "
-                            "start cqrlog, then press LOG again (QSO kept)")
-                        .arg(port), 10000);
-                return;
-            }
-        }
-        logUdp_->writeDatagram(adif.toUtf8(), QHostAddress::LocalHost, port);
-        statusBar()->showMessage(
-            QString("QSO %1 sent to cqrlog (%2 %3 MHz)")
-                .arg(call, mode)
-                .arg(centerHz_ / 1e6, 0, 'f', 4), 6000);
-        logCall_->clear();
-        logPark_->clear();
-        qsoStartUtc_ = QDateTime();
-        logMenu->hide();
-        logbook_.refreshSoon(3000);       // recolor spots with the new QSO
-    };
-    connect(logGo, &QPushButton::clicked, this, doLog);
-    for (QLineEdit* e : {logCall_, logRstS_, logRstR_, logPark_})
-        connect(e, &QLineEdit::returnPressed, this, doLog);
-    // Spot click -> prefill call (and park for POTA spots), arm the clock,
-    // and point cqrlog's New QSO window at the same station.
+    // Spot click -> send the call (and POTA park/grid) to cqrlog's New QSO.
     connect(pan_, &PanadapterWidget::spotClicked, this,
             [this](const QString& call, QChar kind, const QString& tg) {
-                logCall_->setText(call);
-                logPark_->setText(kind == QChar('P') ? tg : QString());
-                qsoStartUtc_ = QDateTime::currentDateTimeUtc();
                 if (cwWin_) cwWin_->setHisCall(call);
                 QString park, grid;
                 if (kind == QChar('P')) {
@@ -242,18 +130,15 @@ void MainWindow::setupCwUi() {
             cwWin_ = new CwWindow(this);
             cwWin_->setMyCall(QSettings()
                 .value("station/callsign", "N8EM").toString());
-            cwWin_->setHisCall(logCall_ ? logCall_->text() : QString());
+            cwWin_->setHisCall(QString());
             // Double-clicked call in the decode pane rides the same rails
-            // as a spot click: LOG call field, QSO clock armed, %c macro.
+            // as a spot click: send it to cqrlog's New QSO, arm the %c macro.
             connect(cwWin_, &CwWindow::callDoubleClicked, this,
                     [this](const QString& call) {
-                        if (!logCall_) return;
-                        logCall_->setText(call);
-                        qsoStartUtc_ = QDateTime::currentDateTimeUtc();
                         cwWin_->setHisCall(call);
                         sendCqrLookup(call);
                         statusBar()->showMessage(
-                            QString("log call ← %1 (from CW copy)")
+                            QString("cqrlog ← %1 (from CW copy)")
                                 .arg(call), 5000);
                     });
             if (cwDec_) {                  // SDR-fed CW reader plumbing
@@ -400,10 +285,9 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
             connect(skimWin_, &SkimmerWindow::tuneTo, this,
                     [this](qint64 hz, const QString& call) {
                         tuneAbsolute(uint64_t(hz));
-                        if (!call.isEmpty() && logCall_) {
-                            logCall_->setText(call);
-                            qsoStartUtc_ = QDateTime::currentDateTimeUtc();
+                        if (!call.isEmpty()) {
                             if (cwWin_) cwWin_->setHisCall(call);
+                            sendCqrLookup(call);
                         }
                     });
         }

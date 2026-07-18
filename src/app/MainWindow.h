@@ -244,10 +244,6 @@ private:
     uint64_t zbExpectHz_   = 0;                // abort if anything else retunes
     // LOG panel: one-click QSO -> cqrlog via the fork's always-on UDP ADIF
     // bridge (127.0.0.1:2334). Call/park prefill from the last clicked spot.
-    QLineEdit* logCall_ = nullptr;
-    QLineEdit* logRstS_ = nullptr;
-    QLineEdit* logRstR_ = nullptr;
-    QLineEdit* logPark_ = nullptr;
     QUdpSocket* logUdp_ = nullptr;
     QDateTime qsoStartUtc_;                    // when the call landed in the field
     AutoGain autoLna_;                         // RF AGC policy (skimmer)
