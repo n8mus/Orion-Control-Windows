@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Ten-Tec SDR Console
+Comment=SDR panadapter and control for Ten-Tec Orion / Omni VII
+Exec=tentec-console
+Icon=tentec-console
+Categories=HamRadio;Audio;Network;
+Terminal=false

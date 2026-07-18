@@ -17,6 +17,20 @@ serial port, no flrig.
 > everything. The Omni VII personality exists in the code but is currently
 > untested — stay on the Orion for now.
 
+## Install (easiest — one line)
+
+New to Linux? This script does everything for you: installs the libraries,
+sets up the SDRplay API and serial-port access, downloads the latest
+console, and adds it to your applications menu.
+
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/orion3-sdr-console/master/install.sh)
+```
+
+Log out and back in once after the first run (for serial access), then
+launch **Ten-Tec SDR Console** from your menu. Re-run any time to update.
+Prefer to build from source? See [Build and run](#build-and-run) below.
+
 ## What you need
 
 **Hardware**
