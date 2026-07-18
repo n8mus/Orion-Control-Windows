@@ -5,6 +5,7 @@
 #include "app/MainWindow.h"
 #include "app/MainWindowInternal.h"
 #include "app/Bands.h"
+#include "cw/CwDecoder.h"
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
 
@@ -218,7 +219,7 @@ int MainWindow::snapToCwPeak(int offsetHz, int windowHz) const {
     if (n < 8 || sdrSpanHz_ <= 0) return offsetHz;      // no SDR: tune as clicked
     const double binHz = double(sdrSpanHz_) / n;
     const auto binOf = [&](int off) {
-        return n / 2 + static_cast<int>(std::lround((off - kLoOffsetHz) / binHz));
+        return n / 2 + static_cast<int>(std::lround((off - loOffHz_) / binHz));
     };
     const int i0 = std::clamp(binOf(offsetHz - windowHz), 1, n - 2);
     const int i1 = std::clamp(binOf(offsetHz + windowHz), i0, n - 2);
@@ -230,9 +231,10 @@ int MainWindow::snapToCwPeak(int offsetHz, int windowHz) const {
     const double den = ym - 2.0 * y0 + yp;
     const double d = std::abs(den) > 1e-9
         ? std::clamp(0.5 * (ym - yp) / den, -0.5, 0.5) : 0.0;
-    // Bin i sits at (i - n/2)*binHz from the SDR's LO, which is kLoOffsetHz
-    // above the dial — same mapping as binOf, inverted.
-    return static_cast<int>(std::lround((ip - n / 2 + d) * binHz)) + kLoOffsetHz;
+    // Bin i sits at (i - n/2)*binHz from the SDR's LO, which is loOffHz_
+    // above the dial (fixed 60 kHz classic, varying under CTUN) — same
+    // mapping as binOf, inverted.
+    return static_cast<int>(std::lround((ip - n / 2 + d) * binHz)) + loOffHz_;
 }
 
 void MainWindow::tuneAbsolute(uint64_t f) {
@@ -244,6 +246,7 @@ void MainWindow::tuneAbsolute(uint64_t f) {
     // silently corrupt the file's frequency mapping, so close it out.
     if (recIqAct_ && recIqAct_->isChecked()) recIqAct_->setChecked(false);
     f = std::clamp<uint64_t>(f, 100000, 60000000);
+    const uint64_t prevDial = centerHz_;       // for CTUN's view bookkeeping
     radio_->setFrequencyHz(Rx::Main, f);
     rigctld_.cacheFrequency(f);
     centerHz_ = f;                              // recenter view on the new frequency
@@ -271,10 +274,51 @@ void MainWindow::tuneAbsolute(uint64_t f) {
                 panel_->showMode(pm);                   // while it's busy
             });
     }
-#ifdef HAVE_SDRPLAY
-    sdr_.setCenterFrequency(static_cast<double>(f + kLoOffsetHz));
-#endif
+    retuneSdrFor(f, prevDial);
     statusBar()->showMessage(QString("tune -> %1 MHz").arg(f / 1e6, 0, 'f', 6));
+}
+
+// How far the dial may drift from the capture LO before CTUN gives up and
+// re-centers: the RSP2 grabs ±250 kHz around the LO; 190 kHz leaves room
+// for the passband and keeps the view clear of the capture edges.
+static constexpr int kCtunEdgeHz = 190000;
+
+// One LO policy for every dial move (console tunes and radio-knob follow).
+// Classic: the LO tracks the dial at +kLoOffsetHz, view centered on the
+// dial. CTUN: the LO (and the screen) hold still while the dial floats,
+// PowerSDR-style; the view shift eats the dial delta so the spectrum
+// doesn't move, and the display re-centers when the marker nears the view
+// edge or the dial nears the capture edge.
+void MainWindow::retuneSdrFor(uint64_t dial, uint64_t prevDial) {
+#ifdef HAVE_SDRPLAY
+    if (ctun_ && sdrLoHz_ != 0) {
+        const int64_t off = int64_t(sdrLoHz_) - int64_t(dial);   // LO - dial
+        if (off >= -kCtunEdgeHz && off <= kCtunEdgeHz) {
+            setLoOff(int(off));                    // capture untouched
+            int shift = pan_->viewShiftHz()
+                + int(int64_t(prevDial) - int64_t(dial));
+            // PowerSDR edge rule: as the marker nears the display edge,
+            // re-center so tuning is continuous.
+            if (std::abs(shift) > pan_->viewSpanHz() * 42 / 100) shift = 0;
+            pan_->setViewShiftHz(shift);
+            return;
+        }
+    }
+    sdrLoHz_ = dial + kLoOffsetHz;                 // classic re-center
+    sdr_.setCenterFrequency(static_cast<double>(sdrLoHz_));
+    pan_->setViewShiftHz(0);
+    setLoOff(kLoOffsetHz);
+#else
+    (void)dial; (void)prevDial;
+#endif
+}
+
+void MainWindow::setLoOff(int off) {
+    if (off == loOffHz_) return;
+    loOffHz_ = off;
+    pan_->setDialOffsetHz(off);
+    // The CW reader listens at the dial's offset from the LO — follow it.
+    if (cwDec_) cwDec_->retune(-double(off));
 }
 
 void MainWindow::applyMode(Mode m) {

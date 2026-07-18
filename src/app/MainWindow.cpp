@@ -306,7 +306,54 @@ MainWindow::MainWindow(QWidget* parent)
     auto* colA = new QVBoxLayout;
     colA->setSpacing(3);
     colA->addWidget(freqDisp_);
-    colA->addLayout(makeVolRow(0));
+    auto* rowA = makeVolRow(0);
+    // CTUN (PowerSDR click-tune): spectrum holds still, the A marker floats
+    // like B's; clicking a signal jumps the marker there in place. Off =
+    // classic behavior (dial pinned at center, spectrum slides). Sits where
+    // B's VIEW button does, balancing the two VFO rows.
+    ctunBtn_ = new QToolButton(topStrip);
+    ctunBtn_->setText("CTUN");
+    ctunBtn_->setCheckable(true);
+    ctunBtn_->setFocusPolicy(Qt::NoFocus);
+    ctunBtn_->setFixedHeight(19);
+    ctunBtn_->setToolTip(
+        "Click-tune mode (PowerSDR CTUN): the spectrum stays fixed and the\n"
+        "VFO A marker moves as you tune — click a signal and the marker\n"
+        "jumps there in place. Zooming in re-centers on the VFO; the display\n"
+        "re-centers itself when the marker nears an edge.\n"
+        "Off: classic view — VFO A pinned at center, spectrum slides.");
+    ctunBtn_->setStyleSheet(       // padding 4px not 8: the A row is the top
+        "QToolButton { background: #1c2430; border: 1px solid #2a3644;"
+        " border-radius: 3px; color: #8fa3b8; font-size: 10px; font-weight: bold;"
+        " padding: 0 4px; }"       // strip's width driver — keep the ruler happy
+        "QToolButton:hover { border-color: #4a5a6e; }"
+        "QToolButton:checked { background: #2f6d9e; border-color: #5db2f0;"
+        " color: #eaf6ff; }");
+    {
+        const QSignalBlocker b(ctunBtn_);
+        ctunBtn_->setChecked(QSettings().value("tune/ctun", false).toBool());
+    }
+    ctun_ = ctunBtn_->isChecked();
+    connect(ctunBtn_, &QToolButton::toggled, this, [this](bool on) {
+        ctun_ = on;
+        QSettings().setValue("tune/ctun", on);
+        if (!on) {
+            // Back to classic: re-center the capture on the dial.
+            pan_->setViewShiftHz(0);
+#ifdef HAVE_SDRPLAY
+            if (sdrLoHz_) {
+                sdrLoHz_ = centerHz_ + kLoOffsetHz;
+                sdr_.setCenterFrequency(static_cast<double>(sdrLoHz_));
+            }
+#endif
+            setLoOff(kLoOffsetHz);
+        }
+        statusBar()->showMessage(
+            on ? "CTUN: spectrum fixed — VFO A floats (click-tune)"
+               : "CTUN off: VFO A centered, spectrum follows the dial");
+    });
+    rowA->addWidget(ctunBtn_);
+    colA->addLayout(rowA);
     topGrid->addLayout(colA, 1, 1, Qt::AlignRight);   // hug the center block
     routing_ = new RoutingPanel(topStrip);
     topGrid->addWidget(routing_, 1, 3);
@@ -1036,7 +1083,7 @@ MainWindow::MainWindow(QWidget* parent)
                                .toString("yyyyMMdd-hhmmss"))
                       .arg(centerHz_ / 1000);
             if (iqRec_->start(path, 500000.0,
-                              double(centerHz_ + kLoOffsetHz)))
+                              double(centerHz_) + loOffHz_))
                 statusBar()->showMessage("IQ recording -> " + path);
             else {
                 statusBar()->showMessage("IQ record: cannot open " + path,
@@ -2231,14 +2278,13 @@ MainWindow::MainWindow(QWidget* parent)
                     // as a plausible frequency. Require two consecutive identical
                     // reads before following a dial change (~200 ms, imperceptible).
                     if (hz != pendingHz_) { pendingHz_ = hz; return; }
+                    const uint64_t prevDial = centerHz_;
                     centerHz_ = hz;
                     rigctld_.cacheFrequency(hz);     // cache only debounce-confirmed values
                     freqDisp_->setFrequency(hz);
                     pan_->setCenterHz(hz);           // keep grid labels on the dial
                     syncBandRegister();              // mirror the move into the stack
-#ifdef HAVE_SDRPLAY
-                    sdr_.setCenterFrequency(static_cast<double>(hz + kLoOffsetHz));
-#endif
+                    retuneSdrFor(hz, prevDial);      // CTUN-aware LO policy
                     statusBar()->showMessage(
                         QString("radio %1 MHz  |  panadapter following").arg(hz / 1e6, 0, 'f', 4));
                 }
@@ -2309,8 +2355,8 @@ MainWindow::MainWindow(QWidget* parent)
             edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
             const int    n     = static_cast<int>(copy.size());
             const double binHz = double(spanHz) / n;
-            int i0 = n / 2 + static_cast<int>(std::floor((lo - kLoOffsetHz) / binHz));
-            int i1 = n / 2 + static_cast<int>(std::ceil((hi - kLoOffsetHz) / binHz));
+            int i0 = n / 2 + static_cast<int>(std::floor((lo - loOffHz_) / binHz));
+            int i1 = n / 2 + static_cast<int>(std::ceil((hi - loOffHz_) / binHz));
             i0 = std::clamp(i0, 0, n - 1);
             i1 = std::clamp(i1, i0, n - 1);
             double acc = 0.0;
@@ -2380,6 +2426,7 @@ MainWindow::MainWindow(QWidget* parent)
             std::memcpy(&fRate, hdr + 8, 8);
             std::memcpy(&fCenter, hdr + 16, 8);
             centerHz_ = uint64_t(fCenter) - kLoOffsetHz;
+            sdrLoHz_ = uint64_t(fCenter);       // replay LO is frozen classic
             freqDisp_->setFrequency(centerHz_);
             pan_->setCenterHz(centerHz_);
             const bool fast = std::getenv("TTC_IQFAST") != nullptr;
@@ -2414,6 +2461,7 @@ MainWindow::MainWindow(QWidget* parent)
     sdr_.setDecimation(kDecim);
     if (!replayThread_ && sdr_.apiOk()
         && sdr_.start(static_cast<double>(centerHz_ + kLoOffsetHz), kSampleRate)) {
+        sdrLoHz_ = centerHz_ + kLoOffsetHz;
         statusBar()->showMessage(QString("RSP2 panadapter %1 MHz, span %2 kHz  |  rigctld :4532")
                                      .arg(centerHz_ / 1e6, 0, 'f', 4).arg(spanHz / 1000));
         // Unattended capture: TTC_RECIQ=<secs> records from startup (pair

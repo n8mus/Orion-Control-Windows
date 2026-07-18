@@ -141,6 +141,18 @@ private:
     QToolButton* bViewBtn_ = nullptr;         // show/hide B on the panadapter
     QToolButton* lockBtn_[2] = {};            // per-VFO tune locks (*AL/*BL)
     bool vfoLockA_ = false, vfoLockB_ = false;
+    // CTUN (PowerSDR click-tune): hold the SDR capture (and the screen)
+    // still while VFO A tunes — the A marker floats like B's, and the LO
+    // only re-centers when the dial nears the capture edge. Off = classic
+    // dial-pinned-at-center. loOffHz_ = LO minus dial RIGHT NOW (the fixed
+    // kLoOffsetHz in classic mode, varying under CTUN); every runtime
+    // spectrum-bin mapping must use it, never the constant.
+    QToolButton* ctunBtn_ = nullptr;
+    bool     ctun_ = false;
+    int      loOffHz_ = 60000;                // = kLoOffsetHz at startup
+    uint64_t sdrLoHz_ = 0;                    // absolute capture LO (0 = not running)
+    void setLoOff(int off);                   // pan + CW decoder follow
+    void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     QTimer* sfTx_ = nullptr;                  // coalesced sub-filter drag stream
     int  pendSubBw_ = 0, pendSubPbt_ = 0;
     bool subFilterDirty_ = false;

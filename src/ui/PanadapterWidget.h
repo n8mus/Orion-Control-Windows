@@ -94,6 +94,11 @@ public:
 
     void setSpanHz(int spanHz);                    // full captured span
     void setViewSpanHz(int spanHz);                // zoom (slider); no signal re-emit
+    // CTUN: the view window's center, as an RF offset from the dial. 0 =
+    // classic dial-centered view. While CTUN holds the capture (and the
+    // screen) still, tuning changes this instead — the dial marker floats.
+    void setViewShiftHz(int hz);
+    int  viewShiftHz() const { return viewShiftHz_; }
     // PowerSDR-style offset LO (if_freq): the SDR captures offset ABOVE the
     // dial so the zero-IF DC artifact never sits on the tuned frequency. The
     // view stays dial-centered; this tells it where the dial lives within
@@ -101,7 +106,13 @@ public:
     void setDialOffsetHz(int hz);
     int  viewSpanHz() const { return viewSpanHz_; }
     int  fullSpanHz() const { return fullSpanHz_; }
-    int  maxViewSpanHz() const { return fullSpanHz_ - 2 * std::abs(dialOffsetHz_); }
+    // Widest view that still fits the capture, centered where the view
+    // actually is (dial + viewShift). Classic (shift 0) this is the old
+    // fullSpan - 2*|dialOffset|; in CTUN it tracks the held view instead
+    // of shrinking as the dial tunes away from the LO.
+    int  maxViewSpanHz() const {
+        return fullSpanHz_ - 2 * std::abs(dialOffsetHz_ - viewShiftHz_);
+    }
     int  minViewSpanHz() const;
     void setPassband(int loHz, int hiHz);          // offsets from center, in Hz
     // Which passband edge a pure-bandwidth change pins in place. On the Orion
@@ -240,6 +251,8 @@ private:
     int fullSpanHz_ = 250000;                      // what the SDR captures
     int viewSpanHz_ = 250000;                      // what we display (zoom)
     int dialOffsetHz_ = 0;                         // LO minus dial (offset tuning)
+    int viewShiftHz_ = 0;                          // view center rel dial (CTUN)
+    void clampViewShift();                         // keep the view inside the capture
     uint64_t centerHz_ = 0;                        // 0 = unknown, labels skipped
     int pbLoHz_ = -1200;
     int pbHiHz_ = 1200;

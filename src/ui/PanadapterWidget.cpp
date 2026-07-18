@@ -321,6 +321,7 @@ int PanadapterWidget::minViewSpanHz() const { return kMinViewSpanHz; }
 void PanadapterWidget::setDialOffsetHz(int hz) {
     if (hz == dialOffsetHz_) return;
     dialOffsetHz_ = hz;
+    clampViewShift();
     viewSpanHz_ = std::clamp(viewSpanHz_, kMinViewSpanHz, maxViewSpanHz());
     wfDirty_ = true;
     update();
@@ -328,8 +329,32 @@ void PanadapterWidget::setDialOffsetHz(int hz) {
 
 void PanadapterWidget::setViewSpanHz(int spanHz) {
     // Slider-driven zoom: no viewSpanChanged emit, or the slider would loop.
+    // PowerSDR CTUN rule: zooming IN first centers the view on the VFO (the
+    // signal of interest is what's being zoomed on); zooming out never does.
+    if (spanHz < viewSpanHz_ && viewShiftHz_ != 0) viewShiftHz_ = 0;
     viewSpanHz_ = std::clamp(spanHz, kMinViewSpanHz, maxViewSpanHz());
+    clampViewShift();
     update();
+}
+
+void PanadapterWidget::setViewShiftHz(int hz) {
+    if (hz == viewShiftHz_) return;
+    viewShiftHz_ = hz;
+    clampViewShift();
+    wfDirty_ = true;
+    update();
+}
+
+void PanadapterWidget::clampViewShift() {
+    // The view (centered at dial + viewShift) must stay inside the capture
+    // (centered at LO = dial + dialOffset): |shift - dialOffset| bounded by
+    // the capture margin left over after the view span. The classic
+    // dial-centered view (shift 0) is always left alone — the paint-time
+    // bin clamp covers any degenerate startup geometry.
+    if (viewShiftHz_ == 0) return;
+    const int lim = std::max(0, (fullSpanHz_ - viewSpanHz_) / 2);
+    viewShiftHz_ =
+        std::clamp(viewShiftHz_, dialOffsetHz_ - lim, dialOffsetHz_ + lim);
 }
 
 void PanadapterWidget::setCenterHz(uint64_t hz) {
@@ -615,7 +640,7 @@ void PanadapterWidget::drawMarkers(QPainter& p, int hSpec) {
     const qint64 c = static_cast<qint64>(centerHz_);
     for (const auto& m : markers_) {
         const qint64 off = m.hz - c;
-        if (std::llabs(off) > viewSpanHz_ / 2) continue;
+        if (std::llabs(off - viewShiftHz_) > viewSpanHz_ / 2) continue;
         const int x = hzToX(static_cast<int>(off));
         QPen pen(QColor(255, 176, 64, 200), 1, Qt::DashLine);
         p.setPen(pen);
@@ -766,7 +791,7 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
     std::vector<Vis> vis;
     for (const SpotLabel& s : spots_) {
         const qint64 off = s.hz - static_cast<qint64>(centerHz_);
-        if (off < -half || off > half) continue;
+        if (off < viewShiftHz_ - half || off > viewShiftHz_ + half) continue;
         const bool lsb = s.hz < 5250000                  // voice below 10 MHz is
                       || (s.hz > 6000000 && s.hz < 8000000); // LSB (60 m excepted)
         vis.push_back({hzToX(static_cast<int>(off)), &s, lsb});
@@ -1018,13 +1043,17 @@ void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
 }
 
 int PanadapterWidget::hzToX(int hz) const {
-    const double frac = (hz + viewSpanHz_ / 2.0) / viewSpanHz_;
+    // hz is an RF offset from the DIAL; the screen is centered on the view
+    // center (dial + viewShift). With shift 0 this is the classic mapping.
+    const double frac =
+        (hz - viewShiftHz_ + viewSpanHz_ / 2.0) / viewSpanHz_;
     return static_cast<int>(std::lround(frac * width()));
 }
 
 int PanadapterWidget::xToHz(int x) const {
     const double frac = static_cast<double>(x) / std::max(1, width());
-    return static_cast<int>(std::lround(frac * viewSpanHz_ - viewSpanHz_ / 2.0));
+    return static_cast<int>(
+        std::lround(frac * viewSpanHz_ - viewSpanHz_ / 2.0)) + viewShiftHz_;
 }
 
 // Regulatory zone boxes (KE9NS BandText style): translucent green segments
@@ -1036,11 +1065,13 @@ void PanadapterWidget::drawBandZones(QPainter& p, int hSpec) {
     f.setPixelSize(10);
     p.setFont(f);
     const qint64 c = static_cast<qint64>(centerHz_);
+    const qint64 vLo = viewShiftHz_ - viewSpanHz_ / 2;
+    const qint64 vHi = viewShiftHz_ + viewSpanHz_ / 2;
     for (const auto& z : zones_) {
         const qint64 lo = z.loHz - c, hi = z.hiHz - c;
-        if (hi < -viewSpanHz_ / 2 || lo > viewSpanHz_ / 2) continue;
-        const int xLo = hzToX(static_cast<int>(std::max<qint64>(lo, -viewSpanHz_ / 2)));
-        const int xHi = hzToX(static_cast<int>(std::min<qint64>(hi, viewSpanHz_ / 2)));
+        if (hi < vLo || lo > vHi) continue;
+        const int xLo = hzToX(static_cast<int>(std::max(lo, vLo)));
+        const int xHi = hzToX(static_cast<int>(std::min(hi, vHi)));
         p.fillRect(QRect(QPoint(xLo, 0), QPoint(xHi, hSpec)), QColor(60, 190, 90, 22));
         p.setPen(QPen(QColor(80, 210, 110, 130), 1));
         p.drawLine(xLo, 0, xLo, hSpec);
@@ -1064,8 +1095,10 @@ void PanadapterWidget::drawFreqGrid(QPainter& p, int hSpec) {
     // KE9NS density: fainter minor lines at the scale band's minor-tick step
     // between the major lines, so the grid reads every 1/5 of a label step.
     const double step = niceStep(viewSpanHz_);
-    const double f0 = static_cast<double>(centerHz_) - viewSpanHz_ / 2.0;
-    const double f1 = static_cast<double>(centerHz_) + viewSpanHz_ / 2.0;
+    const double f0 =
+        static_cast<double>(centerHz_) + viewShiftHz_ - viewSpanHz_ / 2.0;
+    const double f1 =
+        static_cast<double>(centerHz_) + viewShiftHz_ + viewSpanHz_ / 2.0;
     const double minor = step / 5.0;
     if (hzToX(static_cast<int>(minor)) - hzToX(0) > 14) {
         p.setPen(QColor(255, 255, 255, 14));
@@ -1136,12 +1169,13 @@ void PanadapterWidget::drawPrivileges(QPainter& p, int hSpec) {
     // where an Extra / Advanced / General / Tech may transmit on this band.
     if (!ds_.showPrivileges || centerHz_ == 0) return;
     const qint64 half = viewSpanHz_ / 2;
+    const qint64 vc = qint64(centerHz_) + viewShiftHz_;   // view center RF
     QFont f = p.font();
     f.setPixelSize(9);
     f.setBold(true);
     p.setFont(f);
     for (const PrivEdge& e : kUsPriv) {
-        if (e.hz < qint64(centerHz_) - half || e.hz > qint64(centerHz_) + half)
+        if (e.hz < vc - half || e.hz > vc + half)
             continue;
         const int x = hzToX(int(e.hz - qint64(centerHz_)));
         p.setPen(QPen(QColor(70, 190, 120, 90), 1, Qt::DashLine));
@@ -1159,13 +1193,14 @@ void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
     // glance instead of a faint wash.
     if (ds_.showBandPlan && centerHz_ != 0) {
         const qint64 half = viewSpanHz_ / 2;
+        const qint64 vLo = viewShiftHz_ - half, vHi = viewShiftHz_ + half;
         for (const PlanSeg& s : kUsPlan) {
-            if (s.hi < qint64(centerHz_) - half || s.lo > qint64(centerHz_) + half)
+            const qint64 lo = s.lo - qint64(centerHz_);
+            const qint64 hi = s.hi - qint64(centerHz_);
+            if (hi < vLo || lo > vHi)
                 continue;
-            const int x0 = std::max(0,
-                hzToX(int(std::max(s.lo - qint64(centerHz_), -half))));
-            const int x1 = std::min(width(),
-                hzToX(int(std::min(s.hi - qint64(centerHz_), half))));
+            const int x0 = std::max(0, hzToX(int(std::max(lo, vLo))));
+            const int x1 = std::min(width(), hzToX(int(std::min(hi, vHi))));
             if (x1 <= x0) continue;
             QColor c = planColor(s.mode);
             c.setAlpha(95);                                    // strip body
@@ -1179,8 +1214,10 @@ void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
     p.drawLine(0, hSpec + kScaleBandH - 1, width(), hSpec + kScaleBandH - 1);
     if (centerHz_ == 0) return;
     const double step = niceStep(viewSpanHz_);
-    const double f0 = static_cast<double>(centerHz_) - viewSpanHz_ / 2.0;
-    const double f1 = static_cast<double>(centerHz_) + viewSpanHz_ / 2.0;
+    const double f0 =
+        static_cast<double>(centerHz_) + viewShiftHz_ - viewSpanHz_ / 2.0;
+    const double f1 =
+        static_cast<double>(centerHz_) + viewShiftHz_ + viewSpanHz_ / 2.0;
     QFont f = p.font();
     f.setPixelSize(10);
     f.setBold(true);
@@ -1268,13 +1305,14 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     // Visible bin window: view span centered inside the full captured span.
     int binLo = 0, binHi = n;
     if (n >= 2) {
-        // The view is dial-centered; with offset tuning the dial sits BELOW
-        // the capture center by dialOffsetHz_, so the window shifts with it.
+        // The view is centered on dial + viewShift; the dial itself sits
+        // BELOW the capture center by dialOffsetHz_ (offset tuning), so the
+        // window lands at dialOffset - viewShift below the capture center.
         const double frac = static_cast<double>(viewSpanHz_) / fullSpanHz_;
-        const double dialFrac =
-            0.5 - static_cast<double>(dialOffsetHz_) / fullSpanHz_;
-        binLo = static_cast<int>(n * (dialFrac - frac / 2.0));
-        binHi = static_cast<int>(n * (dialFrac + frac / 2.0));
+        const double viewFrac =
+            0.5 - static_cast<double>(dialOffsetHz_ - viewShiftHz_) / fullSpanHz_;
+        binLo = static_cast<int>(n * (viewFrac - frac / 2.0));
+        binHi = static_cast<int>(n * (viewFrac + frac / 2.0));
         binLo = std::clamp(binLo, 0, n - 2);
         binHi = std::clamp(binHi, binLo + 2, n);
     }
@@ -1415,12 +1453,14 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         if (vfoBRole_ == 'T')      { aCol = rxGreen; aText = "A RX"; }
         else if (vfoBRole_ == 'R') { aCol = txRed;   aText = "A TX"; }
         p.setPen(aCol);
-        p.drawLine(width() / 2, 0, width() / 2, height());
-        flag(width() / 2, aText, aCol);
+        const int xa = hzToX(0);        // A dial: center classic, floats in CTUN
+        p.drawLine(xa, 0, xa, height());
+        flag(xa, aText, aCol);
         if (vfoBVisible_ && vfoBHz_ && centerHz_) { // VFO B, if inside the view
             const qint64 off = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
             const int xb = hzToX(static_cast<int>(off));
-            if (std::llabs(off) < viewSpanHz_ / 2 && xb >= 0 && xb <= width()) {
+            if (std::llabs(off - viewShiftHz_) < viewSpanHz_ / 2
+                && xb >= 0 && xb <= width()) {
                 // Full VFO look, same as the main passband: filter tint across
                 // spectrum + waterfall, edge lines, dial line, flag.
                 const QColor& c = vfoBRole_ == 'T' ? txRed
@@ -1497,8 +1537,14 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
     // drag still shifts REF.
     if (e->modifiers() & Qt::ControlModifier) {     // Ctrl+wheel = zoom
         const double factor = std::pow(1.25, -steps);
-        viewSpanHz_ = std::clamp(static_cast<int>(std::lround(viewSpanHz_ * factor)),
-                                 kMinViewSpanHz, maxViewSpanHz());
+        const int newSpan =
+            std::clamp(static_cast<int>(std::lround(viewSpanHz_ * factor)),
+                       kMinViewSpanHz, maxViewSpanHz());
+        // PowerSDR CTUN rule: zoom IN centers the view on the VFO first.
+        if (newSpan < viewSpanHz_ && viewShiftHz_ != 0) viewShiftHz_ = 0;
+        viewSpanHz_ = newSpan;
+        clampViewShift();
+        wfDirty_ = true;
         emit viewSpanChanged(viewSpanHz_);
         update();
     } else {
@@ -1668,7 +1714,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         return;
     }
     // Grab the A dial line to drag-tune the main VFO.
-    if (std::abs(x - width() / 2) <= 4 && centerHz_) {
+    if (std::abs(x - hzToX(0)) <= 4 && centerHz_) {
         if (lockA_) return;
         drag_ = Drag::VfoA;
         wheelVfo_ = 'A';
@@ -1709,7 +1755,7 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
             setCursor(Qt::SizeVerCursor);
         else if (onSpot)                         setCursor(Qt::PointingHandCursor);
         else if (overVfoB(hx) || onAEdge
-                 || std::abs(hx - width() / 2) <= 4) setCursor(Qt::SizeHorCursor);
+                 || std::abs(hx - hzToX(0)) <= 4) setCursor(Qt::SizeHorCursor);
         else                                     unsetCursor();
         return;
     }

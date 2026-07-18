@@ -353,7 +353,7 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
 #ifdef HAVE_SDRPLAY
         if (skim_->enabled() && !lastSpectrum_.empty())
             skim_->updateFromSpectrum(lastSpectrum_, sdrSpanHz_,
-                                      qint64(centerHz_), kLoOffsetHz);
+                                      qint64(centerHz_), loOffHz_);
 #endif
         refreshSkim();
     });
