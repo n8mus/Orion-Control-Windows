@@ -8,6 +8,7 @@
 #include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QSlider>
 #include <QHostAddress>
 #include <QInputDialog>
@@ -229,22 +230,28 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     // Noise squelch: how strong a signal the reader needs before it prints.
     // Turn UP on a quiet band to stop stray letters into noise; DOWN to dig
     // out weak ones. Gates the fldigi engine's signal metric (0..40 here).
+    // Vertical, spanning rows 3-5 of column 4 (beside CW4 / Clear / the
+    // tracker combos) — the old one-cell horizontal slider was a ~60 px
+    // thumb-flick, too tiny to set with any precision.
     auto* sqW = new QWidget(this);
-    auto* sqLay = new QHBoxLayout(sqW);
+    auto* sqLay = new QVBoxLayout(sqW);
     sqLay->setContentsMargins(0, 0, 0, 0);
-    sqLay->setSpacing(4);
-    sqLay->addWidget(new QLabel("SQL", sqW));
-    sql_ = new QSlider(Qt::Horizontal, sqW);
+    sqLay->setSpacing(2);
+    auto* sqLbl = new QLabel("SQL", sqW);
+    sqLbl->setAlignment(Qt::AlignHCenter);
+    sqLay->addWidget(sqLbl);
+    sql_ = new QSlider(Qt::Vertical, sqW);
     sql_->setRange(0, 40);
     sql_->setValue(QSettings().value("cw/squelch", 12).toInt());
     sql_->setToolTip("Noise squelch: higher = needs a stronger signal to "
                      "print,\nso a quiet band stops throwing random letters. "
                      "Lower to\ndig out weak CW. (fldigi engine)");
+    sqLay->addWidget(sql_, 1, Qt::AlignHCenter);
     auto* sqVal = new QLabel(QString::number(sql_->value()), sqW);
+    sqVal->setAlignment(Qt::AlignHCenter);
     sqVal->setMinimumWidth(20);
-    sqLay->addWidget(sql_);
     sqLay->addWidget(sqVal);
-    g->addWidget(sqW, 5, 4);
+    g->addWidget(sqW, 3, 4, 3, 1);
     connect(sql_, &QSlider::valueChanged, this, [this, sqVal](int v) {
         sqVal->setText(QString::number(v));
         QSettings().setValue("cw/squelch", v);
