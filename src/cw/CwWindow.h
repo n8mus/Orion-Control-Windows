@@ -81,6 +81,8 @@ private:
 
     WinKeyer* wk_ = nullptr;
     QUdpSocket* daemon_ = nullptr;       // cwdaemon-protocol server
+    QUdpSocket* feed_ = nullptr;         // decode-text feed (localhost UDP)
+    quint16 feedPort_ = 2336;            // cw/feedPort — Not1MM dock listens
     QLineEdit* line_ = nullptr;
     QLabel* status_ = nullptr;
     QLabel* sentView_ = nullptr;         // what's queued/sent this over

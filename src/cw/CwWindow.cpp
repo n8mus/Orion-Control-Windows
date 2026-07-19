@@ -398,6 +398,13 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     connect(wk_, &WinKeyer::errorOccurred, this,
             [this](const QString& e) { updateStatus(e); });
 
+    // Decode-text feed: every decoded chunk is also datagrammed to
+    // localhost so a contest logger (Not1MM's CW-decode dock) can mirror
+    // the readout inside its own window — no window hopping, no focus
+    // steal, console free to sit minimized. Send-only, no listener needed.
+    feed_ = new QUdpSocket(this);
+    feedPort_ = quint16(QSettings().value("cw/feedPort", 2336).toInt());
+
     // cwdaemon-protocol server: cqrlog (CW interface set to cwdaemon,
     // localhost:6789) keys through us; the one WinKeyer serves both.
     daemon_ = new QUdpSocket(this);
@@ -463,10 +470,18 @@ void CwWindow::showEvent(QShowEvent* e) {
 
 void CwWindow::hideEvent(QHideEvent* e) {
     QDialog::hideEvent(e);
-    emit rxDecodeWanted(false);
+    // Spontaneous hides come from the window system — i.e. the console
+    // being minimized takes this child dialog with it. Keep the decoder
+    // running through those so the Not1MM decode dock stays live; only a
+    // real close (programmatic hide) stops it.
+    if (!e->spontaneous())
+        emit rxDecodeWanted(false);
 }
 
 void CwWindow::appendRx(const QString& text) {
+    if (feed_)                            // mirror to the contest logger
+        feed_->writeDatagram(text.toUtf8(), QHostAddress::LocalHost,
+                             feedPort_);
     rx_->moveCursor(QTextCursor::End);
     rx_->insertPlainText(text);
     rx_->moveCursor(QTextCursor::End);
