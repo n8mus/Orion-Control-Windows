@@ -20,9 +20,10 @@ PASS = all shapes good, soak loss <= 1%, median latency < 100 ms.
 """
 import socket, statistics, sys, time
 
-HOST = sys.argv[1] if len(sys.argv) > 1 else "192.168.2.123"
-PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 49152
-PASS = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+args = [a for a in sys.argv[1:] if a != "rip"]
+HOST = args[0] if len(args) > 0 else "192.168.2.123"
+PORT = int(args[1]) if len(args) > 1 else 49152
+PASS = int(args[2]) if len(args) > 2 else 0
 PC = PASS.to_bytes(2, "big")
 
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -99,6 +100,93 @@ pct = 100.0 * loss / max(n, 1)
 print(f"  {n} queries, {loss} lost ({pct:.1f}%)")
 if pct > 1.0:
     fails.append(f"soak:loss{pct:.1f}%")
+
+# --- 4. RIP audio stream (only with "rip" on the command line) ---------
+# Enable = *T <d1> <d0> sent TO the audio port (CMD+2) so the radio learns
+# the return address; d1 bit0 = RIP on, bit2 = TRANSMIT (never set here!),
+# d0 = compression flags (0 = 16-bit). 5 s timeout — resend every 2 s.
+if "rip" in sys.argv:
+    print("== RIP audio (10 s capture on port %d) ==" % (PORT + 2))
+    a = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    a.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    a.bind(("0.0.0.0", PORT + 2))
+    a.settimeout(0.5)
+    # d0=0x02 requests 8-bit RIP compression: live-found REQUIRED on
+    # firmware 1036 — plain 16-bit (d0=0) is silently refused (ripping
+    # stays 0), the 8-bit request streams immediately.
+    RIP_ON, RIP_OFF = b"*T\x01\x02", b"*T\x00\x00"   # bit2 (TX) never set
+    assert not (RIP_ON[2] & 0x04) and not (RIP_OFF[2] & 0x04)
+    pkts = []
+    t0 = time.monotonic()
+    last_ka = 0.0
+    while time.monotonic() - t0 < 10.0:
+        now = time.monotonic()
+        if now - last_ka > 2.0:
+            a.sendto(PC + RIP_ON + b"\r", (HOST, PORT + 2))
+            last_ka = now
+        try:
+            d, _ = a.recvfrom(2048)
+        except socket.timeout:
+            continue
+        if len(d) >= 12:
+            pkts.append((now, d))
+    a.sendto(PC + RIP_OFF + b"\r", (HOST, PORT + 2))
+    # drain stragglers, confirm the stream actually stops
+    time.sleep(1.0)
+    strag = 0
+    a.settimeout(0.1)
+    try:
+        while True:
+            a.recvfrom(2048)
+            strag += 1
+    except socket.timeout:
+        pass
+    if not pkts:
+        fails.append("rip:no-packets")
+        print("  no RIP packets received")
+    else:
+        n = len(pkts)
+        span = pkts[-1][0] - pkts[0][0]
+        seqs = [int.from_bytes(p[2:4], "big") for _, p in pkts]
+        ts = [int.from_bytes(p[4:8], "big") for _, p in pkts]
+        sizes = {len(p) for _, p in pkts}
+        hdr0 = {p[0] for _, p in pkts}
+        gaps = sum(1 for i in range(1, n)
+                   if (seqs[i] - seqs[i - 1]) & 0xffff != 1)
+        rate = n / span if span > 0 else 0.0
+        srate = (ts[-1] - ts[0]) / span if span > 0 else 0.0
+        # encoding sniff on the 8-bit stream: true audio is smooth
+        # sample-to-sample — compare candidate decodings.
+        payload = b"".join(p[12:] for _, p in pkts[n // 2:n // 2 + 4])
+        def smooth(vals):
+            return sum(abs(vals[i] - vals[i - 1])
+                       for i in range(1, len(vals))) / max(len(vals) - 1, 1)
+        def ulaw(b):
+            b = ~b & 0xff
+            seg, man = (b >> 4) & 7, b & 0x0f
+            v = ((man << 3) + 0x84) << seg
+            return -(v - 0x84) if b & 0x80 == 0 else (v - 0x84)
+        cands = {
+            "s8-linear": [int.from_bytes(bytes([x]), "big", signed=True) << 8
+                          for x in payload],
+            "u8-linear": [(x - 128) << 8 for x in payload],
+            "ulaw":      [ulaw(x) for x in payload],
+        }
+        # normalize smoothness by dynamic range so scales compare fairly
+        scores = {k: smooth(v) / (max(max(v) - min(v), 1)) for k, v in cands.items()}
+        enc = min(scores, key=scores.get)
+        print(f"  {n} pkts in {span:.1f}s = {rate:.1f} pkt/s   sizes {sorted(sizes)}"
+              f"   hdr0 {sorted(hex(h) for h in hdr0)}")
+        print(f"  seq gaps {gaps}   sample rate {srate:.0f} Hz (from RTP ts)"
+              f"   encoding ~{enc} {dict((k, round(v,3)) for k,v in scores.items())}"
+              f"   stragglers-after-stop {strag}")
+        if gaps > n * 0.01:
+            fails.append(f"rip:gaps{gaps}")
+        if not (0.9 * rate * span <= n):
+            fails.append("rip:rate")
+        if strag > 20:
+            fails.append("rip:did-not-stop")
+    a.close()
 
 print("\nRESULT:", "PASS" if not fails else f"FAIL {fails}")
 sys.exit(0 if not fails else 1)

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "radio/TenTecOmni7.h"
 
+#include "radio/RipAudio.h"
+
 #include <QHostAddress>
 #include <QSettings>
 #include <QTimer>
@@ -109,6 +111,12 @@ bool TenTecOmni7::open(const std::string& device) {
                 onBytes(d);                    // datagrams carry whole frames
             }
         });
+        // RX audio over the same wire (RIP) — the radio's speaker audio
+        // into the computer, level following the radio's AF volume.
+        if (QSettings().value("radio/ripAudio", true).toBool()) {
+            rip_ = new RipAudio(this);
+            rip_->start(netAddr_, netPort_, netPass_);
+        }
         return true;
     }
     return serial_.open(device, 57600, /*hwHandshake=*/true);

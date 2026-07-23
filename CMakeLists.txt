@@ -36,6 +36,7 @@ add_executable(tentec-console
   src/radio/SerialPort.cpp      src/radio/SerialPort.h
   src/radio/TenTecOrion.cpp     src/radio/TenTecOrion.h
   src/radio/TenTecOmni7.cpp     src/radio/TenTecOmni7.h
+  src/radio/RipAudio.cpp        src/radio/RipAudio.h
   src/net/RigctldServer.cpp     src/net/RigctldServer.h
   src/net/SpotClient.cpp        src/net/SpotClient.h
   src/net/PotaClient.cpp        src/net/PotaClient.h

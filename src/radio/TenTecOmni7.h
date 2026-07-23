@@ -8,6 +8,8 @@ class QUdpSocket;
 
 namespace ttc {
 
+class RipAudio;
+
 // Ten-Tec Omni VII (588) driver — the console's "Omni 8" personality.
 // Binary CAT over 57600 8N1 with RTS/CTS. Commands are '*'<letters><binary
 // data><CR>, queries '?'<letters><CR>; responses echo the command letters
@@ -99,6 +101,7 @@ private:
 
     SerialPort serial_;
     QUdpSocket* udp_ = nullptr;          // One Plug Ethernet ("udp:" device)
+    RipAudio* rip_ = nullptr;            // RX audio stream (radio/ripAudio)
     quint32 netAddr_ = 0;                // radio IPv4 (host byte order)
     quint16 netPort_ = 49152;            // UDP CMD port, symmetric both ends
     quint16 netPass_ = 0;                // NET PASSCODE (radio/netPasscode)

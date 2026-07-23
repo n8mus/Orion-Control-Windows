@@ -6,8 +6,11 @@
   smeter    OK   b'S1642\r'
   VFO A = 3.502100 MHz
 == latency (100x ?A) ==
-  min 12.7  med 12.9  p95 13.1  max 13.8 ms   lost 0
+  min 12.7  med 12.8  p95 13.0  max 13.9 ms   lost 0
 == soak (30 s @ 5 Hz, rotating ?A/?S/?M) ==
   185 queries, 0 lost (0.0%)
+== RIP audio (10 s capture on port 49154) ==
+  546 pkts in 10.0s = 54.7 pkt/s   sizes [140]   hdr0 ['0x0']
+  seq gaps 2   sample rate 7014 Hz (from RTP ts)   encoding ~s8-linear {'s8-linear': 0.157, 'u8-linear': 0.157, 'ulaw': 0.157}   stragglers-after-stop 0
 
 RESULT: PASS
