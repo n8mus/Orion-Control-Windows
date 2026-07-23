@@ -1,0 +1,13 @@
+== shapes (192.168.2.123:49152, passcode 0) ==
+  version   OK   b'VER 1036 588 REMOTE \x00\r'
+  mainfreq  OK   b'A\x005p\x14\r'
+  subfreq   OK   b'B\x00kSc\r'
+  mode      OK   b'M51\r'
+  smeter    OK   b'S1642\r'
+  VFO A = 3.502100 MHz
+== latency (100x ?A) ==
+  min 12.7  med 12.9  p95 13.1  max 13.8 ms   lost 0
+== soak (30 s @ 5 Hz, rotating ?A/?S/?M) ==
+  185 queries, 0 lost (0.0%)
+
+RESULT: PASS

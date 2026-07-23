@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "radio/TenTecOmni7.h"
 
+#include <QHostAddress>
+#include <QSettings>
 #include <QTimer>
+#include <QUdpSocket>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -79,6 +82,35 @@ TenTecOmni7::TenTecOmni7(QObject* parent) : RadioController(parent) {
 }
 
 bool TenTecOmni7::open(const std::string& device) {
+    const QString dev = QString::fromStdString(device);
+    if (dev.startsWith(QStringLiteral("udp:"))) {
+        // One Plug Ethernet (radio booted into REMOTE mode, hold-2 power-on):
+        // udp:HOST[:PORT], default CMD port 49152.
+        const QString spec = dev.mid(4);
+        const int colon = spec.lastIndexOf(':');
+        const QString host = colon > 0 ? spec.left(colon) : spec;
+        netPort_ = colon > 0 ? quint16(spec.mid(colon + 1).toUInt()) : 49152;
+        netAddr_ = QHostAddress(host).toIPv4Address();
+        if (!netAddr_ || !netPort_) return false;
+        netPass_ = quint16(QSettings().value("radio/netPasscode", 0).toUInt());
+        udp_ = new QUdpSocket(this);
+        // Symmetric ports: the radio replies TO the CMD port, so we must own
+        // it locally — an ephemeral source port gets silence (live-found
+        // during bring-up; the One Plug audio streams work the same way).
+        if (!udp_->bind(QHostAddress::AnyIPv4, netPort_)) {
+            delete udp_;
+            udp_ = nullptr;
+            return false;
+        }
+        connect(udp_, &QUdpSocket::readyRead, this, [this] {
+            while (udp_ && udp_->hasPendingDatagrams()) {
+                QByteArray d(int(udp_->pendingDatagramSize()), 0);
+                udp_->readDatagram(d.data(), d.size());
+                onBytes(d);                    // datagrams carry whole frames
+            }
+        });
+        return true;
+    }
     return serial_.open(device, 57600, /*hwHandshake=*/true);
 }
 
@@ -87,6 +119,15 @@ void TenTecOmni7::send(const QByteArray& payload) {
         fprintf(stderr, "[omni->]");
         for (char c : payload) fprintf(stderr, " %02x", static_cast<unsigned char>(c));
         fprintf(stderr, "\n");
+    }
+    if (udp_) {
+        QByteArray d;
+        d.append(char(netPass_ >> 8));         // 2-byte BE NET PASSCODE
+        d.append(char(netPass_ & 0xff));
+        d.append(payload);
+        d.append('\r');
+        udp_->writeDatagram(d, QHostAddress(netAddr_), netPort_);
+        return;
     }
     serial_.write(payload + '\r');
 }

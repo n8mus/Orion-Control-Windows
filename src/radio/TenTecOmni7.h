@@ -4,6 +4,7 @@
 #include "radio/SerialPort.h"
 
 class QTimer;
+class QUdpSocket;
 
 namespace ttc {
 
@@ -21,6 +22,14 @@ namespace ttc {
 //    return the 'Z' error and queries are silent. The methods below send
 //    them anyway: harmless in RADIO mode, functional if Jon ever flips the
 //    radio to REMOTE (which locks its front panel).
+//
+// Transports: a serial device path, OR "udp:HOST[:PORT]" for the radio's
+// One Plug Ethernet in REMOTE mode (default port 49152). Same command set;
+// each UDP payload is a 2-byte big-endian NET PASSCODE (radio/netPasscode,
+// default 0) + the serial frame. Ports are symmetric — the radio replies to
+// the command port, so we bind it locally. One datagram carries whole
+// frames, fed to the same length-table parser. Live-ruled 12.9 ms median
+// round-trip, 0 loss (tools/omni7_ruler.py).
 class TenTecOmni7 : public RadioController {
     Q_OBJECT
 public:
@@ -29,7 +38,7 @@ public:
     bool open(const std::string& device) override;
 
     const CapabilityProfile& caps() const override { return caps_; }
-    bool connected() const override { return serial_.isOpen(); }
+    bool connected() const override { return serial_.isOpen() || udp_; }
 
     void setFrequencyHz(Rx rx, uint64_t hz) override;    // *A/*B 4-byte BE
     void setMode(Rx rx, Mode mode) override;             // *M<chA><chB>
@@ -89,6 +98,10 @@ private:
     static Mode charMode(char c);
 
     SerialPort serial_;
+    QUdpSocket* udp_ = nullptr;          // One Plug Ethernet ("udp:" device)
+    quint32 netAddr_ = 0;                // radio IPv4 (host byte order)
+    quint16 netPort_ = 49152;            // UDP CMD port, symmetric both ends
+    quint16 netPass_ = 0;                // NET PASSCODE (radio/netPasscode)
     CapabilityProfile caps_;
     QByteArray buf_;                                     // parser accumulator
     QTimer* pttKeepalive_ = nullptr;                     // radio drops TX after 5 s
