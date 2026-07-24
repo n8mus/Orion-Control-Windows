@@ -2,6 +2,7 @@
 #include "radio/TenTecOmni7.h"
 
 #include "radio/RipAudio.h"
+#include "radio/TripAudio.h"
 
 #include <QHostAddress>
 #include <QSettings>
@@ -80,7 +81,7 @@ TenTecOmni7::TenTecOmni7(QObject* parent) : RadioController(parent) {
     pttKeepalive_ = new QTimer(this);
     pttKeepalive_->setInterval(2000);   // radio drops TX after 5 s of silence
     connect(pttKeepalive_, &QTimer::timeout, this,
-            [this] { send(QByteArray("*T\x04", 3) + char(0x00)); });
+            [this] { send(QByteArray("*T\x04", 3) + txD0_); });
 }
 
 bool TenTecOmni7::open(const std::string& device) {
@@ -117,6 +118,11 @@ bool TenTecOmni7::open(const std::string& device) {
             rip_ = new RipAudio(this);
             rip_->start(netAddr_, netPort_, netPass_);
         }
+        // TX audio over Ethernet (TRIP) — created only when explicitly
+        // enabled (default OFF); it streams solely while the rig is keyed,
+        // driven from setPtt. No streaming happens here.
+        if (QSettings().value("radio/tripAudio", false).toBool())
+            trip_ = new TripAudio(this);
         return true;
     }
     return serial_.open(device, 57600, /*hwHandshake=*/true);
@@ -248,10 +254,19 @@ void TenTecOmni7::queryDspLevels(Rx) { send("?K"); }
 
 void TenTecOmni7::setPtt(bool on) {
     if (on) {
-        send(QByteArray("*T") + char(0x04) + char(0x00));
+        // When streaming TX audio over Ethernet, key with the 8-bit TRIP
+        // compression bit set (d0 bit0) and start the capture stream; the
+        // radio then takes its transmit audio from the stream, not the mic.
+        txD0_ = trip_ ? char(0x01) : char(0x00);
+        send(QByteArray("*T\x04", 3) + txD0_);
         pttKeepalive_->start();        // radio un-keys after 5 s without this
+        if (trip_)
+            trip_->start(netAddr_, netPort_,
+                         QSettings().value("radio/tripSource").toString());
     } else {
+        if (trip_) trip_->stop();      // stop streaming before un-keying
         pttKeepalive_->stop();
+        txD0_ = char(0x00);
         send(QByteArray("*T") + char(0x00) + char(0x00));
     }
 }
