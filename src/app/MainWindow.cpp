@@ -1031,21 +1031,42 @@ MainWindow::MainWindow(QWidget* parent)
     {
         auto* radioGroup = new QActionGroup(this);
         radioGroup->setExclusive(true);
-        struct Ship { const char* label; const char* model; };
+        // The Omni VII is one driver but two ways to reach it, so it gets two
+        // entries: front-panel/serial (operating at the desk) vs remote over
+        // Ethernet. Picking one sets the model AND the connection profile,
+        // mirroring that profile's device into radio/device (what launch
+        // opens; a udp: string also auto-starts RIP audio). conn==nullptr for
+        // the Orions, which are serial-only and leave the connection alone.
+        struct Ship { const char* label; const char* model; const char* conn; };
         static constexpr Ship kFleet[] = {
-            {"Radio: USS Orion  (565)",    "orion"},
-            {"Radio: USS Orion II  (566)", "orion2"},
-            {"Radio: USS Omni VII  (588)", "omni8"},
+            {"Radio: USS Orion  (565)",                  "orion",  nullptr},
+            {"Radio: USS Orion II  (566)",               "orion2", nullptr},
+            {"Radio: USS Omni VII  588 — front panel (serial)", "omni8", "serial"},
+            {"Radio: USS Omni VII  588 — remote (Ethernet)",    "omni8", "remote"},
         };
         const QString current = radioModelChoice();
+        const QString curConn =
+            QSettings().value("radio/connection", "serial").toString();
         for (const Ship& ship : kFleet) {
             auto* act = radioGroup->addAction(sdrMenu->addAction(ship.label));
             act->setCheckable(true);
-            if (current == ship.model
-                || (current == "omni7" && QString(ship.model) == "omni8"))
-                act->setChecked(true);
+            const bool modelMatch =
+                current == ship.model
+                || (current == "omni7" && QString(ship.model) == "omni8");
+            const bool connMatch = !ship.conn || curConn == ship.conn;
+            if (modelMatch && connMatch) act->setChecked(true);
             connect(act, &QAction::triggered, this, [this, ship] {
-                QSettings().setValue("radio/model", ship.model);
+                QSettings s;
+                s.setValue("radio/model", ship.model);
+                if (ship.conn) {
+                    s.setValue("radio/connection", ship.conn);
+                    const bool remote = QString(ship.conn) == "remote";
+                    s.setValue("radio/device",
+                               remote
+                                   ? s.value("radio/deviceRemote",
+                                             "udp:192.168.2.123:49152")
+                                   : s.value("radio/deviceSerial", "/dev/omni7"));
+                }
                 statusBar()->showMessage(
                     QString("radio: %1 — restart the console to switch")
                         .arg(QString(ship.label).mid(7)));
