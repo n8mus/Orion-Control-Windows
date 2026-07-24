@@ -2,6 +2,7 @@
 #include "radio/RipAudio.h"
 
 #include <QHostAddress>
+#include <QSettings>
 #include <QTimer>
 #include <QUdpSocket>
 #include <cstdio>
@@ -84,11 +85,19 @@ void RipAudio::onDatagram() {
         if (!player_) {
             // ClipDeck pattern: PipeWire's own CLI, no audio library.
             // Rate as ruled from the RTP timestamps (~7013 Hz); PipeWire
-            // resamples to the sink.
+            // resamples to the sink. --raw is REQUIRED: the stream is
+            // headerless PCM, and without it pw-play tries to sniff a file
+            // format, fails, and exits immediately (no audio). radio/ripSink
+            // pins the output node (name or id) so it doesn't follow the
+            // system default onto an HDMI monitor; empty = default sink.
+            QStringList args{"--raw", "--format=s16", "--rate=7013",
+                             "--channels=1"};
+            const QString sink =
+                QSettings().value("radio/ripSink").toString().trimmed();
+            if (!sink.isEmpty()) args << "--target" << sink;
+            args << "-";
             player_ = new QProcess(this);
-            player_->start("pw-play",
-                           {"--format=s16", "--rate=7013", "--channels=1",
-                            "-"});
+            player_->start("pw-play", args);
             if (!player_->waitForStarted(1500)) {
                 player_->deleteLater();
                 player_ = nullptr;
