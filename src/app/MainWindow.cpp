@@ -1072,6 +1072,55 @@ MainWindow::MainWindow(QWidget* parent)
                         .arg(QString(ship.label).mid(7)));
             });
         }
+        // TX audio source for remote transmit (TRIP): what the radio sends
+        // over the air when keyed in Ethernet mode. Off = no streamed TX
+        // audio (keying alone = dead air over Ethernet). Mic / Digital pick
+        // the capture node from settings (station-specific, seeded in the
+        // conf) so no PipeWire node names live in the binary. tripSource is
+        // read live on each key; enabling from Off needs a relaunch (the
+        // stream object is built at connect).
+        auto* txMenu = sdrMenu->addMenu("TX audio (remote)");
+        auto* txGroup = new QActionGroup(this);
+        txGroup->setExclusive(true);
+        struct TxSrc { const char* label; const char* srcKey; };
+        static constexpr TxSrc kTxSrc[] = {
+            {"Off  (no streamed TX audio)", nullptr},
+            {"Microphone",                  "radio/tripSourceMic"},
+            {"Digital  (WSJT-X / fldigi)",  "radio/tripSourceDigital"},
+        };
+        {
+            QSettings s;
+            const bool tripOn = s.value("radio/tripAudio", false).toBool();
+            const QString curSrc = s.value("radio/tripSource").toString();
+            for (const TxSrc& t : kTxSrc) {
+                auto* act = txGroup->addAction(txMenu->addAction(t.label));
+                act->setCheckable(true);
+                if (!t.srcKey)
+                    act->setChecked(!tripOn);
+                else
+                    act->setChecked(tripOn
+                                    && curSrc == s.value(t.srcKey).toString());
+                connect(act, &QAction::triggered, this, [this, t] {
+                    QSettings s;
+                    if (!t.srcKey) {
+                        s.setValue("radio/tripAudio", false);
+                        statusBar()->showMessage(
+                            "TX audio: off — restart to apply", 6000);
+                        return;
+                    }
+                    const QString node = s.value(t.srcKey).toString();
+                    s.setValue("radio/tripSource", node);
+                    const bool wasOn = s.value("radio/tripAudio", false).toBool();
+                    s.setValue("radio/tripAudio", true);
+                    statusBar()->showMessage(
+                        QString("TX audio: %1%2")
+                            .arg(QString(t.label).section("  ", 0, 0))
+                            .arg(wasOn ? " (live next key)"
+                                       : " — restart to enable"),
+                        6000);
+                });
+            }
+        }
         auto* setupAct = sdrMenu->addAction("Station setup…");
         connect(setupAct, &QAction::triggered, this, &MainWindow::openSetup);
         sdrMenu->addSeparator();
