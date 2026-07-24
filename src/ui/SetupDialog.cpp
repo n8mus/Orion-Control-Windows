@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QHostAddress>
 #include <QLabel>
 #include <QLineEdit>
 #include <QProcess>
@@ -12,6 +13,7 @@
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QSettings>
+#include <QUdpSocket>
 #include <QSpinBox>
 #include <QThread>
 #include <QVBoxLayout>
@@ -86,9 +88,41 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
                             : m == "orion2"              ? 1
                                                          : 0);
     form->addRow("Model", model_);
+
+    // Two saved connection profiles: SERIAL (at the desk, e.g. the new
+    // serial-card port) and REMOTE (One Plug Ethernet, udp:HOST:PORT — the
+    // same string works from the laptop over the LAN). Both persist; the
+    // Connection selector just picks which one this launch opens.
+    const QString legacyDev =
+        s.value("radio/device",
+                model_->currentData() == "omni8" ? "/dev/omni7" : "/dev/orion")
+            .toString();
+    const bool legacyRemote = legacyDev.startsWith("udp:");
+    devSerial_ = s.value("radio/deviceSerial",
+                         legacyRemote ? QStringLiteral("/dev/omni7") : legacyDev)
+                     .toString();
+    devRemote_ = s.value("radio/deviceRemote",
+                         legacyRemote ? legacyDev
+                                      : QStringLiteral("udp:192.168.2.123:49152"))
+                     .toString();
+    connMode_ = s.value("radio/connection",
+                        legacyRemote ? "remote" : "serial").toString();
+
+    conn_ = new QComboBox(this);
+    conn_->addItem("At the radio — serial (CAT cable)", "serial");
+    conn_->addItem("Remote — Ethernet (One Plug / laptop)", "remote");
+    conn_->setCurrentIndex(connMode_ == "remote" ? 1 : 0);
+    conn_->setToolTip("Serial for operating at the desk; Remote streams CAT\n"
+                      "and RX audio over Ethernet (radio in REMOTE mode).");
+    form->addRow("Connection", conn_);
+
     radioDev_ = new QComboBox(this);
-    radioDev_->setEditable(true);          // paths beyond the enumeration
+    radioDev_->setEditable(true);          // paths / udp: strings beyond enum
     form->addRow("CAT serial port", radioDev_);
+    devLabel_ = qobject_cast<QLabel*>(form->labelForField(radioDev_));
+    connect(conn_, &QComboBox::currentTextChanged, this, [this] {
+        applyConnMode(conn_->currentData().toString());
+    });
     auto* rtest = new QPushButton("Test", this);
     radioTest_ = new QLabel(this);
     auto* rrow = new QHBoxLayout;
@@ -149,33 +183,64 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     connect(bb, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     refreshPorts();
+    applyConnMode(connMode_);            // fills the radio device row per profile
 }
 
 // Serial candidates: everything QSerialPortInfo can see (USB adapters AND
 // native COM ports), current settings kept even if not enumerated (device
-// may be unplugged right now).
+// may be unplugged right now). The radio device row is owned by
+// applyConnMode (it depends on the connection profile); here we handle only
+// the keyer.
 void SetupDialog::refreshPorts() {
     QSettings s;
     QStringList ports;
     for (const QSerialPortInfo& p : QSerialPortInfo::availablePorts())
         ports << p.systemLocation();
     ports.sort();
-    const QString curRadio =
-        s.value("radio/device",
-                model_->currentData() == "omni8" ? "/dev/omni7" : "/dev/orion")
-            .toString();
     const QString curKeyer =
         s.value("cw/port",
                 "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A904QF5Z-if00-port0")
             .toString();
-    for (auto* combo : {radioDev_, keyerDev_}) {
-        combo->clear();
-        combo->addItems(ports);
-    }
-    if (!ports.contains(curRadio)) radioDev_->addItem(curRadio);
+    keyerDev_->clear();
+    keyerDev_->addItems(ports);
     if (!ports.contains(curKeyer)) keyerDev_->addItem(curKeyer);
-    radioDev_->setCurrentText(curRadio);
     keyerDev_->setCurrentText(curKeyer);
+}
+
+// Swap the device field between the serial and remote profiles, remembering
+// the field we're leaving so a flip-back is lossless. Serial mode lists the
+// enumerated ports; remote mode offers the saved udp: string (plus this
+// station's One Plug default as a hint).
+void SetupDialog::applyConnMode(const QString& mode) {
+    const QString shown = radioDev_->currentText().trimmed();
+    if (!shown.isEmpty()) {                       // stash (skip the empty init)
+        if (connMode_ == "remote") devRemote_ = shown;
+        else                       devSerial_ = shown;
+    }
+    connMode_ = mode;
+
+    radioDev_->clear();
+    if (mode == "remote") {
+        if (devLabel_) devLabel_->setText("Radio address");
+        radioDev_->setToolTip("udp:HOST[:PORT] — the radio's IP in REMOTE\n"
+                              "mode (default CMD port 49152). Same string on\n"
+                              "the laptop, pointed at the radio's LAN address.");
+        QStringList sugg{devRemote_, "udp:192.168.2.123:49152"};
+        sugg.removeDuplicates();
+        radioDev_->addItems(sugg);
+        radioDev_->setCurrentText(devRemote_);
+    } else {
+        if (devLabel_) devLabel_->setText("CAT serial port");
+        radioDev_->setToolTip("Serial device this console opens when operating\n"
+                              "at the desk (e.g. the new serial-card port).");
+        QStringList ports;
+        for (const QSerialPortInfo& p : QSerialPortInfo::availablePorts())
+            ports << p.systemLocation();
+        ports.sort();
+        radioDev_->addItems(ports);
+        if (!ports.contains(devSerial_)) radioDev_->addItem(devSerial_);
+        radioDev_->setCurrentText(devSerial_);
+    }
 }
 
 // Live CAT probe: ?V at 57600 8N1 (Orion ASCII dialect — both Orions).
@@ -191,9 +256,44 @@ void SetupDialog::testRadio() {
                                   "check cable/power");
         return;
     }
+    // Remote (Ethernet): a real UDP ?V probe — the same passcode-framed
+    // query the driver uses. Confirms the radio is reachable and in REMOTE
+    // mode before committing, which is exactly what you want from the
+    // laptop. (Only possible when the console isn't itself holding 49152 —
+    // i.e. it launched on a serial device; the dev==liveRadioDev_ branch
+    // above already covers the in-use case.)
+    if (dev.startsWith("udp:")) {
+        const QString spec = dev.mid(4);
+        const int colon = spec.lastIndexOf(':');
+        const QString host = colon > 0 ? spec.left(colon) : spec;
+        const quint16 port = colon > 0 ? quint16(spec.mid(colon + 1).toUInt())
+                                       : 49152;
+        const quint16 pass =
+            quint16(QSettings().value("radio/netPasscode", 0).toUInt());
+        QUdpSocket u;
+        if (!u.bind(QHostAddress::AnyIPv4, port)) {   // symmetric ports
+            radioTest_->setText("✗ can't bind local :" + QString::number(port) +
+                                " (another app using it?)");
+            return;
+        }
+        QByteArray q;
+        q.append(char(pass >> 8));
+        q.append(char(pass & 0xff));
+        q.append("?V\r", 3);
+        u.writeDatagram(q, QHostAddress(host), port);
+        if (u.waitForReadyRead(1200)) {
+            QByteArray d(int(u.pendingDatagramSize()), 0);
+            u.readDatagram(d.data(), d.size());
+            radioTest_->setText("✓ " + QString::fromLatin1(d.simplified()));
+        } else {
+            radioTest_->setText("✗ no reply — radio in REMOTE mode? "
+                                "IP/passcode right? cable to the LAN?");
+        }
+        return;
+    }
     if (model_->currentData() == "omni8") {
-        radioTest_->setText("Omni VII probe n/a (binary CAT) — save and "
-                            "restart to test");
+        radioTest_->setText("Omni VII serial probe n/a (binary CAT) — save "
+                            "and restart to test");
         return;
     }
     QSerialPort p;
@@ -256,7 +356,16 @@ void SetupDialog::accept() {
     s.setValue("station/callsign", call_->text().trimmed().toUpper());
     s.setValue("station/grid", grid_->text().trimmed());
     s.setValue("radio/model", model_->currentData().toString());
-    s.setValue("radio/device", radioDev_->currentText().trimmed());
+    // Fold the currently-shown field back into its profile, save both, and
+    // mirror the active one into radio/device (what the app opens at launch,
+    // and what still auto-enables RIP audio when it's a udp: string).
+    const QString shown = radioDev_->currentText().trimmed();
+    if (connMode_ == "remote") devRemote_ = shown;
+    else                       devSerial_ = shown;
+    s.setValue("radio/connection", connMode_);
+    s.setValue("radio/deviceSerial", devSerial_);
+    s.setValue("radio/deviceRemote", devRemote_);
+    s.setValue("radio/device", connMode_ == "remote" ? devRemote_ : devSerial_);
     s.setValue("cw/port", keyerDev_->currentText().trimmed());
     s.setValue("cw/audioDev", audioDev_->currentText().trimmed());
     s.setValue("spots/host", spotHost_->text().trimmed());

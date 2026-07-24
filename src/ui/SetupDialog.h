@@ -32,11 +32,17 @@ private:
     void refreshPorts();
     void testRadio();
     void testKeyer();
+    // Swap the device field between the two saved profiles (serial at the
+    // desk, udp: for remote/Ethernet). Stashes the outgoing field text so
+    // flipping back and forth never loses the other connection's device.
+    void applyConnMode(const QString& mode);
 
     QLineEdit* call_ = nullptr;
     QLineEdit* grid_ = nullptr;
     QComboBox* model_ = nullptr;
+    QComboBox* conn_ = nullptr;          // Connection: serial | remote
     QComboBox* radioDev_ = nullptr;
+    QLabel*    devLabel_ = nullptr;      // the device row's label, relabeled per mode
     QLabel*    radioTest_ = nullptr;
     QComboBox* keyerDev_ = nullptr;
     QLabel*    keyerTest_ = nullptr;
@@ -47,6 +53,8 @@ private:
     QCheckBox* rotorOn_ = nullptr;
     QSpinBox*  rotorPort_ = nullptr;
     QString    liveRadioDev_, liveKeyerDev_;
+    QString    devSerial_, devRemote_;   // the two remembered profiles
+    QString    connMode_;                // which one is currently shown
     bool       radioConnected_ = false;
 };
 
