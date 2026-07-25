@@ -86,7 +86,13 @@ void MainWindow::dvrPlayOverAir(const QString& wav, int slot) {
 void MainWindow::dvrStopped() {
     if (dvrTxPlayback_) {
         dvrTxPlayback_ = false;
-        QTimer::singleShot(250, this, [this] {
+        // Drain before un-key: the player exits at its last buffer WRITE,
+        // not the last sample. The serial/SignaLink path empties in ~250 ms;
+        // the Ethernet path is longer (paplay server buffer -> TRIP_digital
+        // -> parec -> TRIP pacing queue -> radio) and un-keying also flushes
+        // TripAudio's queue — too short a drain chops the clip's tail.
+        const int drainMs = radioDevUsed_.startsWith("udp:") ? 1200 : 250;
+        QTimer::singleShot(drainMs, this, [this] {
             radio_->setPtt(false);                 // un-key BEFORE the mic is hot
             if (dvrAutoDig_) {
                 dvrAutoDig_ = false;
