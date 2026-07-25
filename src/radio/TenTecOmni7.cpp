@@ -127,6 +127,15 @@ bool TenTecOmni7::open(const std::string& device) {
         if (QSettings().value("radio/tripAudio", false).toBool())
             trip_ = new TripAudio(this);
         caps_.catTxControls = true;    // REMOTE mode: power/mic/proc/tune live
+        // Remote work: silence the radio's speaker (*C2O, ASCII digit —
+        // muted-speaker note in the prog ref says headphones, and therefore
+        // the AF chain feeding RIP, are unaffected). The AF slider can then
+        // sit healthy-high for 8-bit stream S/N without blasting the shack.
+        // radio/muteSpeakerRemote=false opts back into an audible speaker;
+        // sent explicitly both ways so toggling the setting takes effect on
+        // the next connect.
+        send(QSettings().value("radio/muteSpeakerRemote", true).toBool()
+                 ? QByteArray("*C2O1") : QByteArray("*C2O0"));
         return true;
     }
     return serial_.open(device, 57600, /*hwHandshake=*/true);
