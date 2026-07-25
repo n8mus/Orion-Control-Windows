@@ -89,22 +89,31 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
                                                          : 0);
     form->addRow("Model", model_);
 
-    // Two saved connection profiles: SERIAL (at the desk, e.g. the new
-    // serial-card port) and REMOTE (One Plug Ethernet, udp:HOST:PORT — the
-    // same string works from the laptop over the LAN). Both persist; the
-    // Connection selector just picks which one this launch opens.
+    // Per-radio device profiles: the Orion's serial port (deviceOrion), the
+    // Omni VII's serial port (deviceSerial) and the Omni VII's Ethernet
+    // address (deviceRemote) are three separate remembered values — switching
+    // radios or Omni serial<->remote never stomps another radio's device.
+    // The Connection selector applies to the Omni only (the Orion is
+    // serial-only).
     const QString legacyDev =
         s.value("radio/device",
                 model_->currentData() == "omni8" ? "/dev/omni7" : "/dev/orion")
             .toString();
     const bool legacyRemote = legacyDev.startsWith("udp:");
+    const bool legacyOrion =
+        s.value("radio/model", "orion").toString().startsWith("orion");
     devSerial_ = s.value("radio/deviceSerial",
-                         legacyRemote ? QStringLiteral("/dev/omni7") : legacyDev)
+                         legacyRemote || legacyOrion
+                             ? QStringLiteral("/dev/omni7") : legacyDev)
                      .toString();
     devRemote_ = s.value("radio/deviceRemote",
                          legacyRemote ? legacyDev
                                       : QStringLiteral("udp:192.168.2.123:49152"))
                      .toString();
+    devOrion_ = s.value("radio/deviceOrion",
+                        legacyOrion && !legacyRemote
+                            ? legacyDev : QStringLiteral("/dev/orion"))
+                    .toString();
     connMode_ = s.value("radio/connection",
                         legacyRemote ? "remote" : "serial").toString();
 
@@ -113,16 +122,18 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     conn_->addItem("Remote — Ethernet (One Plug / laptop)", "remote");
     conn_->setCurrentIndex(connMode_ == "remote" ? 1 : 0);
     conn_->setToolTip("Serial for operating at the desk; Remote streams CAT\n"
-                      "and RX audio over Ethernet (radio in REMOTE mode).");
+                      "and RX audio over Ethernet (radio in REMOTE mode).\n"
+                      "Applies to the Omni VII — the Orion is serial-only.");
     form->addRow("Connection", conn_);
 
     radioDev_ = new QComboBox(this);
     radioDev_->setEditable(true);          // paths / udp: strings beyond enum
     form->addRow("CAT serial port", radioDev_);
     devLabel_ = qobject_cast<QLabel*>(form->labelForField(radioDev_));
-    connect(conn_, &QComboBox::currentTextChanged, this, [this] {
-        applyConnMode(conn_->currentData().toString());
-    });
+    connect(conn_, &QComboBox::currentTextChanged, this,
+            [this] { applyConnMode(activeProfile()); });
+    connect(model_, &QComboBox::currentTextChanged, this,
+            [this] { applyConnMode(activeProfile()); });
     auto* rtest = new QPushButton("Test", this);
     radioTest_ = new QLabel(this);
     auto* rrow = new QHBoxLayout;
@@ -183,7 +194,7 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     connect(bb, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     refreshPorts();
-    applyConnMode(connMode_);            // fills the radio device row per profile
+    applyConnMode(activeProfile());      // fills the radio device row per profile
 }
 
 // Serial candidates: everything QSerialPortInfo can see (USB adapters AND
@@ -207,20 +218,38 @@ void SetupDialog::refreshPorts() {
     keyerDev_->setCurrentText(curKeyer);
 }
 
-// Swap the device field between the serial and remote profiles, remembering
-// the field we're leaving so a flip-back is lossless. Serial mode lists the
-// enumerated ports; remote mode offers the saved udp: string (plus this
-// station's One Plug default as a hint).
-void SetupDialog::applyConnMode(const QString& mode) {
+// Which stored device the field is editing: the Orion's serial port, the
+// Omni's serial port, or the Omni's Ethernet address.
+QString SetupDialog::activeProfile() const {
+    if (model_->currentData().toString().startsWith("orion"))
+        return QStringLiteral("orion");
+    return conn_->currentData().toString();       // "serial" | "remote"
+}
+
+// Swap the device field between the per-radio profiles, remembering the
+// field we're leaving so a flip-back is lossless. Serial profiles list the
+// enumerated ports; remote offers the saved udp: string (plus this
+// station's One Plug default as a hint). Orion models force + grey the
+// Connection row (serial-only radio).
+void SetupDialog::applyConnMode(const QString& profile) {
     const QString shown = radioDev_->currentText().trimmed();
     if (!shown.isEmpty()) {                       // stash (skip the empty init)
-        if (connMode_ == "remote") devRemote_ = shown;
-        else                       devSerial_ = shown;
+        if (lastProfile_ == "remote")      devRemote_ = shown;
+        else if (lastProfile_ == "orion")  devOrion_  = shown;
+        else if (lastProfile_ == "serial") devSerial_ = shown;
     }
-    connMode_ = mode;
+    lastProfile_ = profile;
+    const bool orion = profile == "orion";
+    if (!orion) connMode_ = profile;              // the Omni's serial/remote pick
+    {                                             // Orion: pin selector to serial
+        QSignalBlocker block(conn_);
+        if (orion) conn_->setCurrentIndex(0);
+        else conn_->setCurrentIndex(connMode_ == "remote" ? 1 : 0);
+    }
+    conn_->setEnabled(!orion);
 
     radioDev_->clear();
-    if (mode == "remote") {
+    if (profile == "remote") {
         if (devLabel_) devLabel_->setText("Radio address");
         radioDev_->setToolTip("udp:HOST[:PORT] — the radio's IP in REMOTE\n"
                               "mode (default CMD port 49152). Same string on\n"
@@ -230,16 +259,19 @@ void SetupDialog::applyConnMode(const QString& mode) {
         radioDev_->addItems(sugg);
         radioDev_->setCurrentText(devRemote_);
     } else {
+        const QString& cur = orion ? devOrion_ : devSerial_;
         if (devLabel_) devLabel_->setText("CAT serial port");
-        radioDev_->setToolTip("Serial device this console opens when operating\n"
-                              "at the desk (e.g. the new serial-card port).");
+        radioDev_->setToolTip(orion
+            ? "Serial device of the Orion (its only CAT path)."
+            : "Serial device this console opens when operating the Omni VII\n"
+              "at the desk (front panel / RADIO mode).");
         QStringList ports;
         for (const QSerialPortInfo& p : QSerialPortInfo::availablePorts())
             ports << p.systemLocation();
         ports.sort();
         radioDev_->addItems(ports);
-        if (!ports.contains(devSerial_)) radioDev_->addItem(devSerial_);
-        radioDev_->setCurrentText(devSerial_);
+        if (!ports.contains(cur)) radioDev_->addItem(cur);
+        radioDev_->setCurrentText(cur);
     }
 }
 
@@ -356,16 +388,21 @@ void SetupDialog::accept() {
     s.setValue("station/callsign", call_->text().trimmed().toUpper());
     s.setValue("station/grid", grid_->text().trimmed());
     s.setValue("radio/model", model_->currentData().toString());
-    // Fold the currently-shown field back into its profile, save both, and
-    // mirror the active one into radio/device (what the app opens at launch,
-    // and what still auto-enables RIP audio when it's a udp: string).
+    // Fold the currently-shown field back into its per-radio profile, save
+    // all three, and mirror the active one into radio/device (what the app
+    // opens at launch; a udp: string also auto-enables RIP audio).
     const QString shown = radioDev_->currentText().trimmed();
-    if (connMode_ == "remote") devRemote_ = shown;
+    const QString prof = activeProfile();
+    if (prof == "remote")      devRemote_ = shown;
+    else if (prof == "orion")  devOrion_  = shown;
     else                       devSerial_ = shown;
     s.setValue("radio/connection", connMode_);
     s.setValue("radio/deviceSerial", devSerial_);
     s.setValue("radio/deviceRemote", devRemote_);
-    s.setValue("radio/device", connMode_ == "remote" ? devRemote_ : devSerial_);
+    s.setValue("radio/deviceOrion", devOrion_);
+    s.setValue("radio/device",
+               prof == "orion" ? devOrion_
+               : connMode_ == "remote" ? devRemote_ : devSerial_);
     s.setValue("cw/port", keyerDev_->currentText().trimmed());
     s.setValue("cw/audioDev", audioDev_->currentText().trimmed());
     s.setValue("spots/host", spotHost_->text().trimmed());

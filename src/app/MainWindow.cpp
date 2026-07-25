@@ -20,6 +20,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QProcess>
 #include <QApplication>
 #include <QHostAddress>
 #include <QPushButton>
@@ -1031,18 +1032,29 @@ MainWindow::MainWindow(QWidget* parent)
     {
         auto* radioGroup = new QActionGroup(this);
         radioGroup->setExclusive(true);
-        // The Omni VII is one driver but two ways to reach it, so it gets two
-        // entries: front-panel/serial (operating at the desk) vs remote over
-        // Ethernet. Picking one sets the model AND the connection profile,
-        // mirroring that profile's device into radio/device (what launch
-        // opens; a udp: string also auto-starts RIP audio). conn==nullptr for
-        // the Orions, which are serial-only and leave the connection alone.
-        struct Ship { const char* label; const char* model; const char* conn; };
+        // Every way of reaching a radio is its own entry with its OWN saved
+        // device profile — Orion serial (radio/deviceOrion), Omni VII serial
+        // (radio/deviceSerial) and Omni VII Ethernet (radio/deviceRemote)
+        // never stomp each other. Picking an entry writes model + connection
+        // + that profile's device into radio/device and RESTARTS the console
+        // (drivers are built at startup), so switching radios or Omni
+        // serial<->remote is one click. Live-found: the old entries changed
+        // only the model, leaving the previous radio's device behind — an
+        // Orion pick after Omni-remote tried to open udp: and needed two
+        // manual restart cycles to untangle.
+        struct Ship {
+            const char* label; const char* model; const char* conn;
+            const char* devKey; const char* devDefault;
+        };
         static constexpr Ship kFleet[] = {
-            {"Radio: USS Orion  (565)",                  "orion",  nullptr},
-            {"Radio: USS Orion II  (566)",               "orion2", nullptr},
-            {"Radio: USS Omni VII  588 — front panel (serial)", "omni8", "serial"},
-            {"Radio: USS Omni VII  588 — remote (Ethernet)",    "omni8", "remote"},
+            {"Radio: USS Orion  (565)",    "orion",  nullptr,
+             "radio/deviceOrion", "/dev/orion"},
+            {"Radio: USS Orion II  (566)", "orion2", nullptr,
+             "radio/deviceOrion", "/dev/orion"},
+            {"Radio: USS Omni VII  588 — front panel (serial)", "omni8",
+             "serial", "radio/deviceSerial", "/dev/omni7"},
+            {"Radio: USS Omni VII  588 — remote (Ethernet)",    "omni8",
+             "remote", "radio/deviceRemote", "udp:192.168.2.123:49152"},
         };
         const QString current = radioModelChoice();
         const QString curConn =
@@ -1057,19 +1069,30 @@ MainWindow::MainWindow(QWidget* parent)
             if (modelMatch && connMatch) act->setChecked(true);
             connect(act, &QAction::triggered, this, [this, ship] {
                 QSettings s;
-                s.setValue("radio/model", ship.model);
-                if (ship.conn) {
-                    s.setValue("radio/connection", ship.conn);
-                    const bool remote = QString(ship.conn) == "remote";
-                    s.setValue("radio/device",
-                               remote
-                                   ? s.value("radio/deviceRemote",
-                                             "udp:192.168.2.123:49152")
-                                   : s.value("radio/deviceSerial", "/dev/omni7"));
+                // Seed a missing Orion profile from the device that's live
+                // right now if it's already a serial path (migration: Jon's
+                // Orion answers on /dev/ttyS0, not the /dev/orion default).
+                QString dev = s.value(ship.devKey).toString();
+                if (dev.isEmpty()) {
+                    const QString cur = s.value("radio/device").toString();
+                    const bool serialish = !cur.startsWith("udp:") && !cur.isEmpty();
+                    dev = (!ship.conn && serialish) ? cur
+                                                    : QString(ship.devDefault);
+                    s.setValue(ship.devKey, dev);
                 }
+                s.setValue("radio/model", ship.model);
+                if (ship.conn) s.setValue("radio/connection", ship.conn);
+                s.setValue("radio/device", dev);
+                s.sync();
                 statusBar()->showMessage(
-                    QString("radio: %1 — restart the console to switch")
+                    QString("radio: %1 — restarting…")
                         .arg(QString(ship.label).mid(7)));
+                QTimer::singleShot(300, this, [] {
+                    QStringList args = qApp->arguments().mid(1);
+                    if (!args.contains("--wait-lock")) args << "--wait-lock";
+                    QProcess::startDetached(qApp->applicationFilePath(), args);
+                    qApp->quit();
+                });
             });
         }
         // TX audio source for remote transmit (TRIP): what the radio sends

@@ -66,7 +66,13 @@ int main(int argc, char** argv) {
     // before the session-log redirect below — a refused second instance
     // was rotating the LIVE console's log on its way out (test-found).
     QLockFile lock(QDir::temp().filePath("tentec-console.lock"));
-    if (!std::getenv("TTC_SELFTEST") && !lock.tryLock(100)) {
+    // --wait-lock: we're the child of a self-restart (radio switch from the
+    // SDR menu). The parent is still tearing down (PTT off, RIP off, rotor,
+    // SDR close) — wait for its lock up to ~8 s instead of refusing.
+    if (app.arguments().contains("--wait-lock"))
+        for (int i = 0; i < 80 && !lock.isLocked(); ++i)
+            if (lock.tryLock(100)) break;
+    if (!std::getenv("TTC_SELFTEST") && !lock.isLocked() && !lock.tryLock(100)) {
         fprintf(stderr, "REFUSED: another console instance is running "
                         "(one per station — serial + SDR are exclusive)\n");
         QMessageBox::critical(nullptr, "USS Orion console",

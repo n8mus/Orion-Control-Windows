@@ -32,10 +32,11 @@ private:
     void refreshPorts();
     void testRadio();
     void testKeyer();
-    // Swap the device field between the two saved profiles (serial at the
-    // desk, udp: for remote/Ethernet). Stashes the outgoing field text so
-    // flipping back and forth never loses the other connection's device.
-    void applyConnMode(const QString& mode);
+    // Swap the device field between the per-radio profiles (Orion serial,
+    // Omni serial, Omni udp:). Stashes the outgoing field text so flipping
+    // back and forth never loses another radio's device.
+    void applyConnMode(const QString& profile);
+    QString activeProfile() const;       // "orion" | "serial" | "remote"
 
     QLineEdit* call_ = nullptr;
     QLineEdit* grid_ = nullptr;
@@ -53,8 +54,10 @@ private:
     QCheckBox* rotorOn_ = nullptr;
     QSpinBox*  rotorPort_ = nullptr;
     QString    liveRadioDev_, liveKeyerDev_;
-    QString    devSerial_, devRemote_;   // the two remembered profiles
-    QString    connMode_;                // which one is currently shown
+    QString    devSerial_, devRemote_;   // Omni VII serial / Ethernet profiles
+    QString    devOrion_;                // Orion serial profile
+    QString    connMode_;                // the Omni's serial/remote choice
+    QString    lastProfile_;             // profile the field currently shows
     bool       radioConnected_ = false;
 };
 
