@@ -12,8 +12,9 @@ namespace ttc {
 // fldigi and GridTracker point their "Hamlib NET rigctl" client at this port and
 // drive the Ten-Tec radio through us instead of flrig.
 //
-// SKELETON SCOPE: handles connect + f/F (freq), m/M (mode), v, \chk_vfo, and a
-// minimal \dump_state. TODO: full command coverage, PTT (t/T), split, levels.
+// Covers what the station's clients actually send: f/F (freq), m/M (mode),
+// t/T (PTT), i (split freq), s (split vfo), v, \chk_vfo and a minimal
+// \dump_state. Extend when a client trips over a missing command.
 class RigctldServer : public QObject {
     Q_OBJECT
 public:
