@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QObject>
 #include <QProcess>
 
 class QUdpSocket;
+class QTimer;
 
 namespace ttc {
 
@@ -43,13 +45,17 @@ public:
 
 private:
     void onCapture();
+    void drain();                        // paced packet emission
 
     QUdpSocket* sock_ = nullptr;
     QProcess* rec_ = nullptr;
+    QTimer* pacer_ = nullptr;            // clocks packets out at the audio rate
+    QElapsedTimer clock_;                // real-time reference for pacing
     QByteArray acc_;                     // s16 capture accumulator
     quint32 host_ = 0;
     quint16 audioPort_ = 0;
     quint8 counter_ = 0;
+    quint64 paced_ = 0;                  // packets emitted since start (pacing)
     quint64 pkts_ = 0;
     bool selftest_ = false;
 };

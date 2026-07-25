@@ -2,8 +2,14 @@
 #include "radio/TripAudio.h"
 
 #include <QHostAddress>
+#include <QTimer>
 #include <QUdpSocket>
 #include <cstdio>
+
+namespace {
+constexpr int kSampleRate = 7013;
+constexpr int kSamplesPerPkt = 128;
+}
 
 namespace ttc {
 
@@ -38,7 +44,10 @@ bool TripAudio::start(quint32 host, quint16 cmdPort, const QString& source) {
     }
     if (selftest_) return true;                  // no capture under the harness
     rec_ = new QProcess(this);
-    QStringList args{"--raw", "--format=s16", "--rate=7013", "--channels=1"};
+    // --latency small so pw-record hands us frequent little chunks instead of
+    // big bursts; the pacer below smooths whatever jitter remains.
+    QStringList args{"--raw",         "--format=s16", "--rate=7013",
+                     "--channels=1",  "--latency=20ms"};
     const QString src = source.trimmed();
     if (!src.isEmpty()) args << "--target" << src;
     args << "-";
@@ -49,10 +58,25 @@ bool TripAudio::start(quint32 host, quint16 cmdPort, const QString& source) {
         rec_->deleteLater();
         rec_ = nullptr;                          // no capture: keyed, but silent
     }
+    // Pace packets out at the audio rate. The radio's transmit buffer needs a
+    // STEADY ~55 pkt/s; dumping each capture burst onto the wire immediately
+    // floods then starves it (gated/"dashed" TX audio). onCapture only fills
+    // acc_; this timer drains it on a real-time schedule.
+    paced_ = 0;
+    clock_.start();
+    pacer_ = new QTimer(this);
+    pacer_->setInterval(4);
+    connect(pacer_, &QTimer::timeout, this, &TripAudio::drain);
+    pacer_->start();
     return true;
 }
 
 void TripAudio::stop() {
+    if (pacer_) {
+        pacer_->stop();
+        pacer_->deleteLater();
+        pacer_ = nullptr;
+    }
     if (rec_) {
         rec_->terminate();
         rec_->waitForFinished(500);
@@ -70,15 +94,33 @@ void TripAudio::stop() {
 }
 
 void TripAudio::onCapture() {
-    if (!rec_ || !sock_) return;
-    acc_ += rec_->readAllStandardOutput();
-    // 128 samples * 2 bytes = 256 bytes per TRIP datagram.
-    while (acc_.size() >= 256) {
+    if (!rec_) return;
+    acc_ += rec_->readAllStandardOutput();       // buffer only; drain() sends
+    // Cap latency: if capture ran ahead (bursty delivery), don't let the
+    // backlog grow past ~0.5 s of audio — drop oldest whole packets.
+    const int cap = kSampleRate * 2 / 2;         // 0.5 s of s16 mono
+    if (acc_.size() > cap) acc_.remove(0, (acc_.size() - cap) & ~255);
+}
+
+// Emit packets on a real-time schedule: the number that SHOULD have gone out
+// by now is elapsed * rate / samplesPerPkt. Send until caught up (or the
+// buffer runs dry), so bursty capture becomes a steady ~55 pkt/s stream.
+void TripAudio::drain() {
+    if (!sock_) return;
+    const qint64 ns = clock_.nsecsElapsed();
+    const quint64 due =
+        quint64(ns * kSampleRate / (qint64(kSamplesPerPkt) * 1000000000LL));
+    int guard = 0;                               // cap catch-up per tick
+    while (paced_ < due && acc_.size() >= 256 && guard++ < 3) {
         const QByteArray pkt = packetize(counter_, acc_.constData());
         sock_->writeDatagram(pkt, QHostAddress(host_), audioPort_);
-        ++pkts_;
         acc_.remove(0, 256);
+        ++paced_;
+        ++pkts_;
     }
+    // Underrun: behind schedule but the buffer's dry. Forfeit the missed
+    // slots (accept a tiny gap) rather than bursting to catch up later.
+    if (paced_ < due && acc_.size() < 256) paced_ = due;
 }
 
 } // namespace ttc
