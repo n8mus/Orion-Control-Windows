@@ -52,8 +52,10 @@ RoutingPanel::RoutingPanel(QWidget* parent) : QWidget(parent) {
     auto* ag = new QGridLayout;
     ag->setSpacing(3);
     ag->addWidget(mini("ANT", this), 0, 0);
-    ag->addWidget(mini("MAIN", this), 0, 1);
-    ag->addWidget(mini("SUB", this), 0, 2);
+    antHdr_[0] = mini("MAIN", this);
+    antHdr_[1] = mini("SUB", this);
+    ag->addWidget(antHdr_[0], 0, 1);
+    ag->addWidget(antHdr_[1], 0, 2);
     static const char* portName[3] = {"1", "2", "RX"};
     static const char* antTip[2][3] = {
         {"main RX + TX on ANT 1", "main RX + TX on ANT 2",
@@ -159,12 +161,63 @@ void RoutingPanel::setSplitOnly(bool on) {
 
 void RoutingPanel::emitAnt() {
     if (updating_) return;
+    if (omni_) {
+        // Columns are RX / TX; the *C1V states couple TX to RX except on the
+        // aux jack: 0 = ANT1 both, 1 = ANT2 both, 2/3 = RX aux + TX ANT1/2.
+        int rx = 0;
+        for (int p = 0; p < 3; ++p)
+            if (ant_[0][p]->isChecked()) rx = p;
+        const int tx = ant_[1][1]->isChecked() ? 1 : 0;
+        const int sel = rx == 2 ? 2 + tx : rx;
+        showOmniAntenna(sel);            // normalize coupling in the display
+        emit omniAntennaEdited(sel);
+        return;
+    }
     char out[3];
     for (int p = 0; p < 3; ++p) {
         const bool m = ant_[0][p]->isChecked(), s = ant_[1][p]->isChecked();
         out[p] = m && s ? 'B' : m ? 'M' : s ? 'S' : 'N';
     }
     emit antennaRoutingEdited(out[0], out[1], out[2]);
+}
+
+void RoutingPanel::setOmniMode(bool on) {
+    omni_ = on;
+    if (!on) return;                     // Orion form is the constructed default
+    antHdr_[0]->setText("RX");
+    antHdr_[1]->setText("TX");
+    static const char* rxTip[3] = {
+        "RX and TX on antenna 1", "RX and TX on antenna 2",
+        "RX on the aux RX jack (pick the TX antenna in the TX column)"};
+    static const char* txTip[2] = {"TX on antenna 1 (needs RX on the aux jack "
+                                   "— the radio couples TX to RX otherwise)",
+                                   "TX on antenna 2 (needs RX on the aux jack "
+                                   "— the radio couples TX to RX otherwise)"};
+    for (int p = 0; p < 3; ++p) {
+        ant_[0][p]->setEnabled(true);
+        ant_[0][p]->setToolTip(rxTip[p]);
+    }
+    ant_[1][0]->setToolTip(txTip[0]);
+    ant_[1][1]->setToolTip(txTip[1]);
+    ant_[1][2]->setEnabled(false);       // can't transmit on the aux RX jack
+    ant_[1][2]->setToolTip("The aux jack is receive-only");
+    showOmniAntenna(0);                  // sane display until ?C1V answers
+}
+
+void RoutingPanel::showOmniAntenna(int sel) {
+    if (sel < 0 || sel > 3) return;
+    updating_ = true;
+    const int rx = sel <= 1 ? sel : 2;
+    const int tx = (sel == 1 || sel == 3) ? 1 : 0;
+    for (int p = 0; p < 3; ++p)
+        ant_[0][p]->setChecked(p == rx);
+    ant_[1][0]->setChecked(tx == 0);
+    ant_[1][1]->setChecked(tx == 1);
+    ant_[1][2]->setChecked(false);
+    // TX pick is only free when RX sits on the aux jack.
+    ant_[1][0]->setEnabled(rx == 2);
+    ant_[1][1]->setEnabled(rx == 2);
+    updating_ = false;
 }
 
 void RoutingPanel::showVfoAssignment(char mainRx, char subRx, char tx) {

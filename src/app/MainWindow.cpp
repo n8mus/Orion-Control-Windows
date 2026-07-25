@@ -1222,47 +1222,6 @@ MainWindow::MainWindow(QWidget* parent)
     antA->setCheckable(true);
     antB->setCheckable(true);
     sdrMenu->addSeparator();
-    // The OMNI VII's own antenna relay (*C1V, REMOTE only) — a different
-    // thing from the panadapter-input pair above (those pick which radio's
-    // spare jack feeds the RSP2). 6 m on ANT2 etc. lives here when remote;
-    // checkmark tracks the radio's ?C1V answer, queried at connect.
-    {
-        auto* omniAntGroup = new QActionGroup(this);
-        omniAntGroup->setExclusive(true);
-        struct OAnt { const char* label; int sel; };
-        static constexpr OAnt kOAnts[] = {
-            {"Omni antenna 1  (RX+TX)",      0},
-            {"Omni antenna 2  (RX+TX)",      1},
-            {"Omni RX aux — TX antenna 1",   2},
-            {"Omni RX aux — TX antenna 2",   3},
-        };
-        const QString mdl = radioModelChoice();
-        const bool omniRemote =
-            (mdl == "omni8" || mdl == "omni7")
-            && QSettings().value("radio/device").toString().startsWith("udp:");
-        for (const OAnt& a : kOAnts) {
-            auto* act = omniAntGroup->addAction(sdrMenu->addAction(a.label));
-            act->setCheckable(true);
-            act->setEnabled(omniRemote);
-            if (!omniRemote)
-                act->setToolTip("Omni VII over Ethernet only (*C1V answers "
-                                "in REMOTE mode)");
-            omniAntActs_[a.sel] = act;
-            connect(act, &QAction::triggered, this, [this, a] {
-                radio_->setAntenna(a.sel);
-                radio_->queryAntenna();          // confirm from the radio
-                statusBar()->showMessage(
-                    QString("antenna: %1").arg(QString(a.label).mid(5)));
-            });
-        }
-        connect(radio_, &RadioController::antennaReported, this,
-                [this](int sel) {
-                    if (sel < 0 || sel > 3 || !omniAntActs_[sel]) return;
-                    const QSignalBlocker b(omniAntActs_[sel]);
-                    omniAntActs_[sel]->setChecked(true);
-                });
-        sdrMenu->addSeparator();
-    }
     auto* bcNotch = sdrMenu->addAction("Broadcast (MW) notch");
     bcNotch->setCheckable(true);
     sdrMenu->addSeparator();
@@ -2889,7 +2848,24 @@ MainWindow::MainWindow(QWidget* parent)
                 if (s.contains("tx/rolloffHz"))
                     radio_->setTxRolloff(s.value("tx/rolloffHz").toInt());
             }
-            radio_->queryAntenna();          // sync the Omni-antenna checkmark
+            // The routing panel's antenna matrix becomes the Omni's *C1V
+            // relay (RX column + TX column) — probe-verified: binary d0,
+            // ?C1V answers and the relay really switches. Buttons light from
+            // the radio's answer, not the click.
+            routing_->setOmniMode(true);
+            connect(routing_, &RoutingPanel::omniAntennaEdited, this,
+                    [this](int sel) {
+                        radio_->setAntenna(sel);
+                        radio_->queryAntenna();      // confirm from the radio
+                        static const char* names[] = {
+                            "ANT 1 (RX+TX)", "ANT 2 (RX+TX)",
+                            "RX aux, TX ANT 1", "RX aux, TX ANT 2"};
+                        statusBar()->showMessage(
+                            QString("antenna: %1").arg(names[sel]));
+                    });
+            connect(radio_, &RadioController::antennaReported, routing_,
+                    &RoutingPanel::showOmniAntenna);
+            radio_->queryAntenna();          // light the buttons from the radio
             // DVR over Ethernet: the radio's RX audio exists only as the RIP
             // stream (the SignaLink carries the Orion), so off-air record
             // taps what you hear — the RIP playback sink's monitor. Over-air
