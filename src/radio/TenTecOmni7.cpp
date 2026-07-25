@@ -119,6 +119,7 @@ bool TenTecOmni7::open(const std::string& device) {
         if (QSettings().value("radio/ripAudio", true).toBool()) {
             rip_ = new RipAudio(this);
             rip_->start(netAddr_, netPort_, netPass_);
+            rip_->setVolume(QSettings().value("radio/ripVolume", 100).toInt());
         }
         // TX audio over Ethernet (TRIP) — created only when explicitly
         // enabled (default OFF); it streams solely while the rig is keyed,
@@ -312,6 +313,10 @@ void TenTecOmni7::setAfVolume(Rx rx, int pct) {
 
 void TenTecOmni7::queryAfVolume(Rx rx) {
     if (rx == Rx::Main) send("?U");
+}
+
+void TenTecOmni7::setRipVolume(int pct) {
+    if (rip_) rip_->setVolume(pct);
 }
 
 void TenTecOmni7::setVfoAssignment(char, char, char tx) {

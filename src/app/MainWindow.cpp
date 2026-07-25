@@ -2745,6 +2745,67 @@ MainWindow::MainWindow(QWidget* parent)
         muteBtn_[1]->setEnabled(false);
         audioPanel_->setEnabled(false);            // Orion output routing / monitor
         routing_->setSplitOnly(true);              // ANT + sub rows are Orion-only
+
+        // Omni VII over Ethernet: the dead B row becomes the PC volume —
+        // the computer-side playback level of the RIP receive audio. Two
+        // different jobs side by side: the A slider is the radio's AF (feeds
+        // the 8-bit RIP stream — keep it healthy-high for S/N), this one is
+        // how loud the computer plays it. Gain is applied in-process in
+        // RipAudio; the old B handlers (sub-AF, a no-op on the Omni anyway)
+        // are disconnected first.
+        if (radioDevUsed_.startsWith("udp:")) {
+            volSl_[1]->disconnect();
+            muteBtn_[1]->disconnect();
+            const int pc = QSettings().value("radio/ripVolume", 100).toInt();
+            volSl_[1]->setEnabled(true);
+            volLbl_[1]->setEnabled(true);
+            muteBtn_[1]->setEnabled(true);
+            {
+                const QSignalBlocker b(volSl_[1]);
+                volSl_[1]->setValue(pc);
+            }
+            volLbl_[1]->setText(QString::number(pc));
+            vol_[1] = pc;
+            volSl_[1]->setStyleSheet(
+                "QSlider::groove:horizontal { height: 5px; background: #2a3644;"
+                " border-radius: 2px; }"
+                "QSlider::handle:horizontal { width: 14px; margin: -5px 0;"
+                " border-radius: 7px; background: #5dbf7a; }");
+            volSl_[1]->setToolTip(
+                "PC volume — how loud the computer plays the radio's RIP\n"
+                "receive audio. The A slider is the radio's AF, which also\n"
+                "feeds the 8-bit stream: keep AF healthy-high for clean\n"
+                "audio and trim your listening level here.");
+            muteBtn_[1]->setToolTip("Mute the computer's RIP audio "
+                                    "(radio AF untouched)");
+            connect(volSl_[1], &QSlider::valueChanged, this, [this](int v) {
+                volLbl_[1]->setText(QString::number(v));
+                vol_[1] = v;
+                if (muted_[1]) {                    // touch = unmute
+                    muted_[1] = false;
+                    const QSignalBlocker b(muteBtn_[1]);
+                    muteBtn_[1]->setChecked(false);
+                }
+                QSettings().setValue("radio/ripVolume", v);
+                radio_->setRipVolume(v);
+                statusBar()->showMessage(QString("PC volume -> %1").arg(v));
+            });
+            connect(muteBtn_[1], &QToolButton::toggled, this, [this](bool on) {
+                muted_[1] = on;
+                if (on) {
+                    preMute_[1] = vol_[1];
+                    radio_->setRipVolume(0);
+                } else {
+                    radio_->setRipVolume(preMute_[1]);
+                    vol_[1] = preMute_[1];
+                    const QSignalBlocker b(volSl_[1]);
+                    volSl_[1]->setValue(preMute_[1]);
+                    volLbl_[1]->setText(QString::number(preMute_[1]));
+                }
+                statusBar()->showMessage(
+                    QString("PC audio %1").arg(on ? "MUTED" : "unmuted"));
+            });
+        }
     }
 
     // First run on a new station: open the setup dialog once the window is

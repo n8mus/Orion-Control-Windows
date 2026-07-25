@@ -60,6 +60,10 @@ void RipAudio::stop() {
                 static_cast<unsigned long long>(pkts_));
 }
 
+void RipAudio::setVolume(int pct) {
+    volPct_ = pct < 0 ? 0 : pct > 100 ? 100 : pct;
+}
+
 void RipAudio::pause() {
     if (!sock_) return;
     if (keepalive_) keepalive_->stop();       // stop resending RIP-on *T
@@ -123,14 +127,18 @@ void RipAudio::onDatagram() {
             }
         }
         // Payload: signed 8-bit linear (top byte of s16, WWV-tone-verified)
-        // — widen to s16le for pw-play.
+        // — widen to s16le with the computer-side gain applied in-process
+        // (volPct_ 100 = unity, exactly the old high-byte copy). 0 = muted:
+        // skip the write, pw-play just idles until samples resume.
+        if (volPct_ == 0) continue;
         const int n = d.size() - 12;
         QByteArray pcm(n * 2, 0);
         const char* src = d.constData() + 12;
         char* dst = pcm.data();
         for (int i = 0; i < n; ++i) {
-            dst[2 * i] = 0;                          // low byte
-            dst[2 * i + 1] = src[i];                 // high byte = s8 sample
+            const int v = int(qint8(src[i])) * 256 * volPct_ / 100;
+            dst[2 * i] = char(v & 0xff);
+            dst[2 * i + 1] = char((v >> 8) & 0xff);
         }
         player_->write(pcm);
     }

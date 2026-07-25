@@ -45,6 +45,10 @@ public:
     void pause();
     void resume();
 
+    // Computer-side playback gain, applied to the samples in-process before
+    // they reach pw-play. 0-100, 100 = unity; 0 = silence (mute).
+    void setVolume(int pct);
+
 private:
     void sendEnable(bool on);
     void onDatagram();
@@ -56,6 +60,7 @@ private:
     quint16 audioPort_ = 0;
     quint16 passcode_ = 0;
     quint64 pkts_ = 0;
+    int volPct_ = 100;                   // playback gain (100 = unity)
     bool selftest_ = false;
 };
 

@@ -84,6 +84,7 @@ public:
     void queryTuner() override;
 
     void setAfVolume(Rx, int pct) override;              // *U (main only)
+    void setRipVolume(int pct) override;                 // PC-side RIP gain
     void queryAfVolume(Rx) override;
 
     void setVfoAssignment(char m, char s, char t) override;  // split via *N

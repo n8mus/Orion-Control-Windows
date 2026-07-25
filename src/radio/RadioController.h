@@ -97,6 +97,11 @@ public:
 
     // Audio outputs.
     virtual void setAfVolume(Rx, int /*pct*/) {}
+    // Computer-side playback level of the RIP receive-audio stream (Omni VII
+    // over Ethernet only; no-op elsewhere). 0-100, 100 = unity. Separate from
+    // the radio's AF: AF feeds the 8-bit stream (keep it healthy-high for
+    // S/N), this trims how loud the computer plays it.
+    virtual void setRipVolume(int /*pct*/) {}
     virtual void setAudioRouting(char, char, char) {}
     virtual void queryAfVolume(Rx) {}
     virtual void queryAudioRouting() {}
