@@ -58,6 +58,8 @@ public:
     void setNoiseBlanker(Rx, int level) override;
     void setAutoNotch(Rx, int level) override;
     void setPreamp(Rx, bool on) override;                // *C1Z (REMOTE only)
+    void setAntenna(int sel) override;                   // *C1V (REMOTE only)
+    void queryAntenna() override;                        // ?C1V
     void queryAgc(Rx) override;
     void queryRfGain(Rx) override;
     void queryAttenuator(Rx) override;

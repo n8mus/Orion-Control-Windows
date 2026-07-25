@@ -302,6 +302,8 @@ void TenTecOmni7::setTxFilter(int hz)     { send(QByteArray("*C1O") + char(neare
 void TenTecOmni7::queryTxFilter()         { send("?C1O"); }
 void TenTecOmni7::setTxEq(int db)         { send(QByteArray("*C1I") + char(clampi(db + 20, 0, 40) * 127 / 40)); }
 void TenTecOmni7::setTxRolloff(int hz)    { send(QByteArray("*C1J") + char(clampi((hz - 70) / 10, 0, 23))); }
+void TenTecOmni7::setAntenna(int sel)     { send(QByteArray("*C1V") + char(clampi(sel, 0, 3))); }
+void TenTecOmni7::queryAntenna()          { send("?C1V"); }
 void TenTecOmni7::setTunerEnabled(bool o) { send(QByteArray("*C1P") + char(o ? 1 : 0)); }
 void TenTecOmni7::startTune()             { send("*C2A"); }
 void TenTecOmni7::queryTuner()            { send("?C2A"); }
@@ -483,6 +485,13 @@ void TenTecOmni7::handleMsg(const QByteArray& m) {
             else if (key == "C1I") emit txEqReported(u8(3) * 40 / 127 - 20);
             else if (key == "C1J") emit txRolloffReported(70 + clampi(u8(3), 0, 23) * 10);
             else if (key == "C1Z") emit preampReported(Rx::Main, m[3] != 0);
+            else if (key == "C1V") {
+                // doc shows ASCII-digit examples but binary in the field
+                // table — accept either encoding.
+                int v = static_cast<unsigned char>(m[3]);
+                if (v >= '0' && v <= '3') v -= '0';
+                if (v >= 0 && v <= 3) emit antennaReported(v);
+            }
             else if (key == "C2A") emit tunerReported(u8(3) & 0x01);
             return;
         }

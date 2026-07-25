@@ -170,6 +170,7 @@ private:
     bool dvrTxPlayback_ = false;       // this playback keyed the radio (drop PTT)
     bool dvrAutoDig_ = false;          // we engaged line-in for it (restore voice)
     QString dvrTripSrcSave_;           // remote clip: operator's TRIP source to restore
+    QAction* omniAntActs_[4] = {};     // Omni *C1V antenna menu entries
     QString dvrLastRx_;                // newest off-air take this session
     QString dvrJustRecorded_;          // take to peak-normalize when it lands
     QString radioSink_, radioSource_;  // SignaLink playback/capture node names

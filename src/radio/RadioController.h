@@ -109,6 +109,10 @@ public:
     // VFO/antenna plumbing and meters.
     virtual void setVfoAssignment(char /*mainRx*/, char /*subRx*/, char /*tx*/) {}
     virtual void setAntennaRouting(char, char, char) {}
+    // Omni VII antenna relay (*C1V, REMOTE only): 0 = ANT1 RX+TX,
+    // 1 = ANT2 RX+TX, 2 = RX aux + TX ANT1, 3 = RX aux + TX ANT2.
+    virtual void setAntenna(int /*sel*/) {}
+    virtual void queryAntenna() {}
     virtual void setVfoLock(char /*A|B*/, bool) {}
     virtual void queryVfoAssignment() {}
     virtual void queryAntennaRouting() {}
@@ -148,6 +152,7 @@ signals:
     void tunerReported(bool on);
     void vfoAssignmentReported(char mainRx, char subRx, char tx);
     void antennaRoutingReported(char ant1, char ant2, char rxAnt);
+    void antennaReported(int sel);           // Omni *C1V selection 0..3
     void vfoLockReported(char vfo, bool locked);
     void txEqReported(int db);
     void txRolloffReported(int hz);
