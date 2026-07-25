@@ -44,16 +44,19 @@ bool TripAudio::start(quint32 host, quint16 cmdPort, const QString& source) {
     }
     if (selftest_) return true;                  // no capture under the harness
     rec_ = new QProcess(this);
-    // --latency small so pw-record hands us frequent little chunks instead of
-    // big bursts; the pacer below smooths whatever jitter remains.
-    QStringList args{"--raw",         "--format=s16", "--rate=7013",
-                     "--channels=1",  "--latency=20ms"};
+    // Pulse-layer capture (parec -> raw s16 stdout), not pw-record:
+    // live-measured that native capture reads sink MONITORS ~22 dB low
+    // (clip playback arrived at the radio as ±6 of the 8-bit range) while
+    // the pulse layer reads them at unity — same family as the native
+    // playback wedge. --latency-msec keeps the chunks small; the pacer
+    // below smooths whatever jitter remains.
+    QStringList args{"--format=s16le", "--rate=7013", "--channels=1",
+                     "--latency-msec=20"};
     const QString src = source.trimmed();
-    if (!src.isEmpty()) args << "--target" << src;
-    args << "-";
+    if (!src.isEmpty()) args << "-d" << src;
     connect(rec_, &QProcess::readyReadStandardOutput, this,
             &TripAudio::onCapture);
-    rec_->start("pw-record", args);
+    rec_->start("parec", args);
     if (!rec_->waitForStarted(1500)) {
         rec_->deleteLater();
         rec_ = nullptr;                          // no capture: keyed, but silent
