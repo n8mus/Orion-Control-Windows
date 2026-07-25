@@ -2472,6 +2472,13 @@ MainWindow::MainWindow(QWidget* parent)
                 awaitingFreq_ = false;               // poll answered; next one may go
                 if (std::getenv("TTC_SELFTEST"))
                     std::fprintf(stderr, "[radio] VFO-A reports %.4f MHz\n", hz / 1e6);
+                // Band change: the Omni recalls its per-band antenna on its
+                // own (6 m -> ANT2 etc.) — re-ask *C1V so the routing matrix
+                // follows the relay instead of showing the old band's port.
+                if (const int b = bandIndexOf(hz); b != antBand_) {
+                    antBand_ = b;
+                    if (radioDevUsed_.startsWith("udp:")) radio_->queryAntenna();
+                }
                 if (hz != centerHz_) {
                     // Right after a click-to-tune the radio takes a few hundred ms to
                     // settle; stale reads must not "confirm" the old frequency and
@@ -2774,7 +2781,9 @@ MainWindow::MainWindow(QWidget* parent)
                         case 3:  radio_->queryPreamp(Rx::Main);     break;
                         case 4:  radio_->queryTxPower();            break;
                         case 5:  radio_->queryVfoAssignment();      break;
-                        case 6:  radio_->queryAntennaRouting();     break;
+                        case 6:  radio_->queryAntennaRouting();     // Orion ?KA
+                                 radio_->queryAntenna();            // Omni ?C1V
+                                 break;
                         case 7:  radio_->queryAfVolume(Rx::Main);   // front-panel knobs
                                  radio_->queryAfVolume(Rx::Sub);    break;
                         case 8:  radio_->queryAudioRouting();       break;
