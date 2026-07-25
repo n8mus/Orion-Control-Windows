@@ -19,6 +19,7 @@ class RotorClient : public QObject {
     Q_OBJECT
 public:
     explicit RotorClient(QObject* parent = nullptr);
+    ~RotorClient() override;
 
     void setEndpoint(const QString& host, quint16 port);
     void setActive(bool on);               // connect + 1 s position polling

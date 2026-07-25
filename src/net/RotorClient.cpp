@@ -38,6 +38,15 @@ RotorClient::RotorClient(QObject* parent) : QObject(parent) {
             });
 }
 
+RotorClient::~RotorClient() {
+    // sock_ is a member declared before queue_/gotLines_, so those lists are
+    // destroyed first and sock_ last. Its teardown emits disconnected, whose
+    // slot clears the (already-destroyed) lists — an abort. Sever the
+    // socket's signals before it (and we) go.
+    sock_.disconnect();
+    sock_.abort();
+}
+
 void RotorClient::setEndpoint(const QString& host, quint16 port) {
     host_ = host;
     port_ = port;
