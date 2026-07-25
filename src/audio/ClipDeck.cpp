@@ -25,7 +25,7 @@ ClipDeck::ClipDeck(QObject* parent) : QObject(parent) {
         if (e == QProcess::FailedToStart) {        // no finished() from QProcess
             state_ = State::Idle;
             emit finished();
-            emit failed("pw-record/pw-play not found (pipewire tools missing?)");
+            emit failed("parecord/paplay not found (pulseaudio-utils missing?)");
         }
     });
 }
@@ -37,20 +37,26 @@ ClipDeck::~ClipDeck() {
     }
 }
 
+// Pulse-layer tools (parecord/paplay -> pipewire-pulse), not the native
+// pw-cat pair: live-found that the native client path can wedge silently
+// after a pipewire restart (stream RUNNING, sink monitor carrying audio,
+// speakers silent) while the pulse layer — the road every desktop app
+// takes — keeps working. s16le forced so normalizeWav's 16-bit PCM
+// expectation holds; parecord finalizes a valid WAV on SIGINT (verified).
 bool ClipDeck::record(const QString& wavPath, const QString& targetNode) {
     if (state_ != State::Idle) return false;
-    QStringList args{"--rate", "48000", "--channels", "1"};
-    if (!targetNode.isEmpty()) args << "--target" << targetNode;
+    QStringList args{"--format=s16le", "--rate=48000", "--channels=1"};
+    if (!targetNode.isEmpty()) args << "-d" << targetNode;
     args << wavPath;
-    return launch("pw-record", args, State::Recording);
+    return launch("parecord", args, State::Recording);
 }
 
 bool ClipDeck::play(const QString& wavPath, const QString& targetNode) {
     if (state_ != State::Idle) return false;
     QStringList args;
-    if (!targetNode.isEmpty()) args << "--target" << targetNode;
+    if (!targetNode.isEmpty()) args << "-d" << targetNode;
     args << wavPath;
-    return launch("pw-play", args, State::Playing);
+    return launch("paplay", args, State::Playing);
 }
 
 void ClipDeck::stop() {

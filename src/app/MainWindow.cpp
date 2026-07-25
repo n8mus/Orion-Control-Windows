@@ -1829,7 +1829,17 @@ MainWindow::MainWindow(QWidget* parent)
             statusBar()->showMessage("DVR: nothing recorded yet");
             return;
         }
-        if (overAir && radioSink_.isEmpty()) {
+        // Over-air: remote rides TRIP (needs TX audio enabled — the keyed
+        // radio only accepts the Ethernet stream); serial rides the SignaLink.
+        if (overAir && radioDevUsed_.startsWith("udp:")
+            && !QSettings().value("radio/tripAudio", false).toBool()) {
+            statusBar()->showMessage(
+                "DVR: turn on TX audio first (SDR ▸ TX audio ▸ Mic or "
+                "Digital) — over-air clips ride the Ethernet stream");
+            return;
+        }
+        if (overAir && !radioDevUsed_.startsWith("udp:")
+            && radioSink_.isEmpty()) {
             statusBar()->showMessage("DVR: radio sound device (SignaLink) not found");
             return;
         }
@@ -1850,7 +1860,14 @@ MainWindow::MainWindow(QWidget* parent)
                 "VK%1 is empty — right-click it to record a message").arg(slot + 1));
             return;
         }
-        if (radioSink_.isEmpty()) {
+        if (radioDevUsed_.startsWith("udp:")) {
+            if (!QSettings().value("radio/tripAudio", false).toBool()) {
+                statusBar()->showMessage(
+                    "VK: turn on TX audio first (SDR ▸ TX audio ▸ Mic or "
+                    "Digital) — the keyed radio takes the Ethernet stream");
+                return;
+            }
+        } else if (radioSink_.isEmpty()) {
             statusBar()->showMessage("DVR: radio sound device (SignaLink) not found");
             return;
         }
@@ -2754,6 +2771,18 @@ MainWindow::MainWindow(QWidget* parent)
         // RipAudio; the old B handlers (sub-AF, a no-op on the Omni anyway)
         // are disconnected first.
         if (radioDevUsed_.startsWith("udp:")) {
+            // DVR over Ethernet: the radio's RX audio exists only as the RIP
+            // stream (the SignaLink carries the Orion), so off-air record
+            // taps what you hear — the RIP playback sink's monitor. Over-air
+            // playback (VK/retransmit) would key the Omni while playing into
+            // the Orion's line-in = dead air; radioSink_ stays empty so those
+            // paths refuse (with a remote-aware message at the two sites).
+            const QString ripSink =
+                QSettings().value("radio/ripSink").toString().trimmed();
+            radioSource_ = (ripSink.isEmpty() ? QStringLiteral("@DEFAULT_SINK@")
+                                              : ripSink) + ".monitor";
+            radioSink_.clear();
+
             volSl_[1]->disconnect();
             muteBtn_[1]->disconnect();
             const int pc = QSettings().value("radio/ripVolume", 100).toInt();

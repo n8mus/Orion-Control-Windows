@@ -49,6 +49,25 @@ void MainWindow::startManualTune() {
 // gain commands have had time to land (no clipped first syllable). dvrStopped
 // unwinds it all — un-key first, then voice settings back.
 void MainWindow::dvrPlayOverAir(const QString& wav, int slot) {
+    if (radioDevUsed_.startsWith("udp:")) {
+        // Remote: an Ethernet-keyed radio takes its TX audio ONLY from the
+        // TRIP stream — no SignaLink anywhere in the path. Play the clip
+        // into the TRIP_digital sink and point the TRIP capture at its
+        // monitor for this playback (TripAudio re-reads tripSource at every
+        // key, so this is live); dvrStopped restores the operator's source.
+        QSettings s;
+        dvrTripSrcSave_ = s.value("radio/tripSource").toString();
+        s.setValue("radio/tripSource", "TRIP_digital.monitor");
+        dvrAutoDig_ = false;                       // no line-in gain dance
+        dvrTxPlayback_ = true;
+        radio_->setPtt(true);                      // TRIP starts on the monitor
+        txBar_->showDvrPlaying(slot);
+        QTimer::singleShot(300, this, [this, wav] {
+            if (!dvrTxPlayback_) return;           // aborted while arming
+            dvr_->play(wav, QStringLiteral("TRIP_digital"));
+        });                                        // finished() -> dvrStopped
+        return;
+    }
     dvrAutoDig_ = !digital_;                       // already in DIG (FT8)? leave it
     if (dvrAutoDig_) setDigitalMode(true);
     dvrTxPlayback_ = true;
@@ -72,6 +91,10 @@ void MainWindow::dvrStopped() {
             if (dvrAutoDig_) {
                 dvrAutoDig_ = false;
                 setDigitalMode(false);             // voice mic/proc come back
+            }
+            if (!dvrTripSrcSave_.isEmpty()) {      // remote clip: mic back on TRIP
+                QSettings().setValue("radio/tripSource", dvrTripSrcSave_);
+                dvrTripSrcSave_.clear();
             }
         });
     }
