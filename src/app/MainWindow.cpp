@@ -2711,8 +2711,11 @@ MainWindow::MainWindow(QWidget* parent)
     // than leave live-looking controls that silently do nothing. Omni 8:
     // single receiver, no hardware NB, no manual notch/SAF, and the whole
     // TX-audio/power/tuner group answers only in REMOTE mode.
+    // TX CAT controls track their own capability (Omni VII: REMOTE only),
+    // not the receiver count — a single-receiver radio in remote mode still
+    // drives power/mic/proc/tune.
+    txBar_->setCatTxControlsEnabled(radio_->caps().catTxControls);
     if (!radio_->caps().dualReceiver) {
-        txBar_->setCatTxControlsEnabled(false);
         panel_->setReducedCatSet(true);
         volSl_[1]->setEnabled(false);              // one receiver: B has no audio
         volLbl_[1]->setEnabled(false);

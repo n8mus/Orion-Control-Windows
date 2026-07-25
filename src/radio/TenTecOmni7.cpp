@@ -74,6 +74,8 @@ TenTecOmni7::TenTecOmni7(QObject* parent) : RadioController(parent) {
     caps_.continuousFilter = false;
     caps_.dualReceiver     = false;  // one receiver; B is a TX-split dial
     caps_.needsHwHandshake = true;
+    caps_.catTxControls    = false;  // the C1/C2 group answers only in REMOTE
+                                     // mode; open() flips this on for udp:
     trace_ = qEnvironmentVariableIsSet("TTC_TRACE");
     serial_.setRawMode(true);
     connect(&serial_, &SerialPort::bytesReceived, this, &TenTecOmni7::onBytes);
@@ -123,6 +125,7 @@ bool TenTecOmni7::open(const std::string& device) {
         // driven from setPtt. No streaming happens here.
         if (QSettings().value("radio/tripAudio", false).toBool())
             trip_ = new TripAudio(this);
+        caps_.catTxControls = true;    // REMOTE mode: power/mic/proc/tune live
         return true;
     }
     return serial_.open(device, 57600, /*hwHandshake=*/true);

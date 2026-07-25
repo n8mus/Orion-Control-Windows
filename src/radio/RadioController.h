@@ -21,6 +21,8 @@ struct CapabilityProfile {
     bool  continuousFilter = true;   // false => snap width to a preset table
     bool  dualReceiver     = true;
     bool  needsHwHandshake = false;  // Omni VII serial requires RTS/CTS
+    bool  catTxControls    = true;   // power/mic/proc/txbw/tune over CAT.
+                                     // Omni VII: only in REMOTE (Ethernet).
 };
 
 // Radio-agnostic control surface + report signals. Drivers override what
