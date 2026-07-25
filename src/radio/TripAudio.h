@@ -57,6 +57,7 @@ private:
     quint8 counter_ = 0;
     quint64 paced_ = 0;                  // packets emitted since start (pacing)
     quint64 pkts_ = 0;
+    bool streaming_ = false;             // false = still filling the jitter buffer
     bool selftest_ = false;
 };
 

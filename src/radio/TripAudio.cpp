@@ -63,6 +63,7 @@ bool TripAudio::start(quint32 host, quint16 cmdPort, const QString& source) {
     // floods then starves it (gated/"dashed" TX audio). onCapture only fills
     // acc_; this timer drains it on a real-time schedule.
     paced_ = 0;
+    streaming_ = false;
     clock_.start();
     pacer_ = new QTimer(this);
     pacer_->setInterval(4);
@@ -107,6 +108,16 @@ void TripAudio::onCapture() {
 // buffer runs dry), so bursty capture becomes a steady ~55 pkt/s stream.
 void TripAudio::drain() {
     if (!sock_) return;
+    // Jitter buffer: build ~120 ms of cushion before the first packet (and
+    // after any underrun), so brief pw-record delivery stalls don't starve
+    // the radio's transmit buffer — the cause of the residual chops.
+    constexpr int kPrebuffer = kSampleRate * 2 * 120 / 1000;   // ~120 ms s16
+    if (!streaming_) {
+        if (acc_.size() < kPrebuffer) return;
+        streaming_ = true;
+        clock_.restart();
+        paced_ = 0;
+    }
     const qint64 ns = clock_.nsecsElapsed();
     const quint64 due =
         quint64(ns * kSampleRate / (qint64(kSamplesPerPkt) * 1000000000LL));
