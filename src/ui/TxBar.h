@@ -33,6 +33,7 @@ signals:
     void txPowerChanged(int pct);
     void ampModeChanged(bool on, int limitPct);   // toggle or limit spin
     void tuneToggled(bool on);                    // manual tune carrier on/off
+    void moxToggled(bool on);                      // manual TX (voice) on/off
     void tuneLevelChanged(int watts);
     void tunerEnableToggled(bool on);
     void micGainChanged(int pct);
@@ -52,6 +53,7 @@ public slots:
     void setAmpMode(bool on, int limitPct);       // restore from settings
     void setTuneLevel(int watts);                 // restore from settings
     void showTuneActive(bool on);                 // reflect/force the TUNE latch
+    void showMoxActive(bool on);                  // reflect/force the MOX latch
     void showTxPower(int pct);
     void showMicGain(int pct);
     void showTxFilter(int hz);
@@ -79,6 +81,7 @@ private:
     QPushButton* ampBtn_   = nullptr;
     QSpinBox*    ampLimit_ = nullptr;
     QPushButton* tuneBtn_  = nullptr;
+    QPushButton* moxBtn_   = nullptr;
     QSpinBox*    tuneLvl_  = nullptr;
     QPushButton* tunerBtn_ = nullptr;
     QTimer* pwrTx_ = nullptr;  int pendPwr_ = -1;

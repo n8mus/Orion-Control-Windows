@@ -186,6 +186,7 @@ private:
     Mode preTuneMode_ = Mode::USB;
     int  preTunePwr_  = 50;
     QTimer* tuneTimeout_ = nullptr;            // safety: carrier auto-drops
+    QTimer* moxFailsafe_ = nullptr;            // safety: MOX voice-key auto-drops
 
     // SAM pseudo-mode (ECSS): USB zero-beaten on an AM carrier, fine
     // wheel steps while active; previous mode/filter restored on exit.

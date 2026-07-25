@@ -91,11 +91,24 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
     tunerBtn_->setCheckable(true);
     tunerBtn_->setFocusPolicy(Qt::NoFocus);
     tunerBtn_->setToolTip("Enable the internal tuner (leave off with an external tuner)");
+    // MOX: manual transmit for voice — keys the rig in the current (SSB)
+    // mode with no carrier, so the mic / TRIP audio goes out. Latches until
+    // clicked again (the handler adds a runaway-carrier failsafe).
+    moxBtn_ = new QPushButton("MOX");
+    moxBtn_->setObjectName("mox");
+    moxBtn_->setCheckable(true);
+    moxBtn_->setFocusPolicy(Qt::NoFocus);
+    moxBtn_->setToolTip("Manual transmit (voice): key the rig so the mic — or, "
+                        "in remote mode, the TRIP audio stream — goes on the "
+                        "air. Click again to un-key.");
     lay->addWidget(tuneBtn_);
     lay->addWidget(tuneLvl_);
     lay->addWidget(tunerBtn_);
+    lay->addWidget(moxBtn_);
     connect(tuneBtn_, &QPushButton::toggled, this,
             [this](bool on) { emit tuneToggled(on); });
+    connect(moxBtn_, &QPushButton::toggled, this,
+            [this](bool on) { emit moxToggled(on); });
     connect(tuneLvl_, &QSpinBox::valueChanged, this,
             [this](int w) { emit tuneLevelChanged(w); });
     connect(tunerBtn_, &QPushButton::toggled, this,
@@ -268,6 +281,11 @@ void TxBar::setTuneLevel(int watts) {
 void TxBar::showTuneActive(bool on) {
     QSignalBlocker block(tuneBtn_);
     tuneBtn_->setChecked(on);
+}
+
+void TxBar::showMoxActive(bool on) {
+    QSignalBlocker block(moxBtn_);
+    moxBtn_->setChecked(on);
 }
 
 void TxBar::applyPowerCap() {

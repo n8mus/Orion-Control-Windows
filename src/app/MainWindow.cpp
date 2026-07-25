@@ -1711,6 +1711,32 @@ MainWindow::MainWindow(QWidget* parent)
         }
         startManualTune();
     });
+    // MOX = manual voice transmit: key the rig in its current (SSB) mode so
+    // the mic / TRIP stream goes out — no carrier, no mode change. A failsafe
+    // timer drops the key if it's left on, so a forgotten MOX can't hold the
+    // transmitter up. Mutually exclusive with TUNE.
+    moxFailsafe_ = new QTimer(this);
+    moxFailsafe_->setSingleShot(true);
+    moxFailsafe_->setInterval(180000);            // 3 min runaway guard
+    connect(moxFailsafe_, &QTimer::timeout, this, [this] {
+        txBar_->showMoxActive(false);
+        radio_->setPtt(false);
+        statusBar()->showMessage("MOX failsafe: un-keyed after 3 min", 6000);
+    });
+    connect(txBar_, &TxBar::moxToggled, this, [this](bool on) {
+        if (on && tuneTimeout_->isActive()) {      // never both keyed at once
+            txBar_->showTuneActive(false);
+            stopManualTune();
+        }
+        radio_->setPtt(on);
+        if (on) {
+            moxFailsafe_->start();
+            statusBar()->showMessage("MOX: transmitting — click MOX to un-key");
+        } else {
+            moxFailsafe_->stop();
+            statusBar()->showMessage("MOX: un-keyed", 3000);
+        }
+    });
     connect(txBar_, &TxBar::tuneLevelChanged, this, [](int w) {
         QSettings().setValue("tune/power", w);
     });
