@@ -1144,6 +1144,73 @@ MainWindow::MainWindow(QWidget* parent)
                 });
             }
         }
+        // TX audio shaping — Omni VII REMOTE-only DSP the front panel can't
+        // reach while remote (and the Orion doesn't have at all): the *C1I
+        // TX equalizer tilt (-20 dB "high pitched" .. 0 flat .. +20 dB
+        // "very bassy", 1 dB steps) and the *C1J low-end rolloff corner
+        // (70-300 Hz — where the SSB low end starts attenuating; lower =
+        // more bass gets through). Persisted and re-applied at connect (only
+        // once the operator has touched them, so an untouched radio keeps
+        // its own menu settings). Sliders live in the menu via
+        // QWidgetAction, so the TX bar's minimum width is untouched.
+        {
+            QSettings s;
+            const QString mdl = radioModelChoice();
+            const bool omniRemote =
+                (mdl == "omni8" || mdl == "omni7")
+                && s.value("radio/device").toString().startsWith("udp:");
+            auto* shapeMenu = sdrMenu->addMenu("TX audio shaping (bass/EQ)");
+            shapeMenu->setEnabled(omniRemote);
+            if (!omniRemote)
+                shapeMenu->setToolTip("Omni VII over Ethernet only — the "
+                                      "*C1 DSP group answers in REMOTE mode");
+            auto addShapeSlider = [&](const QString& name, int min, int max,
+                                      int step, const QString& key, int def,
+                                      const QString& suffix, auto sendFn) {
+                auto* w = new QWidget(shapeMenu);
+                auto* lay = new QHBoxLayout(w);
+                lay->setContentsMargins(10, 4, 10, 4);
+                auto* lbl = new QLabel(name, w);
+                lbl->setStyleSheet("color: #c8d4e0; font-size: 12px;");
+                lbl->setFixedWidth(64);
+                auto* sl = new QSlider(Qt::Horizontal, w);
+                sl->setRange(min, max);
+                sl->setSingleStep(step);
+                sl->setFixedWidth(150);
+                auto* val = new QLabel(w);
+                val->setStyleSheet(
+                    "color: #6aa5d8; font-size: 12px; font-weight: bold;");
+                val->setFixedWidth(56);
+                const int cur = QSettings().value(key, def).toInt();
+                sl->setValue(cur);
+                val->setText(QString::number(cur) + suffix);
+                lay->addWidget(lbl);
+                lay->addWidget(sl);
+                lay->addWidget(val);
+                connect(sl, &QSlider::valueChanged, this,
+                        [this, val, suffix, key, sendFn](int v) {
+                            val->setText(QString::number(v) + suffix);
+                            QSettings().setValue(key, v);
+                            sendFn(v);
+                        });
+                auto* act = new QWidgetAction(shapeMenu);
+                act->setDefaultWidget(w);
+                shapeMenu->addAction(act);
+            };
+            addShapeSlider("TX EQ", -20, 20, 1, "tx/eqDb", 0, " dB",
+                           [this](int v) {
+                               radio_->setTxEq(v);
+                               statusBar()->showMessage(
+                                   QString("TX EQ %1 dB (+ = bassy)").arg(v));
+                           });
+            addShapeSlider("Rolloff", 70, 300, 10, "tx/rolloffHz", 70, " Hz",
+                           [this](int v) {
+                               radio_->setTxRolloff(v);
+                               statusBar()->showMessage(
+                                   QString("TX low-end rolloff %1 Hz "
+                                           "(lower = more bass)").arg(v));
+                           });
+        }
         auto* setupAct = sdrMenu->addAction("Station setup…");
         connect(setupAct, &QAction::triggered, this, &MainWindow::openSetup);
         sdrMenu->addSeparator();
@@ -2771,6 +2838,16 @@ MainWindow::MainWindow(QWidget* parent)
         // RipAudio; the old B handlers (sub-AF, a no-op on the Omni anyway)
         // are disconnected first.
         if (radioDevUsed_.startsWith("udp:")) {
+            // Re-apply saved TX shaping (EQ tilt + low-end rolloff) once per
+            // connect — but only if the operator has ever set them, so an
+            // untouched radio keeps its own menu values.
+            {
+                QSettings s;
+                if (s.contains("tx/eqDb"))
+                    radio_->setTxEq(s.value("tx/eqDb").toInt());
+                if (s.contains("tx/rolloffHz"))
+                    radio_->setTxRolloff(s.value("tx/rolloffHz").toInt());
+            }
             // DVR over Ethernet: the radio's RX audio exists only as the RIP
             // stream (the SignaLink carries the Orion), so off-air record
             // taps what you hear — the RIP playback sink's monitor. Over-air
