@@ -105,25 +105,34 @@ void RipAudio::onDatagram() {
         ++pkts_;
         if (selftest_) continue;                    // count only, no audio out
         if (!player_) {
-            // ClipDeck pattern: PipeWire's own CLI, no audio library.
-            // Rate as ruled from the RTP timestamps (~7013 Hz); PipeWire
-            // resamples to the sink. --raw is REQUIRED: the stream is
-            // headerless PCM, and without it pw-play tries to sniff a file
-            // format, fails, and exits immediately (no audio). radio/ripSink
-            // pins the output node (name or id) so it doesn't follow the
-            // system default onto an HDMI monitor; empty = default sink.
-            QStringList args{"--raw", "--format=s16", "--rate=7013",
-                             "--channels=1"};
+            // Playback rides the PULSE layer (pacat -> pipewire-pulse), the
+            // same path every desktop app uses — live-found: after a
+            // pipewire restart the NATIVE client path (pw-play) can wedge
+            // silently (stream shows RUNNING, sink monitor carries audio,
+            // speakers get nothing) while the pulse layer keeps working.
+            // Raw headerless s16 mono at the ruled ~7013 Hz; pipewire
+            // resamples. radio/ripSink pins the output (sink name; empty =
+            // default). Falls back to pw-play if pacat is missing.
             const QString sink =
                 QSettings().value("radio/ripSink").toString().trimmed();
-            if (!sink.isEmpty()) args << "--target" << sink;
-            args << "-";
+            QStringList args{"--playback", "--raw", "--format=s16le",
+                             "--rate=7013", "--channels=1"};
+            if (!sink.isEmpty()) args << "--device=" + sink;
             player_ = new QProcess(this);
-            player_->start("pw-play", args);
+            player_->start("pacat", args);
             if (!player_->waitForStarted(1500)) {
                 player_->deleteLater();
-                player_ = nullptr;
-                return;                              // no PipeWire: count only
+                player_ = new QProcess(this);
+                QStringList pw{"--raw", "--format=s16", "--rate=7013",
+                               "--channels=1"};
+                if (!sink.isEmpty()) pw << "--target" << sink;
+                pw << "-";
+                player_->start("pw-play", pw);
+                if (!player_->waitForStarted(1500)) {
+                    player_->deleteLater();
+                    player_ = nullptr;
+                    return;                          // no audio stack: count only
+                }
             }
         }
         // Payload: signed 8-bit linear (top byte of s16, WWV-tone-verified)
