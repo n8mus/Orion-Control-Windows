@@ -38,6 +38,13 @@ public:
     void stop();
     bool active() const { return sock_ != nullptr; }
 
+    // Suspend RIP while transmitting: its keepalive sends *T with the TX bit
+    // CLEAR, which would un-key the rig mid-transmit, and its inbound stream
+    // collides with TRIP on the half-duplex link. pause() stops the keepalive
+    // (and the player); resume() re-enables RIP. The socket stays bound.
+    void pause();
+    void resume();
+
 private:
     void sendEnable(bool on);
     void onDatagram();

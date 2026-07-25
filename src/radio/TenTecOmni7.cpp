@@ -257,6 +257,10 @@ void TenTecOmni7::queryDspLevels(Rx) { send("?K"); }
 
 void TenTecOmni7::setPtt(bool on) {
     if (on) {
+        // RIP must pause first: its keepalive sends *T with the TX bit clear
+        // (would un-key us) and its inbound audio collides with TRIP on the
+        // half-duplex link — the cause of transmit stutter/dropouts.
+        if (rip_) rip_->pause();
         // When streaming TX audio over Ethernet, key with the 8-bit TRIP
         // compression bit set (d0 bit0) and start the capture stream; the
         // radio then takes its transmit audio from the stream, not the mic.
@@ -271,6 +275,7 @@ void TenTecOmni7::setPtt(bool on) {
         pttKeepalive_->stop();
         txD0_ = char(0x00);
         send(QByteArray("*T") + char(0x00) + char(0x00));
+        if (rip_) rip_->resume();      // RX audio back after un-key
     }
 }
 

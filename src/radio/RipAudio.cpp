@@ -60,6 +60,24 @@ void RipAudio::stop() {
                 static_cast<unsigned long long>(pkts_));
 }
 
+void RipAudio::pause() {
+    if (!sock_) return;
+    if (keepalive_) keepalive_->stop();       // stop resending RIP-on *T
+    if (player_) {                            // let the player go idle/close
+        player_->closeWriteChannel();
+        player_->terminate();
+        player_->waitForFinished(300);
+        player_->deleteLater();
+        player_ = nullptr;
+    }
+}
+
+void RipAudio::resume() {
+    if (!sock_ || !keepalive_) return;
+    sendEnable(true);                         // re-arm RIP immediately
+    keepalive_->start();
+}
+
 void RipAudio::sendEnable(bool on) {
     if (!sock_) return;
     QByteArray d;
