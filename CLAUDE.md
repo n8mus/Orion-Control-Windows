@@ -149,7 +149,7 @@ to carry both radios was condemned 2026-07-16 — it WAS the 40 m spike
 picket (RFI), proven by pull-test at LNA 1; its `/dev/orion` udev rule
 is dead, and the Omni VII (needs RTS/CTS) has no CAT path until a clean
 converter arrives. SignaLink = "USB AUDIO CODEC" in PipeWire. cqrlog
-runs the fork at `/mnt/storage/Claude/CQRLog` (bridge :2334, embedded
-MariaDB). If the panadapter comes up dark ("no IQ source") right after
+runs the fork at `/home/jon/CQRLog` (bridge :2334, embedded MariaDB).
+If the panadapter comes up dark ("no IQ source") right after
 an unclean console death, the sdrplay_apiService handshake wedged —
 one console relaunch clears it.
