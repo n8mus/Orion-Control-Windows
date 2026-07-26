@@ -521,6 +521,17 @@ void ControlPanel::setReducedCatSet(bool reduced) {
         w->setEnabled(on);
         if (!on) w->setToolTip(tip);
     }
+    // DIG is the Orion/SignaLink line-in swap (drives the C1 gain group).
+    // On the Omni VII it's a trap on BOTH transports: RADIO-mode serial
+    // ignores the C1 commands entirely, and in remote it parks the mic gain
+    // that TRIP voice depends on (live-found: 0 W FT8 until unlatched).
+    // Omni digital lives on the radio's own front controls (serial) or
+    // SDR > TX audio > Digital (remote).
+    digBtn_->setEnabled(on);
+    if (!on)
+        digBtn_->setToolTip("Omni VII: choose the TX audio source on the "
+                            "radio's front panel (serial), or SDR ▸ TX "
+                            "audio ▸ Digital when remote");
 }
 
 } // namespace ttc
