@@ -109,8 +109,8 @@ was a real on-air bug, twice).
   full matrix ≥95%). `TTC_CWENGINE=1` / `TTC_CWLEGACY=1` force either
   path in tests. The ENGINE is the default everywhere (flipped
   2026-07-15 after it out-copied real fldigi on the same live signal —
-  operator-verified). If the
-  repo ever goes public it ships GPL-3 because of this file (fine), and
+  operator-verified). The repo
+  is public and ships GPL-3 because of this file (fine), and released
   binaries must not bundle the proprietary SDRplay lib.
   Tried and rejected (2026-07-14): an fldigi-style per-element release
   threshold (`off = 0.35 × this element's own peak`). The fast in-key
@@ -126,14 +126,17 @@ was a real on-air bug, twice).
 
 ## Hard rules
 
-  never appear in this repo (code, comments, docs, commits) — run
-  pattern is split so this file itself stays clean). Ideas from public
-  manuals are fine; the name is not. KE9NS/PowerSDR/Thetis attribution
-  in comments is OK.
+  never appear in this repo (code, comments, docs, commits) — before
+  nothing; the pattern is split so this file itself stays clean). The
+  tree-only grep once let it reach public history — scrubbed by a full
+  rewrite 2026-07-27, so every commit hash dates from that rewrite.
+  Ideas from public manuals are fine; the name is not.
+  KE9NS/PowerSDR/Thetis attribution in comments is OK.
 - Never key the transmitter or send CW in unattended tests. RX-only use
   of the real SDR/cluster is fine.
-- The repo is private; the operator (Jon, N8EM) pushes happen only after
-  his on-air test — build, test, commit, then *wait*.
+- The repo is PUBLIC (alpha since 2026-07-18); the operator (Jon, N8EM)
+  pushes happen only after his on-air test — build, test, commit, then
+  *wait*.
 - Settings are QSettings (`n8mus/tentec-console`) — running the binary
   uses the real config; for tests that must write settings, redirect
   with `XDG_CONFIG_HOME`.

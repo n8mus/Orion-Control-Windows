@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AetherConsole / Ten-Tec SDR Console — one-shot installer for Linux.
+# Ten-Tec SDR Console — one-shot installer for Linux.
 #
 # Does everything a Windows-to-Linux newcomer would otherwise struggle with:
 #   * installs the few runtime libraries the AppImage needs
