@@ -61,6 +61,14 @@ private:
     void measurePitch();
     std::vector<float> pitchBuf_;          // rolling window, kPitchN samples
     int pitchFill_ = 0;                    // samples since last measurement
+    // constant-carrier rejection (see measurePitch): a tone that holds
+    // frequency AND level dead-steady for ~8 s is an artifact, not keyed
+    // CW, and is notched out of the peak search.
+    double steadyHz_ = -1.0;               // candidate tone being tracked
+    double steadyDb_ = 0.0;                // its level last window
+    int    steadyN_ = 0;                   // consecutive steady windows
+    double notchHz_ = -1.0;                // convicted carrier (<0 = none)
+    int    notchGoneN_ = 0;                // windows since it vanished
 };
 
 } // namespace ttc
