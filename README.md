@@ -107,7 +107,9 @@ SDR, or both were connected. Screenshots welcome.
 fldigi's (© W1HKJ & contributors, GPL-3), which lifts the rest of this
 GPL-2.0-or-later codebase to GPL-3 in combination. You received this
 software with its complete source; if you pass binaries along, the source
-goes with them. The SDRplay API is proprietary and is **not** part of this
-distribution — every user installs it themselves from SDRplay.
+goes with them. Which files sit under which license, and why the base is
+GPLv2-or-later, is in [`NOTICE`](NOTICE). The SDRplay API is proprietary
+and is **not** part of this distribution — every user installs it
+themselves from SDRplay.
 
 73 — and all signals depart at exactly Warp 1.
