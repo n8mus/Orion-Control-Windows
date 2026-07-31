@@ -58,18 +58,14 @@ static QSet<QString> loadMasterScp() {
 
 
 void MainWindow::setupLogUi() {
-    // "LOG" dropdown: one-click QSO logging into cqrlog. Sends the finished
-    // QSO as a headerless ADIF UDP datagram to the cqrlog fork's always-on
-    // console bridge (127.0.0.1:2334); cqrlog saves it through its normal
-    // path, so DXCC/awards fields fill exactly as if typed there. Call and
-    // park prefill from the last clicked spot; TIME_ON is when the call
-    // landed in the field, TIME_OFF is when LOG is pressed.
     auto* logBtn = new QToolButton(topStrip_);
     logBtn->setText("LOG");
     logBtn->setFocusPolicy(Qt::NoFocus);
     logBtn->setStyleSheet(QString(kToolBtnStyle));
-    logBtn->setToolTip("Log a QSO to cqrlog (call/park prefill from the last "
-                       "clicked spot;\nEnter in any field = log)");
+    // Label stays "LOG" (operator call 2026-07-31: relabeling "messes up the
+    // button"); the hover text carries the truth instead.
+    logBtn->setToolTip("Opens a fresh New QSO page in cqrlog —\nclears its "
+                       "form and puts the cursor in the callsign field");
     topLay2_->addWidget(logBtn);
     logUdp_ = new QUdpSocket(this);
     // Pre-bind so the first datagram isn't lost (an unbound socket auto-binds
