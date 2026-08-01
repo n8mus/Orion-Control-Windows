@@ -468,6 +468,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/solar",      d.showSolar);
         s.setValue("display/rose",       d.showRose);
         s.setValue("display/roseR",      d.roseR);
+        s.setValue("display/voacap",     d.showVoacap);
         s.setValue("display/bandplan",   d.showBandPlan);
         s.setValue("display/privileges", d.showPrivileges);
         s.setValue("display/trace",      d.traceColor);
@@ -543,6 +544,7 @@ MainWindow::MainWindow(QWidget* parent)
         d.showRose   = s.value("display/rose",       d.showRose).toBool();
         d.roseR      = std::clamp(
             s.value("display/roseR", d.roseR).toInt(), 64, 160);
+        d.showVoacap = s.value("display/voacap",     d.showVoacap).toBool();
         d.showBandPlan = s.value("display/bandplan", d.showBandPlan).toBool();
         d.showPrivileges = s.value("display/privileges", d.showPrivileges).toBool();
         d.traceColor = s.value("display/trace",      d.traceColor).toInt();
@@ -562,17 +564,32 @@ MainWindow::MainWindow(QWidget* parent)
         // The "Solar data panel" toggle governs everything solar (corner
         // panel AND the map sun marker), so it alone gates the NOAA poller.
         solarClient_.setEnabled(d.showSolar);
+        voacapEnabled_ = d.showVoacap;
     }
     connect(&solarClient_, &SolarClient::updated, this, [this] {
         const SolarData sd = solarClient_.data();
         pan_->setSolarInfo(sd.sfi, sd.aIdx, sd.kIdx, sd.ssn, sd.xray);
+        maybeRunVoacap();                          // fresh SSN -> forecast
     });
+    connect(&voacap_, &Voacap::ready, this,
+            [this](const QVector<PanadapterWidget::PropContour>& c,
+                   const QString& legend) {
+                pan_->setPropForecast(c, legend);
+            });
+    // Slow re-check: the key (band+hour+SSN) makes reruns free unless the
+    // UTC hour rolled or conditions moved.
+    voacapTimer_ = new QTimer(this);
+    voacapTimer_->setInterval(10 * 60 * 1000);
+    connect(voacapTimer_, &QTimer::timeout, this, &MainWindow::maybeRunVoacap);
+    voacapTimer_->start();
     connect(dispPanel, &DisplayPanel::settingsChanged, this,
             [this, saveDisplay](const DisplaySettings& d) {
                 pan_->setDisplaySettings(d);
                 freqDisp_->setLargeDigits(d.bigVfo);
                 freqDispB_->setLargeDigits(d.bigVfo);
                 panel_->setClockVisible(d.showClock);
+                voacapEnabled_ = d.showVoacap;
+                maybeRunVoacap();
                 solarClient_.setEnabled(d.showSolar);
                 cwZap_ = d.cwZap;
                 saveDisplay(d);
@@ -3021,5 +3038,35 @@ MainWindow::~MainWindow() {
     // teardown order frees the FFT under a still-running callback (use-after-free).
     sdr_.stop();
 #endif
+}
+
+// One choke point for the VOACAP overlay: run the engine only when the
+// inputs can matter, and never twice for the same (UTC hour, band, SSN)
+// key. The overlay draws only on map backdrops, but the forecast is
+// computed whenever enabled so switching to a map shows it instantly.
+void MainWindow::maybeRunVoacap() {
+    if (!voacapEnabled_ || voacap_.busy()) return;
+    const QString missing = Voacap::engineMissing();
+    if (!missing.isEmpty()) {
+        if (!voacapWarned_) {
+            voacapWarned_ = true;
+            statusBar()->showMessage("VOACAP overlay: " + missing, 12000);
+        }
+        return;
+    }
+    const int ssn = solarClient_.data().ssn;
+    if (ssn <= 0 || curBand_ < 0 || is60m(curBand_)) return;
+    double la = 0.0, lo = 0.0;
+    const QString grid =
+        QSettings().value("station/grid", "EN83al").toString().trimmed();
+    if (!CtyLookup::gridToLatLon(grid, la, lo)) return;
+    const int hour = QDateTime::currentDateTimeUtc().time().hour();
+    const quint64 key = quint64(hour) * 1000000ull
+        + quint64(curBand_) * 1000ull + quint64(ssn);
+    if (key == voacapKey_) return;
+    voacapKey_ = key;
+    const double fMHz =
+        (kBands[curBand_].loHz + kBands[curBand_].hiHz) / 2.0 / 1e6;
+    voacap_.request(la, lo, fMHz, ssn, std::clamp(lastTxPwr_, 1, 200));
 }
 } // namespace ttc

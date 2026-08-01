@@ -1192,6 +1192,93 @@ void PanadapterWidget::drawPrivileges(QPainter& p, int hSpec) {
     }
 }
 
+void PanadapterWidget::setPropForecast(const QVector<PropContour>& contours,
+                                       const QString& legend) {
+    propContours_ = contours;
+    propLegend_ = legend;
+    update();
+}
+
+// VOACAP coverage contours over the world-map backdrops (KE9NS's map
+// mode feature, his S-level colors: blue S9+, green S7, yellow S5,
+// orange S3, gray S1). Uses the same equirect mapping as the sun marker:
+// the map fills the top 84 % of the spectrum area.
+void PanadapterWidget::drawVoacap(QPainter& p, int hSpec) {
+    const bool mapBg = ds_.background >= 2 && ds_.background <= 5;
+    if (!ds_.showVoacap || !mapBg || propLegend_.isEmpty()) return;
+    const int mapH = std::max(1, int(hSpec * 0.84));
+    const auto px = [&](const QPointF& ll) {
+        return QPointF((ll.x() + 180.0) / 360.0 * width(),
+                       (90.0 - ll.y()) / 180.0 * mapH);
+    };
+    const auto colorFor = [](float s) {
+        if (s >= 9.0f) return QColor(80, 160, 255);
+        if (s >= 7.0f) return QColor(90, 220, 120);
+        if (s >= 5.0f) return QColor(255, 215, 70);
+        if (s >= 3.0f) return QColor(255, 150, 60);
+        return QColor(170, 175, 185);
+    };
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QFont f = p.font();
+    f.setPixelSize(11);
+    f.setBold(true);
+    p.setFont(f);
+    for (const PropContour& c : propContours_) {
+        if (c.ll.size() < 3) continue;
+        const QColor col = colorFor(c.sLevel);
+        // Draw segment-wise so a contour crossing the date line doesn't
+        // smear a horizontal band across the whole map.
+        QVector<QPointF> pts;
+        pts.reserve(c.ll.size() + 1);
+        for (const QPointF& ll : c.ll) pts.append(px(ll));
+        pts.append(pts.first());
+        for (int pass = 0; pass < 2; ++pass) {
+            p.setPen(pass == 0 ? QPen(QColor(col.red(), col.green(),
+                                             col.blue(), 60), 6)
+                               : QPen(QColor(col.red(), col.green(),
+                                             col.blue(), 210), 2));
+            for (int i = 1; i < pts.size(); ++i) {
+                if (std::abs(pts[i].x() - pts[i - 1].x()) > width() / 2.0)
+                    continue;                       // date-line jump
+                p.drawLine(pts[i - 1], pts[i]);
+            }
+        }
+        // Label the ring on its eastern lobe.
+        const QPointF lp = pts[c.ll.size() / 4];    // az ~90 degrees
+        if (lp.y() > 12 && lp.y() < mapH - 4) {
+            const QString t = QString("S%1").arg(int(c.sLevel));
+            p.setPen(QColor(0, 0, 0, 200));
+            p.drawText(lp + QPointF(4, 4), t);
+            p.setPen(col);
+            p.drawText(lp + QPointF(3, 3), t);
+        }
+    }
+    // QTH star + legend chip.
+    const QPointF q = px(QPointF(qthLon_, qthLat_));
+    p.setPen(QPen(QColor(255, 255, 255, 200), 1));
+    p.setBrush(QColor(255, 80, 80));
+    QPolygonF star;
+    for (int i = 0; i < 8; ++i) {
+        const double r = (i % 2) ? 3.5 : 8.0, a = i * M_PI / 4.0;
+        star << q + QPointF(r * std::cos(a), r * std::sin(a));
+    }
+    p.drawPolygon(star);
+    p.setBrush(Qt::NoBrush);
+    if (!propLegend_.isEmpty()) {
+        f.setPixelSize(12);
+        p.setFont(f);
+        const int tw = p.fontMetrics().horizontalAdvance(propLegend_) + 16;
+        const QRect box(kDbAxisW + 6, mapH - 24, tw, 20);
+        p.setPen(QColor(120, 160, 210, 120));
+        p.fillRect(box, QColor(10, 14, 20, 190));
+        p.drawRect(box);
+        p.setPen(QColor(160, 200, 255, 230));
+        p.drawText(box.adjusted(8, 0, 0, 0),
+                   Qt::AlignLeft | Qt::AlignVCenter, propLegend_);
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
+}
+
 void PanadapterWidget::setSwrRuns(const QVector<SwrRun>& runs) {
     swrRuns_ = runs;
     update();
@@ -1375,6 +1462,8 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     p.fillRect(rect(), QColor(12, 16, 22));
     if (ds_.background != 0 && hSpec > 1)          // KE9NS-style backdrop
         p.drawImage(0, 0, backgroundImage(width(), hSpec));
+    drawVoacap(p, hSpec);                          // contours ride the map,
+                                                   // under trace and spots
 
     // Station-callsign watermark: faint gray in the upper left (clear of the
     // span readout), under everything the display draws on top.

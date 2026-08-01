@@ -489,6 +489,7 @@ void MainWindow::syncBandRegister() {
         curBand_ = idx;
         panel_->showBand(idx);
         refreshSwrOverlay();                    // this band's stored curves
+        maybeRunVoacap();                       // forecast follows the band
         lastBandPress_ = -1;                    // band moved under the buttons:
         if (idx >= 0 && !is60m(idx)) {          // next press recalls, not cycles
             QSettings s;

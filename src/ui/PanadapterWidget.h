@@ -34,6 +34,7 @@ struct DisplaySettings {
     bool  showSolar  = true;    // space-weather panel in the spectrum corner
     bool  showRose   = true;    // compass rose (azimuthal world + bearing)
     int   roseR      = 96;      // rose disc radius, px (was fixed at 64)
+    bool  showVoacap = true;    // VOACAP contours on the map backdrops
     bool  showBandPlan = true;  // US band-plan tints in the freq-scale strip
     bool  showPrivileges = true;// license-class (E/A/G/T) edge guides in the map
     int   traceColor = 0;       // 0 soft, 1 white, 2 green, 3 yellow, 4 cyan
@@ -111,6 +112,17 @@ public:
     };
     void setSwrRuns(const QVector<SwrRun>& runs);
     void setShowSwr(bool on);
+
+    // VOACAP propagation overlay (KE9NS-style): S-level coverage contours
+    // in lat/lon (x = lon, y = lat, degrees), drawn onto the world-map
+    // backdrops only. Computed by the owner via the real voacapl engine
+    // (app/Voacap); the widget just projects them onto its map.
+    struct PropContour {
+        float sLevel = 0.0f;
+        QVector<QPointF> ll;
+    };
+    void setPropForecast(const QVector<PropContour>& contours,
+                         const QString& legend);
     int  viewShiftHz() const { return viewShiftHz_; }
     // PowerSDR-style offset LO (if_freq): the SDR captures offset ABOVE the
     // dial so the zero-IF DC artifact never sits on the tuned frequency. The
@@ -249,6 +261,9 @@ private:
     void   drawSwr(QPainter& p, int hSpec);        // SWR sweep curves
     QVector<SwrRun> swrRuns_;
     bool   showSwr_ = true;
+    void   drawVoacap(QPainter& p, int hSpec);     // propagation contours
+    QVector<PropContour> propContours_;
+    QString propLegend_;
     void   drawDbScale(QPainter& p, int hSpec);    // horizontal dB lines + labels
     void   drawSpots(QPainter& p, int hSpec);      // cluster spot lines + callsigns
     void   drawMarkers(QPainter& p, int hSpec);    // pinned frequency lines

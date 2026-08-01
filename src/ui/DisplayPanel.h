@@ -56,6 +56,7 @@ private:
     QCheckBox* grid_   = nullptr;
     QCheckBox* solar_  = nullptr;
     QCheckBox* rose_   = nullptr;
+    QCheckBox* voacap_ = nullptr;  // VOACAP contours on map backdrops
     QCheckBox* plan_   = nullptr;
     QCheckBox* priv_   = nullptr;
     QCheckBox* bigVfo_ = nullptr;

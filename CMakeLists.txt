@@ -31,6 +31,7 @@ add_executable(tentec-console
   src/app/MainWindowTuning.cpp  src/app/MainWindowOps.cpp
   src/app/MainWindowTools.cpp
   src/app/MainWindowInternal.h
+  src/app/Voacap.cpp            src/app/Voacap.h
   src/app/Bands.h
   src/radio/RadioController.h
   src/radio/SerialPort.cpp      src/radio/SerialPort.h

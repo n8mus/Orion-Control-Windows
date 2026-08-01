@@ -18,6 +18,7 @@ class QHBoxLayout;
 #include "net/SpotClient.h"
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
+#include "app/Voacap.h"
 #include "net/RotorClient.h"
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
@@ -115,6 +116,14 @@ private:
     SpotClient       spotClient_;                  // DX-cluster telnet feed
     PotaClient       potaClient_;                  // POTA activator API feed
     SolarClient      solarClient_;                 // NOAA space-weather poller
+    // VOACAP overlay driver: recomputed on solar data, band crossings and
+    // a slow timer; keyed so identical inputs never rerun the engine.
+    Voacap   voacap_;
+    QTimer*  voacapTimer_ = nullptr;
+    quint64  voacapKey_ = 0;
+    bool     voacapEnabled_ = true;
+    bool     voacapWarned_ = false;
+    void maybeRunVoacap();
     QStringList      parkFilter_;                  // POTA park countries in area
     CtyLookup        cty_;                         // callsign -> country coords
     LogbookIndex     logbook_;                     // cqrlog worked-before data

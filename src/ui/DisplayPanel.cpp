@@ -177,6 +177,12 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     solar_->setToolTip("SFI / sunspots / A / K / X-ray from NOAA, refreshed "
                        "every 15 minutes; the map backdrops also get the sun "
                        "marker with the same numbers");
+    voacap_ = new QCheckBox("VOACAP overlay (map backdrops)", this);
+    voacap_->setToolTip(
+        "Real VOACAP propagation contours on the world-map backdrops:\n"
+        "coverage rings colored by predicted S-level (blue S9+, green S7,\n"
+        "yellow S5, orange S3, gray S1), computed locally by voacapl from\n"
+        "the live sunspot number, your grid, band and TX power.");
     rose_ = new QCheckBox("Compass rose", this);
     rose_->setToolTip("Azimuthal world disc centered on your grid square.\n"
                       "Click a spot callsign to swing the pointer to that "
@@ -221,20 +227,21 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     g->addWidget(wfTime_, 19, 0, 1, 3);
     g->addWidget(cursor_, 20, 0, 1, 3);
     g->addWidget(zap_, 21, 0, 1, 3);
-    g->addWidget(call_, 22, 0, 1, 3);
+    g->addWidget(voacap_, 22, 0, 1, 3);
+    g->addWidget(call_, 23, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 23, 0);
+    g->addWidget(makeCaption("CALL", this), 24, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 23, 1, 1, 2);
+    g->addWidget(callEdit_, 24, 1, 1, 2);
 
     // Station grid square: centers the compass rose (and any future
     // bearing/distance math). 4 or 6 characters.
-    g->addWidget(makeCaption("GRID", this), 24, 0);
+    g->addWidget(makeCaption("GRID", this), 25, 0);
     gridEdit_ = new QLineEdit(this);
     gridEdit_->setMaxLength(6);
     gridEdit_->setToolTip("Your Maidenhead grid square (4 or 6 chars), e.g. EN82fq");
-    g->addWidget(gridEdit_, 24, 1, 1, 2);
+    g->addWidget(gridEdit_, 25, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
@@ -328,6 +335,7 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(grid_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(solar_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(rose_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(voacap_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(plan_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(priv_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(bigVfo_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
@@ -365,6 +373,7 @@ DisplaySettings DisplayPanel::settings() const {
     s.showSolar  = solar_->isChecked();
     s.showRose   = rose_->isChecked();
     s.roseR      = roseR_->value();
+    s.showVoacap = voacap_->isChecked();
     s.showBandPlan = plan_->isChecked();
     s.showPrivileges = priv_->isChecked();
     s.traceColor = trace_->currentIndex();
@@ -385,7 +394,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
         b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_),
         b11(mapDay_), b12(mapNight_), b13(solar_), b14(rose_),
         b15(plan_), b16(bigVfo_), b17(trace_), b18(clock_), b19(zap_),
-        b20(wfTime_), b21(cursor_), b22(priv_), b23(roseR_);
+        b20(wfTime_), b21(cursor_), b22(priv_), b23(roseR_), b24(voacap_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -405,6 +414,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     solar_->setChecked(s.showSolar);
     rose_->setChecked(s.showRose);
     roseR_->setValue(std::clamp(s.roseR, roseR_->minimum(), roseR_->maximum()));
+    voacap_->setChecked(s.showVoacap);
     plan_->setChecked(s.showBandPlan);
     priv_->setChecked(s.showPrivileges);
     bigVfo_->setChecked(s.bigVfo);
