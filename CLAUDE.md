@@ -72,11 +72,15 @@ was a real on-air bug, twice).
 
 ## Architecture in 60 seconds
 
-- **Offset LO**: the SDR always tunes `kLoOffsetHz` (60 kHz) *above* the
-  dial (PowerSDR if_freq idea) so the zero-IF DC hump never lands on the
-  tuned signal. Everything mapping bins↔frequency goes through this:
-  `absHz = dial + kLoOffsetHz + (bin - n/2) * binHz`, span 500 kHz,
-  n=8192 (~61 Hz/bin). Constants + `edgesFromRig()` passband math live in
+- **Offset LO**: the SDR tunes `kLoOffsetHz` (260 kHz) *above* the dial
+  (PowerSDR if_freq idea) so the zero-IF DC hump never lands on the tuned
+  signal or in the view (max dial-centered view = capture − 2·offset =
+  480 kHz). Capture is `kSdrCaptureHz` (1 MHz: 2 MS/s, hw decim 2), FFT
+  16384 (~61 Hz/bin). At runtime use `loOffHz_`, never the constant — CTUN
+  and the band-overview frames (band buttons land framing the whole band,
+  LO parked just above the frame) move the LO. Everything mapping
+  bins↔frequency goes through `absHz = LO + (bin - n/2) * binHz`.
+  Constants + `edgesFromRig()` passband math live in
   `src/app/MainWindowInternal.h`.
 - **MainWindow** is several translation units, same class:
   `MainWindow.cpp` (constructor: layout, menus, radio polling wiring),
