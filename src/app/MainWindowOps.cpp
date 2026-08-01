@@ -10,6 +10,11 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMenu>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QLabel>
@@ -137,6 +142,218 @@ void MainWindow::stopManualTune() {
     txBar_->showTxPower(preTunePwr_);
     txBar_->showTuneActive(false);
     statusBar()->showMessage("TUNE: carrier off, power and mode restored");
+}
+
+// ---- SWR sweep (right-click TUNE) -----------------------------------------
+// Steps the visible span at the TUNE watts, reading the radio's own @STF
+// SWR at each stop, and paints the curve on the pan (bright = newest run,
+// one older run kept dim for antenna before/after). Operator-attended by
+// design: started only from the TUNE context menu, refuses with the AMP
+// enabled or on 60 m (channelized — no TX between channels), aborts on any
+// pan click, ESC, the TUNE button or the carrier failsafe, and always
+// restores mode, power and the dial. It keys ONE continuous low-power
+// carrier and steps the dial while keyed — no T/R relay chatter. The view
+// is held on the swept range with the same frame the band overview uses.
+
+static constexpr int kSwrSteps = 48;
+
+void MainWindow::showSwrMenu(const QPoint& globalPos) {
+    auto* m = new QMenu(this);
+    m->setAttribute(Qt::WA_DeleteOnClose);
+    styleMenu(m);
+    QAction* sweep = m->addAction(
+        swrSweeping_ ? QStringLiteral("Stop SWR sweep")
+                     : QStringLiteral("Sweep SWR across the view"));
+    connect(sweep, &QAction::triggered, this, [this] {
+        if (swrSweeping_) stopSwrSweep(false);
+        else startSwrSweep();
+    });
+    QAction* show = m->addAction(QStringLiteral("Show SWR plots"));
+    show->setCheckable(true);
+    show->setChecked(QSettings().value("swr/show", true).toBool());
+    connect(show, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("swr/show", on);
+        pan_->setShowSwr(on);
+    });
+    QAction* clear = m->addAction(QStringLiteral("Clear this band's runs"));
+    clear->setEnabled(curBand_ >= 0
+                      && !swrRuns_.value(QLatin1String(
+                             curBand_ >= 0 ? kBands[curBand_].label : ""))
+                              .isEmpty());
+    connect(clear, &QAction::triggered, this, [this] {
+        if (curBand_ < 0) return;
+        swrRuns_.remove(QLatin1String(kBands[curBand_].label));
+        saveSwrRuns();
+        refreshSwrOverlay();
+        statusBar()->showMessage("SWR: runs cleared for this band");
+    });
+    m->popup(globalPos);
+}
+
+void MainWindow::startSwrSweep() {
+    if (swrSweeping_ || tuning_ || dvrTxPlayback_) {
+        statusBar()->showMessage("SWR sweep: transmitter is busy", 5000);
+        return;
+    }
+    if (txBar_->ampMode()) {
+        statusBar()->showMessage(
+            "SWR sweep refused: AMP mode is on — sweeping through an "
+            "amplifier is a bad day. Turn AMP off first.", 8000);
+        return;
+    }
+    if (curBand_ < 0 || is60m(curBand_)) {
+        statusBar()->showMessage(
+            "SWR sweep refused: dial is not in a sweepable ham band "
+            "(60 m is channelized)", 8000);
+        return;
+    }
+    const int64_t viewC = int64_t(centerHz_) + pan_->viewShiftHz();
+    const int span = pan_->viewSpanHz();
+    swrF0_ = std::max<int64_t>(viewC - span / 2, int64_t(kBands[curBand_].loHz));
+    swrF1_ = std::min<int64_t>(viewC + span / 2, int64_t(kBands[curBand_].hiHz));
+    if (swrF1_ - swrF0_ < 20000) {
+        statusBar()->showMessage("SWR sweep: visible in-band range is too "
+                                 "narrow — zoom out first", 6000);
+        return;
+    }
+    // Hold the view on the swept range (band overview already does; a
+    // classic view would otherwise re-center on every step and slide).
+    if (frameCenterHz_ == 0)
+        applyFrame(viewC, span);
+    swrPrevDial_ = centerHz_;
+    swrPts_.clear();
+    swrStepIdx_ = 0;
+    swrStepTuned_ = false;
+    swrStepCount_ = kSwrSteps;
+    lastSwrMs_ = 0;
+    startManualTune();
+    if (!tuning_) return;                          // carrier did not start
+    tuneTimeout_->stop();                          // sweep failsafe: 75 s
+    tuneTimeout_->setInterval(75000);              // (restored on stop)
+    tuneTimeout_->start();
+    if (!swrTick_) {
+        swrTick_ = new QTimer(this);
+        swrTick_->setInterval(150);
+        connect(swrTick_, &QTimer::timeout, this, &MainWindow::swrTickStep);
+    }
+    swrSweeping_ = true;
+    swrTick_->start();
+    statusBar()->showMessage(
+        QString("SWR sweep: %1-%2 MHz, %3 steps at %4 W — any click aborts")
+            .arg(swrF0_ / 1e6, 0, 'f', 3).arg(swrF1_ / 1e6, 0, 'f', 3)
+            .arg(swrStepCount_).arg(txBar_->tuneLevel()));
+}
+
+void MainWindow::swrTickStep() {
+    if (!swrSweeping_) return;
+    if (!tuning_) {                                // failsafe or TUNE click
+        stopSwrSweep(false);
+        return;
+    }
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const int64_t stepF = swrF0_
+        + (swrF1_ - swrF0_) * swrStepIdx_ / std::max(1, swrStepCount_ - 1);
+    if (!swrStepTuned_) {
+        swrQuietTune_ = true;                      // no plan-mode re-moding
+        tuneAbsolute(uint64_t(stepF));
+        swrQuietTune_ = false;
+        swrStepArmedMs_ = now + 300;               // let the dial + PA settle
+        swrStepTuned_ = true;
+        return;
+    }
+    const bool fresh = lastSwrMs_ > swrStepArmedMs_;
+    if (!fresh && now < swrStepArmedMs_ + 1500) return;   // wait for a reading
+    if (fresh)
+        swrPts_.append({qint64(stepF), lastSwr_});
+    swrStepIdx_++;
+    swrStepTuned_ = false;
+    if (swrStepIdx_ >= swrStepCount_)
+        stopSwrSweep(true);
+}
+
+void MainWindow::stopSwrSweep(bool completed) {
+    if (!swrSweeping_) return;
+    swrSweeping_ = false;
+    if (swrTick_) swrTick_->stop();
+    stopManualTune();                              // unkey, restore mode+power
+    tuneTimeout_->setInterval(15000);              // plain TUNE failsafe back
+    swrQuietTune_ = true;                          // restore tune keeps the
+    tuneAbsolute(swrPrevDial_);                    // operator's restored mode
+    swrQuietTune_ = false;
+    if (completed && swrPts_.size() >= 8 && curBand_ >= 0) {
+        PanadapterWidget::SwrRun run;
+        run.ts = QDateTime::currentSecsSinceEpoch();
+        run.pts = swrPts_;
+        auto& list = swrRuns_[QLatin1String(kBands[curBand_].label)];
+        list.prepend(run);
+        while (list.size() > 2) list.removeLast();
+        saveSwrRuns();
+        QSettings().setValue("swr/show", true);
+        pan_->setShowSwr(true);
+        refreshSwrOverlay();
+        double minS = 99.0;
+        qint64 minF = 0;
+        for (const auto& p : run.pts)
+            if (p.second < minS) { minS = p.second; minF = p.first; }
+        statusBar()->showMessage(
+            QString("SWR sweep done: best %1 at %2 MHz (%3 points)")
+                .arg(minS, 0, 'f', 2).arg(minF / 1e6, 0, 'f', 3)
+                .arg(swrPts_.size()), 15000);
+    } else {
+        statusBar()->showMessage(
+            "SWR sweep stopped — carrier off, dial and settings restored",
+            8000);
+    }
+    swrPts_.clear();
+}
+
+void MainWindow::refreshSwrOverlay() {
+    if (curBand_ >= 0)
+        pan_->setSwrRuns(swrRuns_.value(QLatin1String(kBands[curBand_].label)));
+    else
+        pan_->setSwrRuns({});
+}
+
+void MainWindow::saveSwrRuns() const {
+    QJsonObject root;
+    for (auto it = swrRuns_.cbegin(); it != swrRuns_.cend(); ++it) {
+        QJsonArray runs;
+        for (const auto& run : it.value()) {
+            QJsonArray pts;
+            for (const auto& p : run.pts)
+                pts.append(QJsonArray{double(p.first), p.second});
+            runs.append(QJsonObject{{"ts", double(run.ts)}, {"pts", pts}});
+        }
+        root[it.key()] = runs;
+    }
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir().mkpath(dir);
+    QFile f(dir + "/swr.json");
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+}
+
+void MainWindow::loadSwrRuns() {
+    QFile f(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+            + "/swr.json");
+    if (!f.open(QIODevice::ReadOnly)) return;
+    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+    for (auto it = root.begin(); it != root.end(); ++it) {
+        QVector<PanadapterWidget::SwrRun> list;
+        for (const QJsonValue& rv : it.value().toArray()) {
+            PanadapterWidget::SwrRun run;
+            const QJsonObject ro = rv.toObject();
+            run.ts = qint64(ro.value("ts").toDouble());
+            for (const QJsonValue& pv : ro.value("pts").toArray()) {
+                const QJsonArray pa = pv.toArray();
+                run.pts.append({qint64(pa.at(0).toDouble()),
+                                pa.at(1).toDouble()});
+            }
+            if (run.pts.size() >= 2) list.append(run);
+        }
+        if (!list.isEmpty()) swrRuns_[it.key()] = list;
+    }
 }
 
 // Digital/voice audio switch. The Orion has no MIC/LINE/BOTH CAT
@@ -271,6 +488,7 @@ void MainWindow::syncBandRegister() {
     if (crossed) {
         curBand_ = idx;
         panel_->showBand(idx);
+        refreshSwrOverlay();                    // this band's stored curves
         lastBandPress_ = -1;                    // band moved under the buttons:
         if (idx >= 0 && !is60m(idx)) {          // next press recalls, not cycles
             QSettings s;

@@ -33,6 +33,7 @@ signals:
     void txPowerChanged(int pct);
     void ampModeChanged(bool on, int limitPct);   // toggle or limit spin
     void tuneToggled(bool on);                    // manual tune carrier on/off
+    void tuneContextRequested(const QPoint& globalPos);  // right-click: SWR sweep menu
     void moxToggled(bool on);                      // manual TX (voice) on/off
     void tuneLevelChanged(int watts);
     void tunerEnableToggled(bool on);

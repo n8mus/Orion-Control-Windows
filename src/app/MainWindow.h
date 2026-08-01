@@ -88,6 +88,13 @@ private:
     void applyMode(Mode m);            // user mode change (button or band memory)
     void startManualTune();            // steady carrier for amp/external tuner
     void stopManualTune();
+    void showSwrMenu(const QPoint& globalPos);  // right-click TUNE
+    void startSwrSweep();              // step the visible span reading SWR
+    void stopSwrSweep(bool completed); // unkey, restore dial, maybe save
+    void swrTickStep();                // sweep state machine (150 ms timer)
+    void refreshSwrOverlay();          // push current band's runs to the pan
+    void saveSwrRuns() const;          // JSON in AppDataLocation/swr.json
+    void loadSwrRuns();
     void setDigitalMode(bool on);      // line-in for digital vs mic for voice
     void applyTxProfile(int slot);     // recall a stored TX-audio bundle
     void openSetup();                  // station-setup dialog (first run + SDR menu)
@@ -156,9 +163,25 @@ private:
     // the standing frame. 0 = inactive. See frameBand() in MainWindowTuning.cpp.
     uint64_t frameCenterHz_ = 0;
     int      frameSpanHz_   = 0;
+    // SWR sweep (right-click TUNE): rides the manual-tune carrier and the
+    // @STF metering; curves per band overlay the pan. MainWindowOps.cpp.
+    QTimer*  swrTick_ = nullptr;
+    bool     swrSweeping_ = false;
+    int      swrStepIdx_ = 0;
+    bool     swrStepTuned_ = false;            // this step's tune sent
+    qint64   swrF0_ = 0, swrF1_ = 0;           // sweep range, absolute Hz
+    int      swrStepCount_ = 0;
+    uint64_t swrPrevDial_ = 0;
+    qint64   swrStepArmedMs_ = 0;              // accept samples after this
+    QVector<QPair<qint64, double>> swrPts_;    // this sweep's points
+    double   lastSwr_ = 0.0;                   // newest @STF SWR reading
+    qint64   lastSwrMs_ = 0;
+    bool     swrQuietTune_ = false;            // sweep tunes bypass plan-mode
+    QHash<QString, QVector<PanadapterWidget::SwrRun>> swrRuns_;  // band label ->
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing
+    void applyFrame(int64_t centerAbsHz, int spanHz);     // hold view on a range
     void exitBandFrame(int reapplySpanHz);    // 0 = leave view to the caller
     QTimer* sfTx_ = nullptr;                  // coalesced sub-filter drag stream
     int  pendSubBw_ = 0, pendSubPbt_ = 0;

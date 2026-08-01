@@ -1192,6 +1192,86 @@ void PanadapterWidget::drawPrivileges(QPainter& p, int hSpec) {
     }
 }
 
+void PanadapterWidget::setSwrRuns(const QVector<SwrRun>& runs) {
+    swrRuns_ = runs;
+    update();
+}
+
+void PanadapterWidget::setShowSwr(bool on) {
+    if (on == showSwr_) return;
+    showSwr_ = on;
+    update();
+}
+
+// SWR sweep curves (right-click TUNE): amber, newest run bright with a
+// minimum marker, up to one older run dim behind it (antenna before/after).
+// Log scale 1..5 over the lower ~3/4 of the spectrum, 2:1 dashed reference,
+// small right-edge scale. Absolute-Hz points + hzToX = glued to frequency.
+void PanadapterWidget::drawSwr(QPainter& p, int hSpec) {
+    if (!showSwr_ || swrRuns_.isEmpty() || centerHz_ == 0) return;
+    const double yTop = hSpec * 0.18, yBot = hSpec * 0.92;
+    const auto swrY = [&](double s) {
+        s = std::clamp(s, 1.0, 5.0);
+        return yBot - std::log(s) / std::log(5.0) * (yBot - yTop);
+    };
+    p.setRenderHint(QPainter::Antialiasing, true);
+    // 2:1 reference, dashed dull red.
+    p.setPen(QPen(QColor(255, 120, 120, 90), 1, Qt::DashLine));
+    const int y2 = int(swrY(2.0));
+    p.drawLine(kDbAxisW, y2, width() - 4, y2);
+    // Right-edge mini scale.
+    QFont f = p.font();
+    f.setPixelSize(11);
+    f.setBold(true);
+    p.setFont(f);
+    for (double s : {1.5, 2.0, 3.0, 4.0}) {
+        const int y = int(swrY(s));
+        p.setPen(QColor(255, 190, 60, 200));
+        p.drawLine(width() - 8, y, width(), y);
+        p.drawText(QRectF(width() - 46, y - 8, 34, 15),
+                   Qt::AlignRight | Qt::AlignVCenter, QString::number(s, 'g', 2));
+    }
+    const int n = int(swrRuns_.size());
+    for (int i = std::min(n, 2) - 1; i >= 0; --i) {   // oldest first, newest on top
+        const SwrRun& run = swrRuns_[i];
+        if (run.pts.size() < 2) continue;
+        QPolygonF poly;
+        qint64 minHz = 0;
+        double minSwr = 99.0;
+        for (const auto& pt : run.pts) {
+            poly << QPointF(hzToX(int(pt.first - qint64(centerHz_))), swrY(pt.second));
+            if (pt.second < minSwr) { minSwr = pt.second; minHz = pt.first; }
+        }
+        if (i == 0) {                                  // newest: glow + bright
+            p.setPen(QPen(QColor(255, 150, 30, 55), 8));
+            p.drawPolyline(poly);
+            p.setPen(QPen(QColor(255, 170, 40, 235), 3));
+            p.drawPolyline(poly);
+            // Minimum diamond + value label.
+            const QPointF m(hzToX(int(minHz - qint64(centerHz_))), swrY(minSwr));
+            QPolygonF dia;
+            dia << m + QPointF(0, -7) << m + QPointF(6, 0)
+                << m + QPointF(0, 7) << m + QPointF(-6, 0);
+            p.setPen(QPen(QColor(120, 70, 0), 1));
+            p.setBrush(QColor(255, 230, 120));
+            p.drawPolygon(dia);
+            p.setBrush(Qt::NoBrush);
+            f.setPixelSize(13);
+            p.setFont(f);
+            const QString lbl = QString("%1 @ %2")
+                .arg(minSwr, 0, 'f', 2).arg(minHz / 1e6, 0, 'f', 3);
+            p.setPen(QColor(20, 12, 0, 220));
+            p.drawText(QPointF(m.x() + 13, m.y() - 11), lbl);
+            p.setPen(QColor(255, 220, 120));
+            p.drawText(QPointF(m.x() + 12, m.y() - 12), lbl);
+        } else {                                       // older: thin + dim
+            p.setPen(QPen(QColor(255, 190, 60, 80), 2));
+            p.drawPolyline(poly);
+        }
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
+}
+
 void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
     p.fillRect(QRect(0, hSpec, width(), kScaleBandH), QColor(20, 27, 36));
     // Band-plan tint under the ticks, ARRL colors (red data / green phone /
@@ -1440,6 +1520,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     // in view, as a quiet blue sub-RX line.
     drawScaleBand(p, hSpec);
     drawPrivileges(p, hSpec);   // class marks paint over the strip tint
+    drawSwr(p, hSpec);          // SWR curves over the spectrum, under VFOs
     {
         const QFont savedFont = p.font();
         auto flag = [&](int x, const QString& text, const QColor& c) {

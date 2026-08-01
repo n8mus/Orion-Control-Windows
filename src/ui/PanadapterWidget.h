@@ -99,6 +99,17 @@ public:
     // classic dial-centered view. While CTUN holds the capture (and the
     // screen) still, tuning changes this instead — the dial marker floats.
     void setViewShiftHz(int hz);
+
+    // SWR sweep overlays (right-click TUNE): curves of measured SWR vs
+    // absolute frequency, newest run drawn bright, older runs dim behind it
+    // for before/after antenna comparisons. Points are absolute Hz so the
+    // curves stay glued through zoom, shift and CTUN like the spots do.
+    struct SwrRun {
+        qint64 ts = 0;                              // secs since epoch
+        QVector<QPair<qint64, double>> pts;         // absolute Hz -> SWR
+    };
+    void setSwrRuns(const QVector<SwrRun>& runs);
+    void setShowSwr(bool on);
     int  viewShiftHz() const { return viewShiftHz_; }
     // PowerSDR-style offset LO (if_freq): the SDR captures offset ABOVE the
     // dial so the zero-IF DC artifact never sits on the tuned frequency. The
@@ -229,6 +240,9 @@ private:
     void   drawFreqGrid(QPainter& p, int hSpec);   // gridlines, spectrum area only
     void   drawScaleBand(QPainter& p, int hSpec);  // freq scale strip on the divider
     void   drawPrivileges(QPainter& p, int hSpec); // license-class edge guides
+    void   drawSwr(QPainter& p, int hSpec);        // SWR sweep curves
+    QVector<SwrRun> swrRuns_;
+    bool   showSwr_ = true;
     void   drawDbScale(QPainter& p, int hSpec);    // horizontal dB lines + labels
     void   drawSpots(QPainter& p, int hSpec);      // cluster spot lines + callsigns
     void   drawMarkers(QPainter& p, int hSpec);    // pinned frequency lines

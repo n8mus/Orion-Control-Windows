@@ -1772,6 +1772,21 @@ MainWindow::MainWindow(QWidget* parent)
                 }
             });
 
+    // SWR sweep taps the same TX metering: keep the newest reading + time.
+    connect(radio_, &RadioController::txMeterReported, this,
+            [this](double, double, double swr) {
+                lastSwr_ = swr;
+                lastSwrMs_ = QDateTime::currentMSecsSinceEpoch();
+            });
+    loadSwrRuns();                                 // per-band curves from disk
+    pan_->setShowSwr(QSettings().value("swr/show", true).toBool());
+    refreshSwrOverlay();
+    // Panic key: ESC drops a running SWR sweep (carrier off, all restored).
+    auto* swrEsc = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(swrEsc, &QShortcut::activated, this, [this] {
+        if (swrSweeping_) stopSwrSweep(false);
+    });
+
     // TX bar <-> radio.
     connect(txBar_, &TxBar::txPowerChanged, this,
             [this](int p) { radio_->setTxPower(p); });
@@ -1809,6 +1824,8 @@ MainWindow::MainWindow(QWidget* parent)
         }
         startManualTune();
     });
+    connect(txBar_, &TxBar::tuneContextRequested, this,
+            &MainWindow::showSwrMenu);
     // MOX = manual voice transmit: key the rig in its current (SSB) mode so
     // the mic / TRIP stream goes out — no carrier, no mode change. A failsafe
     // timer drops the key if it's left on, so a forgotten MOX can't hold the

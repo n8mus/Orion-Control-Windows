@@ -21,6 +21,9 @@
 namespace ttc {
 
 void MainWindow::onTuneRequested(int offsetHz, bool exact) {
+    // A pan click during an SWR sweep is the promised abort — carrier off,
+    // everything restored — and then the click tunes normally.
+    if (swrSweeping_) stopSwrSweep(false);
     // fldigi click-to-carrier: radio in DIG with the DIGI window tracking,
     // and the click lands INSIDE the passband -> move fldigi's audio
     // cursor there and leave the radio alone (the panadapter acts as
@@ -276,7 +279,10 @@ void MainWindow::tuneAbsolute(uint64_t f) {
     // mode, a deliberate X-key CWL flip counts as CW and is left alone,
     // and out-of-band/60 m frequencies change nothing. Escape hatch:
     // QSettings tune/modeByFreq=false.
-    if (!digital_ && !samActive_
+    // (SWR sweep steps and their dial-restore must NOT re-mode: the sweep
+    // rides an FM tune carrier, and a plan-mode change mid-key kills it —
+    // caught by the CAT trace on the first dry run.)
+    if (!digital_ && !samActive_ && !swrQuietTune_
         && QSettings().value("tune/modeByFreq", true).toBool()) {
         bool known = false;
         const Mode pm = planModeForFreq(f, known);
@@ -379,9 +385,23 @@ void MainWindow::frameBand(uint64_t bandLo, uint64_t bandHi) {
         // beyond that (or a high dial like 10 m FM) the frame gracefully
         // yields to the classic dial-centered view.
         : int64_t(bandLo) + span / 2;
-    frameCenterHz_ = uint64_t(c);
-    frameSpanHz_   = span;
-    sdrLoHz_ = uint64_t(c + span / 2 + kGuardHz);
+    applyFrame(c, span);
+#else
+    (void)bandLo; (void)bandHi;
+#endif
+}
+
+// Shared by the band overview and the SWR sweep: hold the view on an
+// arbitrary absolute range, LO parked just above it so the DC spike stays
+// out of frame, dial floating (retuneSdrFor's frame branch keeps it held).
+void MainWindow::applyFrame(int64_t centerAbsHz, int spanHz) {
+#ifdef HAVE_SDRPLAY
+    if (sdrLoHz_ == 0) return;
+    constexpr int kGuardHz = 20000;
+    const int64_t dial = int64_t(centerHz_);
+    frameCenterHz_ = uint64_t(centerAbsHz);
+    frameSpanHz_   = spanHz;
+    sdrLoHz_ = uint64_t(centerAbsHz + spanHz / 2 + kGuardHz);
     sdr_.setCenterFrequency(static_cast<double>(sdrLoHz_));
     setLoOff(int(int64_t(sdrLoHz_) - dial));
     // The widget's rules fight a one-shot frame from two sides: zooming IN
@@ -389,11 +409,11 @@ void MainWindow::frameBand(uint64_t bandLo, uint64_t bandHi) {
     // shift is in force at that moment. Shift, then span, then shift again
     // lands every case — the final state is always legal because spanCap
     // guarantees span <= fullSpan - 2*(span/2 + guard).
-    pan_->setViewShiftHz(int(c - dial));
-    pan_->setViewSpanHz(span);
-    pan_->setViewShiftHz(int(c - dial));
+    pan_->setViewShiftHz(int(centerAbsHz - dial));
+    pan_->setViewSpanHz(spanHz);
+    pan_->setViewShiftHz(int(centerAbsHz - dial));
 #else
-    (void)bandLo; (void)bandHi;
+    (void)centerAbsHz; (void)spanHz;
 #endif
 }
 

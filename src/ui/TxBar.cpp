@@ -80,7 +80,13 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
     tuneBtn_->setCheckable(true);                  // latches while the carrier is up
     tuneBtn_->setFocusPolicy(Qt::NoFocus);
     tuneBtn_->setToolTip("Steady carrier at the set watts for tuning the amp or an "
-                         "external tuner (runs the internal tuner cycle if TUNER is on)");
+                         "external tuner (runs the internal tuner cycle if TUNER is on).\n"
+                         "Right-click: SWR sweep of the visible span, plotted on the pan.");
+    tuneBtn_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tuneBtn_, &QPushButton::customContextMenuRequested, this,
+            [this](const QPoint& pos) {
+                emit tuneContextRequested(tuneBtn_->mapToGlobal(pos));
+            });
     tuneLvl_ = new QSpinBox;
     tuneLvl_->setRange(5, 100);
     tuneLvl_->setValue(20);
