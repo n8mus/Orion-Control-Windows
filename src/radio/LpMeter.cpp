@@ -93,13 +93,16 @@ void LpMeter::poll() {
             presses_    = 0;
             emit modeSeekFailed(t);
         } else {
+            // Bare 'F', not ";F?" — the '?' form is a query and does not
+            // move the mode (tried on the real meter: three ";F?" in a row,
+            // field 6 never budged). See the header.
             port_->write(QByteArrayLiteral("F"));
             lastPressMs_ = now;
             presses_++;
             return;                              // let 'F' settle; poll next tick
         }
     }
-    port_->write(QByteArrayLiteral("P"));
+    port_->write(QByteArrayLiteral(";P?"));      // the vendor's own poll
 }
 
 void LpMeter::onBytes(const QByteArray& chunk) {

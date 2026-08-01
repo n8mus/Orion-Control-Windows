@@ -48,7 +48,7 @@ int main() {
         near(r.rOhm, 0.0, 1e-9, "idle R suppressed");
         near(r.xOhm, 0.0, 1e-9, "idle X suppressed");
         check(r.callsign == "N8EM", "callsign trimmed");
-        check(r.range == 2, "range 2 = 25 W");
+        check(r.range == 2, "range 2 = 25 W (lowest, autoranged at idle)");
         check(r.mode == LpMeter::Mode::PeakHold, "mode 1 = peak hold");
     }
 
@@ -63,7 +63,7 @@ int main() {
         near(r.rOhm, 50.0, 1e-6, "R of 50+j0");
         near(r.xOhm, 0.0, 1e-6, "X of 50+j0");
         check(r.mode == LpMeter::Mode::Tune, "mode 2 = tune");
-        check(r.range == 1, "range 1 = 125 W");
+        check(r.range == 1, "range 1 = 250 W");
     }
 
     // 3. Signed phase: a capacitive load must give NEGATIVE reactance.
@@ -77,7 +77,7 @@ int main() {
         near(r.rOhm, 50.0, 0.05, "R of 70.7 ohms at -45 deg");
         near(r.xOhm, -50.0, 0.05, "X negative for a capacitive load");
         check(r.mode == LpMeter::Mode::Average, "mode 0 = average");
-        check(r.range == 0, "range 0 = 750 W");
+        check(r.range == 0, "range 0 = 2500 W");
     }
 
     // 4. Rejects. Every one of these has been seen or is one bit-slip away:

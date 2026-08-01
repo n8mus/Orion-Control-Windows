@@ -15,16 +15,28 @@ class SerialPort;
 // TelePost LP-100A digital vector RF wattmeter.
 //
 // Protocol (115200 8N1, no flow control, straight-through DB9 M-F — NOT a
-// null modem). There is no streaming mode: you poll with the single ASCII
-// byte 'P' and the meter answers with exactly 43 bytes starting with ';'
-// and NO terminator, so framing is by leading ';' + length. Nine CSV
-// fields:
+// null modem). There is no streaming mode: you poll and the meter answers
+// with exactly 43 bytes starting with ';' and NO terminator, so framing is
+// by leading ';' + length. Nine CSV fields:
 //
 //   ;<watts>,<|Z|>,<phase>,<alarm>,<call>,<range>,<mode>,<dBm>,<SWR>
 //   ;0000.00,052.1,083.6,0,N8EM  ,2,1,-2.3,1.00      <- live idle frame
 //
 // Fixed-offset tables for this frame circulate on the net and are off by
 // one on the power field; splitting on ',' is both simpler and right.
+//
+// The poll command is ";P?". That is the form TelePost's own Virtual
+// Control Panel and LP100_Plot use — both VB6 binaries carry the literal
+// ";P?" and nothing else for the meter — so it is the best-tested path
+// across firmware revisions. A bare "P" also works (verified on the
+// operator's meter, thousands of polls, zero malformed frames), but there
+// is no reason to prefer our discovery over the vendor's own wire format.
+//
+// ";X?" appears to be a QUERY form: ";F?" sent three times did NOT move
+// the mode field, while a bare "F" cycles it every time. So the trailing
+// '?' asks rather than acts. Other query literals in the VCP binary are
+// ";A?" (alarm) and ";C" (a prefix, set-callsign). Notably absent from the
+// vendor's entire command set: anything that changes the display page.
 //
 // At idle the meter still reports |Z| and phase, and they are NOISE — the
 // frame above claims 52.1 ohms at 83.6 degrees into a dead radio. Anything
@@ -37,7 +49,9 @@ class SerialPort;
 //
 // NEVER SEND 'M'. Third-party code documents it as the mode control and it
 // is not — it walks the front-panel LCD through its display pages (Normal,
-// Vector, dBm, Field Strength), and NONE of that appears in the frame. So
+// Vector, dBm, Field Strength), and NONE of that appears in the frame. The
+// vendor's own software has no display-page command at all, which is the
+// strongest possible hint that 'M' is not part of the sanctioned API. So
 // it reads as a harmless no-op in the data while it silently strands the
 // meter's face on a page the operator did not choose. That is exactly what
 // happened while this protocol was being worked out: three exploratory 'M'
@@ -64,7 +78,14 @@ public:
         double  xOhm     = 0.0;      // derived: |Z| sin(phase)
         bool    zValid   = false;    // false => zOhm/phase/r/x are garbage
         Mode    mode     = Mode::Unknown;
-        int     range    = 0;        // 0 = 750 W, 1 = 125 W, 2 = 25 W
+        // Autoranging power scale. 0 = 2500 W, 1 = 250 W, 2 = 25 W, per the
+        // range selector in TelePost's own VCP (" 25 " / " 250" / "2500",
+        // plus "10K" when the high-power coupler option is set). Community
+        // code calls these 750/125/25, which matches no TelePost coupler
+        // spec and is very probably wrong — a decade ladder is what an
+        // autoranging meter would have. Not verified under power here, so
+        // treat as informational; nothing in the console depends on it.
+        int     range    = 0;
         QString callsign;            // as programmed into the meter
         qint64  tsMs     = 0;
     };
