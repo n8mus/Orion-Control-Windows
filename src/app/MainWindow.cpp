@@ -1571,6 +1571,11 @@ MainWindow::MainWindow(QWidget* parent)
     connect(pan_, &PanadapterWidget::passbandChanged,  this, &MainWindow::onPassbandChanged);
     connect(pan_, &PanadapterWidget::viewSpanChanged,  this, [this](int spanHz) {
         statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
+        // Manual zoom while the band overview is up = the deliberate way
+        // out: drop the frame and land at the chosen span, classic LO
+        // (exitBandFrame re-applies the span after normalizing).
+        if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
+            exitBandFrame(spanHz);
     });
     // Wheel tuning, step auto-set by mode: SSB/AM/FM 100 Hz per notch (10 Hz
     // with Shift), CW 10 Hz (1 Hz with Shift) — matching how tight each mode
@@ -2129,6 +2134,7 @@ MainWindow::MainWindow(QWidget* parent)
                              0, kChan60Count - 1);
             saveBandMemory();                       // stash the outgoing band
             recall60m(ch);
+            frameBand(kBands[idx].loHz, kBands[idx].hiHz);   // overview landing
             lastBandPress_ = idx;
             return;
         }
@@ -2145,6 +2151,7 @@ MainWindow::MainWindow(QWidget* parent)
         }
         saveBandMemory();                           // stash the outgoing register
         recallStack(idx, reg);
+        frameBand(kBands[idx].loHz, kBands[idx].hiHz);       // overview landing
         lastBandPress_ = idx;                       // after recall (sync resets it)
     });
 

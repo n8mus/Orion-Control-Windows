@@ -306,6 +306,19 @@ static constexpr int kCtunEdgeHz = 440000;
 // edge or the dial nears the capture edge.
 void MainWindow::retuneSdrFor(uint64_t dial, uint64_t prevDial) {
 #ifdef HAVE_SDRPLAY
+    if (frameCenterHz_ != 0 && sdrLoHz_ != 0) {
+        // Band overview holds the frame while the dial stays inside it
+        // (wheel steps, register cycling — the marker walks the band).
+        // Tuning out of the frame falls through to the classic recenter.
+        const int64_t d = int64_t(dial);
+        if (d >= int64_t(frameCenterHz_) - frameSpanHz_ / 2 - 20000
+            && d <= int64_t(frameCenterHz_) + frameSpanHz_ / 2 + 20000) {
+            setLoOff(int(int64_t(sdrLoHz_) - d));
+            pan_->setViewShiftHz(int(int64_t(frameCenterHz_) - d));
+            return;
+        }
+        exitBandFrame(0);          // classic recenter follows below
+    }
     if (ctun_ && sdrLoHz_ != 0) {
         const int64_t off = int64_t(sdrLoHz_) - int64_t(dial);   // LO - dial
         if (off >= -kCtunEdgeHz && off <= kCtunEdgeHz) {
@@ -334,6 +347,74 @@ void MainWindow::setLoOff(int off) {
     pan_->setDialOffsetHz(off);
     // The CW reader listens at the dial's offset from the LO — follow it.
     if (cwDec_) cwDec_->retune(-double(off));
+}
+
+// Band-overview landing (operator design 2026-07-31): a band button frames
+// the WHOLE band — 15 m lands as 21.000-21.450 — while the radio stays on
+// the remembered per-band spot (the A marker floats, CTUN-style). The
+// capture LO parks just above the framed top so the DC spike stays out of
+// frame here too. Bands wider than the capture allows (80/10/6 m) get the
+// widest legal window around the dial, clipped to the band edges. The frame
+// STANDS while you work: register cycling, wheel steps and click-to-tune
+// all just move the marker inside it (operator verdict after the live
+// try: a click must not yank the view off the band — the first cut dove
+// back to the old zoom and showed out-of-band half the time). Exit is
+// deliberate: manual zoom (keeps the span you chose), tuning out of the
+// frame, or another band button.
+void MainWindow::frameBand(uint64_t bandLo, uint64_t bandHi) {
+#ifdef HAVE_SDRPLAY
+    if (sdrLoHz_ == 0) return;                       // no SDR running
+    constexpr int kGuardHz = 20000;                  // spike clearance
+    const int spanCap = (kSdrCaptureHz - 2 * kGuardHz) / 2;      // 480 kHz
+    const int64_t bandW = int64_t(bandHi) - int64_t(bandLo);
+    const int span = int(std::min<int64_t>(bandW, spanCap));
+    const int64_t dial = int64_t(centerHz_);
+    const int64_t c = (bandW <= spanCap)
+        ? int64_t(bandLo) + bandW / 2
+        // Wider than the view can hold (80/10/6 m): anchor at the band
+        // BOTTOM (operator call 2026-07-31: 80 m always lands 3.500-3.980;
+        // activity on the wide bands lives low). Tuning above the framed
+        // top stays in overview up to frame+20 kHz — on 80 m that is all
+        // the way to 4.000, with the marker riding the right edge — and
+        // beyond that (or a high dial like 10 m FM) the frame gracefully
+        // yields to the classic dial-centered view.
+        : int64_t(bandLo) + span / 2;
+    frameCenterHz_ = uint64_t(c);
+    frameSpanHz_   = span;
+    sdrLoHz_ = uint64_t(c + span / 2 + kGuardHz);
+    sdr_.setCenterFrequency(static_cast<double>(sdrLoHz_));
+    setLoOff(int(int64_t(sdrLoHz_) - dial));
+    // The widget's rules fight a one-shot frame from two sides: zooming IN
+    // zeroes the shift (PowerSDR rule), and the span clamp uses whatever
+    // shift is in force at that moment. Shift, then span, then shift again
+    // lands every case — the final state is always legal because spanCap
+    // guarantees span <= fullSpan - 2*(span/2 + guard).
+    pan_->setViewShiftHz(int(c - dial));
+    pan_->setViewSpanHz(span);
+    pan_->setViewShiftHz(int(c - dial));
+#else
+    (void)bandLo; (void)bandHi;
+#endif
+}
+
+void MainWindow::exitBandFrame(int reapplySpanHz) {
+    if (frameCenterHz_ == 0) return;
+    frameCenterHz_ = 0;
+    frameSpanHz_ = 0;
+#ifdef HAVE_SDRPLAY
+    if (reapplySpanHz > 0 && sdrLoHz_ != 0) {
+        // Manual-zoom exit: normalize to the classic LO for the current
+        // dial BEFORE re-applying the chosen span — the pan's span clamp
+        // runs against the live dial offset, and the frame's parked LO
+        // (up to ~500 kHz off the dial) squeezes it (seen live: a 250 k
+        // request came back as 110 k until this normalize).
+        sdrLoHz_ = centerHz_ + kLoOffsetHz;
+        sdr_.setCenterFrequency(static_cast<double>(sdrLoHz_));
+        setLoOff(kLoOffsetHz);
+        pan_->setViewShiftHz(0);
+        pan_->setViewSpanHz(reapplySpanHz);
+    }
+#endif
 }
 
 void MainWindow::applyMode(Mode m) {

@@ -151,8 +151,15 @@ private:
     bool     ctun_ = false;
     int      loOffHz_ = 260000;               // = kLoOffsetHz at startup (keep in sync)
     uint64_t sdrLoHz_ = 0;                    // absolute capture LO (0 = not running)
+    // Band-overview landing (band buttons): the view frames the whole band
+    // while the dial floats; clicks/wheel/registers move the marker inside
+    // the standing frame. 0 = inactive. See frameBand() in MainWindowTuning.cpp.
+    uint64_t frameCenterHz_ = 0;
+    int      frameSpanHz_   = 0;
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
+    void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing
+    void exitBandFrame(int reapplySpanHz);    // 0 = leave view to the caller
     QTimer* sfTx_ = nullptr;                  // coalesced sub-filter drag stream
     int  pendSubBw_ = 0, pendSubPbt_ = 0;
     bool subFilterDirty_ = false;
