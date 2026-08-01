@@ -236,6 +236,15 @@ void MainWindow::startSwrSweep() {
     swrStepCount_ = kSwrSteps;
     lastSwrMs_ = 0;
     swrUsedMeter_ = meterSwrReady();
+    swrPrevMeterMode_ = ttc::LpMeter::Mode::Unknown;
+    startManualTune();
+    if (!tuning_) return;                          // carrier did not start
+    // Only NOW touch the operator's meter. Everything above can bail out,
+    // and stopSwrSweep() is a no-op until swrSweeping_ is set below — so a
+    // mode change made any earlier would never be undone and would leave
+    // the meter parked in Tune. Nothing is allowed to move his equipment
+    // until the path that puts it back is guaranteed to run.
+    //
     // Tune, per the LP-100A manual: "for amplifier tuning, you should
     // switch to Tune mode for fast update of both bargraph and numerical
     // readout" — a swept measurement wants exactly that. Peak Hold is the
@@ -246,11 +255,7 @@ void MainWindow::startSwrSweep() {
     if (swrUsedMeter_) {
         swrPrevMeterMode_ = lpMeter_->mode();
         lpMeter_->seekMode(ttc::LpMeter::Mode::Tune);
-    } else {
-        swrPrevMeterMode_ = ttc::LpMeter::Mode::Unknown;
     }
-    startManualTune();
-    if (!tuning_) return;                          // carrier did not start
     tuneTimeout_->stop();                          // sweep failsafe: 75 s
     tuneTimeout_->setInterval(75000);              // (restored on stop)
     tuneTimeout_->start();
@@ -293,7 +298,12 @@ void MainWindow::swrTickStep() {
     PanadapterWidget::SwrRun::Pt pt;
     pt.hz = qint64(stepF);
     bool fresh = false;
-    if (swrUsedMeter_ && lpMeter_ && lpMeter_->isAlive()) {
+    // The mode seek takes a few hundred ms to walk the meter round to Tune,
+    // which is longer than the first step's settle — so require it to have
+    // landed before believing a meter sample, or the opening points of the
+    // curve would be read in whatever mode the operator had it in.
+    if (swrUsedMeter_ && lpMeter_ && lpMeter_->isAlive()
+        && lpMeter_->mode() == ttc::LpMeter::Mode::Tune) {
         const ttc::LpMeter::Reading& r = lpMeter_->last();
         // zValid means the meter actually saw the carrier; without it the
         // impedance fields are idle noise and the SWR is meaningless too.
