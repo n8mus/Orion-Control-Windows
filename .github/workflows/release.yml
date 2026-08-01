@@ -100,7 +100,11 @@ jobs:
           # Qt's TLS backend plugin is NOT deployed by default — without it
           # every https fetch dies (NOAA solar data, the POTA feed, and the
           # VOACAP trigger that waits on a sunspot number). Live-found by
-          # stranger-testing the published image with a fresh HOME.
+          # stranger-testing the published image with a fresh HOME. OpenSSL
+          # itself must NOT be half-bundled: a stray bundled libcrypto 3.0
+          # paired with the host's newer libssl fails symbol versioning
+          # (also live-found), so both openssl libs are excluded below and
+          # every host supplies its own matched pair.
           export EXTRA_QT_PLUGINS="tls"
           export OUTPUT="tentec-console-${GITHUB_REF_NAME}-x86_64.AppImage"
           ./linuxdeploy --appdir AppDir --plugin qt \
@@ -108,6 +112,8 @@ jobs:
             --desktop-file AppDir/usr/share/applications/tentec-console.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/tentec-console.png \
             --exclude-library 'libsdrplay_api*' \
+            --exclude-library 'libssl*' \
+            --exclude-library 'libcrypto*' \
             --output appimage
           ls -lh *.AppImage
 
