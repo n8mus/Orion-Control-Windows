@@ -149,7 +149,7 @@ private:
     // spectrum-bin mapping must use it, never the constant.
     QToolButton* ctunBtn_ = nullptr;
     bool     ctun_ = false;
-    int      loOffHz_ = 135000;               // = kLoOffsetHz at startup (keep in sync)
+    int      loOffHz_ = 260000;               // = kLoOffsetHz at startup (keep in sync)
     uint64_t sdrLoHz_ = 0;                    // absolute capture LO (0 = not running)
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
@@ -317,7 +317,7 @@ private:
     QHash<QString, qint64> watchNotified_;     // call -> epoch (renotify gap)
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
-    SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom
+    SpectrumComputer spectrum_{16384};  // 61 Hz/bin at 1 MHz capture — survives deep zoom
 #endif
 };
 

@@ -12,13 +12,20 @@ namespace ttc {
 // Offset-LO tuning (PowerSDR if_freq): the SDR always captures this far above
 // the dial so its zero-IF DC artifact can never sit on the tuned frequency.
 // The RSP2 captures this far ABOVE the dial so the zero-IF DC spike sits at
-// the LO, off to the side of the dial. 135 kHz (was 60) pushes it clear of
-// even the widest view: 500 kHz capture -> max view 500-2*135 = 230 kHz
-// (±115), so the spike at +135 stays ~20 kHz off the top edge, always
-// out of frame. RX is unaffected — the decoder/skimmer/S-meter listen at
-// the dial (loOffHz_ below the LO) wherever the LO sits. Keep loOffHz_'s
-// startup value (MainWindow.h) in sync with this.
-inline constexpr int kLoOffsetHz = 135000;
+// the LO, off to the side of the dial. 260 kHz (was 135, before that 60)
+// pairs with the 1 MHz capture: max view 1000-2*260 = 480 kHz (±240), so
+// the spike at +260 stays ~20 kHz off the top edge, always out of frame —
+// the operator got his wide view back (2026-07-31) without the spike.
+// RX is unaffected — the decoder/skimmer/S-meter listen at the dial
+// (loOffHz_ below the LO) wherever the LO sits. Keep loOffHz_'s startup
+// value (MainWindow.h) in sync with this.
+inline constexpr int kLoOffsetHz = 260000;
+
+// Delivered IQ rate: 2 MS/s hardware-decimated by 2 in the RSP2. One
+// constant so the spectrum span and the skimmer's mixer rate can never
+// drift apart. FFT 16384 keeps the bins at the same ~61 Hz the 500 kHz /
+// 8192 era had, so deep zoom loses nothing.
+inline constexpr int kSdrCaptureHz = 1000000;
 
 inline int pbtRfSign(Mode m) {
     return (m == Mode::LSB || m == Mode::CWL) ? -1 : +1;

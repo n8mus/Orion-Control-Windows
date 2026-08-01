@@ -293,9 +293,10 @@ void MainWindow::tuneAbsolute(uint64_t f) {
 }
 
 // How far the dial may drift from the capture LO before CTUN gives up and
-// re-centers: the RSP2 grabs ±250 kHz around the LO; 190 kHz leaves room
-// for the passband and keeps the view clear of the capture edges.
-static constexpr int kCtunEdgeHz = 190000;
+// re-centers: the RSP2 grabs ±500 kHz around the LO (1 MHz capture);
+// 440 kHz keeps the same ~60 kHz guard the 500 kHz era had, leaving room
+// for the passband and keeping the view clear of the capture edges.
+static constexpr int kCtunEdgeHz = 440000;
 
 // One LO policy for every dial move (console tunes and radio-knob follow).
 // Classic: the LO tracks the dial at +kLoOffsetHz, view centered on the

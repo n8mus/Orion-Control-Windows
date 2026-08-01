@@ -2545,11 +2545,12 @@ MainWindow::MainWindow(QWidget* parent)
     // tunes kLoOffsetHz ABOVE the dial, so the zero-IF DC artifact — line,
     // phase-noise hump and recalibration transients — sits at a fixed
     // +60 kHz from the tuned frequency, never on it and never in a passband.
-    // The capture is widened to 500 kHz so the dial-centered view still
-    // reaches large spans (max symmetric span = 500k - 2*60k = 380 kHz).
+    // 1 MHz capture (2 MS/s, hardware decim 2): dial-centered views to
+    // 480 kHz with the DC spike still out of frame (see kLoOffsetHz).
     constexpr double kSampleRate = 2000000.0;
-    constexpr int    kDecim      = 4;                 // 500 kHz capture
-    const int spanHz = static_cast<int>(kSampleRate / kDecim);
+    constexpr int    kDecim =
+        static_cast<int>(kSampleRate) / kSdrCaptureHz;
+    const int spanHz = kSdrCaptureHz;
     pan_->setSpanHz(spanHz);
     sdrSpanHz_ = spanHz;                              // CW zap peak finder
     pan_->setDialOffsetHz(kLoOffsetHz);
@@ -2616,7 +2617,7 @@ MainWindow::MainWindow(QWidget* parent)
     // window turns it on). The tuned carrier is always -kLoOffsetHz from
     // the SDR LO, so the decoder's mixer never moves.
     cwDec_ = new CwDecoder(double(spanHz), -double(kLoOffsetHz), this);
-    Q_ASSERT(spanHz == 500000);            // skim_ was built for this rate
+    Q_ASSERT(spanHz == kSdrCaptureHz);     // skim_ mixes at this same constant
     const auto iqHandler = [this](const IqBlock& iq) {
         spectrum_.addSamples(iq);
         // During ADC clip (TX onset) the stream is broadband hash — keep

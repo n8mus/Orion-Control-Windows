@@ -240,7 +240,7 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
     // spots, worked-before colored like everything else. The engine exists
     // even without an SDR build; it just never gets IQ.
     skim_ = new SkimmerEngine(                     // rate must match the SDR
-        500000.0,
+        double(kSdrCaptureHz),
         std::clamp(QSettings().value("skim/channels", 24).toInt(), 4, 64),
         this);
     skim_->setCallValidator([this](const QString& call) {
