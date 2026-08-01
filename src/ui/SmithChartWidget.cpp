@@ -45,29 +45,42 @@ void SmithChartWidget::setRuns(const QVector<PanadapterWidget::SwrRun>& runs,
         if (pts_.isEmpty())        { pts_ = v; ts_ = run.ts; }
         else if (prevPts_.isEmpty()) { prevPts_ = v; break; }
     }
-    auto absX = [](const QVector<Pt>& v) {
-        QVector<double> a; a.reserve(v.size());
-        for (const auto& p : v) a.append(p.xAbs);
-        return a;
+    auto infer = [](const QVector<Pt>& v) {
+        QVector<double> a, r;
+        a.reserve(v.size()); r.reserve(v.size());
+        for (const auto& p : v) { a.append(p.xAbs); r.append(p.rOhm); }
+        return inferXSigns(a, r);
     };
-    signs_     = inferXSigns(absX(pts_));
-    prevSigns_ = inferXSigns(absX(prevPts_));
+    signs_     = infer(pts_);
+    prevSigns_ = infer(prevPts_);
     hover_ = -1;
     update();
 }
 
-// Deep local minima of |X| are sign crossings; alternate between them,
-// capacitive (−) first. Same idea as the vendor's Plot ("determine sign
-// of reactance/phase based on impedance and phase slopes"): a series
-// resonance takes X from − to + through zero, and |X| shows that as a
-// V-shaped dip. A dip only counts when it falls well below both sides —
-// flat-Z antennas produce shallow wiggles that must not flip anything
-// (the vendor admits the same failure mode; that is what click-to-flip
-// is for).
-QVector<int> SmithChartWidget::inferXSigns(const QVector<double>& absX) {
+// Deep local minima of |X| are sign crossings; the sign alternates
+// between them. Same idea as the vendor's Plot ("determine sign of
+// reactance/phase based on impedance and phase slopes"). A dip only
+// counts when it falls well below both sides — flat-Z antennas produce
+// shallow wiggles that must not flip anything (the vendor admits the
+// same failure mode; that is what click-to-flip is for).
+//
+// The overall ORIENTATION (which segment is + and which −) cannot come
+// from |X| alone, and guessing "capacitive first" is wrong whenever the
+// sweep opens above a series resonance — the operator's real 80 m run
+// does exactly that: X hits zero at an R peak of ~196 Ω, a textbook
+// anti-resonance, X falling + -> 0 -> −, while his 40 m run crosses at
+// R≈40, a series resonance rising − -> 0 -> +. Physics supplies the
+// discriminator: seen through a feedline, the locus must rotate
+// CLOCKWISE with rising frequency. Flipping every sign mirrors the locus
+// across the real axis and exactly negates its net rotation, so compute
+// the net turn once and flip wholesale if it comes out counterclockwise.
+// (Both of the operator's runs validate: 40 m stays capacitive-first,
+// 80 m comes out inductive-first, matching the R evidence on each.)
+QVector<int> SmithChartWidget::inferXSigns(const QVector<double>& absX,
+                                           const QVector<double>& rOhm) {
     const int n = int(absX.size());
     QVector<int> out(n, +1);
-    if (n < 5) return out;
+    if (n < 5 || rOhm.size() != n) return out;
     // If the source ever starts delivering signed X (future firmware),
     // believe it and leave the data alone.
     for (double v : absX) if (v < 0.0) return out;
@@ -84,12 +97,22 @@ QVector<int> SmithChartWidget::inferXSigns(const QVector<double>& absX) {
             if (cross.isEmpty() || i - cross.last() > 2)
                 cross.append(i);
     }
-    if (cross.isEmpty()) return out;      // no crossing: show raw (all +)
-    int sign = -1, k = 0;
+    int sign = -1, k = 0;                 // candidate: capacitive first
     for (int i = 0; i < n; ++i) {
         if (k < cross.size() && i == cross[k]) { sign = -sign; ++k; }
         out[i] = sign;
     }
+    double net = 0;                       // net rotation about the center
+    std::complex<double> prev;
+    for (int i = 0; i < n; ++i) {
+        const std::complex<double> z(rOhm[i] / kZ0, out[i] * absX[i] / kZ0);
+        const std::complex<double> g = (z - 1.0) / (z + 1.0);
+        if (i > 0 && std::abs(g) > 1e-9 && std::abs(prev) > 1e-9)
+            net += std::arg(g / prev);    // wrapped per-step turn
+        prev = g;
+    }
+    if (net > 0)                          // counterclockwise: mirrored
+        for (int& s : out) s = -s;
     return out;
 }
 

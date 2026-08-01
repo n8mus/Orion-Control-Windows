@@ -65,15 +65,20 @@ int main(int argc, char** argv) {
 
     // Report what the sign inference makes of the newest vector run.
     for (const auto& run : runs) {
-        QVector<double> absX;
+        QVector<double> absX, rr;
         for (const auto& pt : run.pts)
-            if (pt.zValid) absX.append(std::fabs(pt.xOhm));
+            if (pt.zValid) {
+                absX.append(std::fabs(pt.xOhm));
+                rr.append(pt.rOhm);
+            }
         if (absX.size() < 2) continue;
-        const QVector<int> sg = SmithChartWidget::inferXSigns(absX);
+        const QVector<int> sg = SmithChartWidget::inferXSigns(absX, rr);
         int flips = 0;
         for (int i = 1; i < sg.size(); ++i) if (sg[i] != sg[i-1]) ++flips;
-        std::printf("band %s: %d vector points, %d sign crossing(s)\n",
-                    qPrintable(band), int(absX.size()), flips);
+        std::printf("band %s: %d vector points, %d sign crossing(s), "
+                    "starts %s\n",
+                    qPrintable(band), int(absX.size()), flips,
+                    sg.first() < 0 ? "capacitive (-X)" : "inductive (+X)");
         break;
     }
 

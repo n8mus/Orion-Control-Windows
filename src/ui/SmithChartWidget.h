@@ -31,8 +31,12 @@ public:
                  const QString& bandLabel);
 
     // Sign inference, exposed for the sweep-done resonance report: +1/-1
-    // per point from the |X| dips. All +1 when no crossing is found.
-    static QVector<int> inferXSigns(const QVector<double>& absX);
+    // per point. |X| dips locate the crossings; the overall orientation is
+    // chosen so the locus rotates clockwise with rising frequency (needs R
+    // for that, hence both vectors). See the .cpp for why that is the
+    // physically forced choice.
+    static QVector<int> inferXSigns(const QVector<double>& absX,
+                                    const QVector<double>& rOhm);
 
     QSize sizeHint() const override { return {580, 620}; }
 

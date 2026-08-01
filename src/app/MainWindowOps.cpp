@@ -368,10 +368,12 @@ void MainWindow::stopSwrSweep(bool completed) {
             run.pts.cbegin(), run.pts.cend(),
             [](const PanadapterWidget::SwrRun::Pt& pt) { return pt.zValid; });
         if (allZ) {
-            QVector<double> absX;
-            for (const auto& pt : run.pts)
+            QVector<double> absX, rr;
+            for (const auto& pt : run.pts) {
                 absX.append(std::fabs(pt.xOhm));
-            const QVector<int> sg = SmithChartWidget::inferXSigns(absX);
+                rr.append(pt.rOhm);
+            }
+            const QVector<int> sg = SmithChartWidget::inferXSigns(absX, rr);
             for (int i = 1; i < run.pts.size(); ++i) {
                 const auto &a = run.pts[i - 1], &b = run.pts[i];
                 const double xa = sg[i - 1] * std::fabs(a.xOhm);
