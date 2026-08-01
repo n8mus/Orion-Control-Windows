@@ -8,9 +8,12 @@ A Flex/SmartSDR-style console for the **Ten-Tec Orion (565/566)**: full
 computer control, a live wideband **panadapter/waterfall** fed by an SDRplay
 RSP, drag-the-filter-edges tuning, a draggable notch, CW decode and a
 multi-channel **CW skimmer**, DX-cluster/RBN/POTA spots painted on the
-spectrum, WinKeyer keying, rotor control, and `rigctld` emulation so
-**WSJT-X, fldigi, cqrlog and GridTracker keep working unchanged** — one
-serial port, no flrig.
+spectrum, whole-band overview landings on the band buttons, an **SWR
+sweep** plotted right on the pan, a **real-VOACAP propagation overlay**
+on the world-map backdrop (the genuine engine is bundled in the
+AppImage — no setup), WinKeyer keying, rotor control, and `rigctld`
+emulation so **WSJT-X, fldigi, cqrlog and GridTracker keep working
+unchanged** — one serial port, no flrig.
 
 > **Status: ALPHA, Orion-only.** Daily-driven at one station for months;
 > you are among the first others to run it. Expect rough edges, report
@@ -58,6 +61,12 @@ Prefer to build from source? See [Build and run](#build-and-run) below.
 - Optional: `hamlib` (rotctld for the rotor); PipeWire/PulseAudio utilities
   (`pactl`, `pw-record` — present on any modern desktop) for the audio
   features.
+- The VOACAP propagation overlay: **bundled in the AppImage** (VOACAP's
+  core is public-domain US-government code, so unlike the SDRplay API it
+  ships inside). Building from source instead? Build
+  [voacapl](https://github.com/jawatson/voacapl) (`./configure
+  --prefix=$HOME/.local && make && make install && makeitshfbc`) — or
+  skip it and the overlay simply stays off with a hint.
 
 ## Build and run
 

@@ -2,9 +2,12 @@
 # Release. Built with SDRplay support so the panadapter works, but the
 # proprietary libsdrplay_api is EXCLUDED from the bundle (never redistribute
 # it) — the user's own SDRplay API install provides it at runtime, which
-# install.sh sets up. Built on ubuntu-24.04 (matches CI; Qt6 SerialPort is
-# only packaged there) — so the AppImage needs glibc >= 2.39 (Ubuntu 24.04+,
-# Fedora 40+, current Arch). Fine for the alpha's current-distro testers.
+# install.sh sets up. The VOACAP engine (voacapl) IS bundled: its core is
+# US-government public-domain code and the port is open source, so the
+# propagation overlay works out of the box. Built on ubuntu-24.04 (matches
+# CI; Qt6 SerialPort is only packaged there) — so the AppImage needs
+# glibc >= 2.39 (Ubuntu 24.04+, Fedora 40+, current Arch). Fine for the
+# alpha's current-distro testers.
 name: Release
 on:
   push:
@@ -22,7 +25,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ make qt6-base-dev qt6-serialport-dev \
+            cmake g++ make gfortran qt6-base-dev qt6-serialport-dev \
             libgl1-mesa-dev autoconf automake libtool curl file \
             fuse libfuse2 desktop-file-utils
 
@@ -31,6 +34,20 @@ jobs:
           git clone --depth 1 https://gitlab.xiph.org/xiph/rnnoise.git /tmp/rnnoise
           cd /tmp/rnnoise && ./autogen.sh && ./configure --prefix=/usr/local
           make -j"$(nproc)" && sudo make install && sudo ldconfig
+
+      # voacapl: the real VOACAP engine for the propagation overlay.
+      # Public-domain core (NTIA/ITS) — bundling is legal and deliberate.
+      - name: Build voacapl (bundled propagation engine)
+        run: |
+          git clone --depth 1 https://github.com/jawatson/voacapl /tmp/voacapl
+          cd /tmp/voacapl
+          automake --add-missing || true
+          autoreconf || true
+          ./configure --prefix=/tmp/voa
+          make -j"$(nproc)"
+          make install
+          HOME=/tmp/voahome /tmp/voa/bin/makeitshfbc
+          test -d /tmp/voahome/itshfbc/run
 
       # SDRplay API: extract the makeself installer without running it, then
       # place headers + the .so so cmake can link against it. The .so itself
@@ -66,8 +83,11 @@ jobs:
       - name: Assemble AppDir
         run: |
           mkdir -p AppDir/usr/bin AppDir/usr/share/applications \
-                   AppDir/usr/share/icons/hicolor/256x256/apps
+                   AppDir/usr/share/icons/hicolor/256x256/apps \
+                   AppDir/usr/share/tentec-console
           cp build/tentec-console AppDir/usr/bin/
+          cp /tmp/voa/bin/voacapl AppDir/usr/bin/
+          cp -r /tmp/voahome/itshfbc AppDir/usr/share/tentec-console/itshfbc
           cp packaging/tentec-console.desktop AppDir/usr/share/applications/
           cp resources/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/tentec-console.png
 
@@ -79,6 +99,7 @@ jobs:
           export QMAKE="$(command -v qmake6 || echo /usr/lib/qt6/bin/qmake6)"
           export OUTPUT="tentec-console-${GITHUB_REF_NAME}-x86_64.AppImage"
           ./linuxdeploy --appdir AppDir --plugin qt \
+            --executable AppDir/usr/bin/voacapl \
             --desktop-file AppDir/usr/share/applications/tentec-console.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/tentec-console.png \
             --exclude-library 'libsdrplay_api*' \
@@ -98,5 +119,7 @@ jobs:
 
             The SDRplay API (proprietary, required for the panadapter) is NOT
             bundled — install.sh sets it up, or get it from sdrplay.com/api.
+            The VOACAP propagation engine IS bundled (public-domain core):
+            the map-backdrop propagation overlay works out of the box.
             Radio control needs your user in the dialout/uucp group (install.sh
             does this). First launch opens the Setup screen.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "app/Voacap.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -23,18 +24,52 @@ constexpr int kDistKm[] = {250,  500,  750,  1000, 1250, 1500, 1750, 2000,
                            12000};
 constexpr int kDistCount = int(sizeof(kDistKm) / sizeof(kDistKm[0]));
 
+// The AppImage bundles voacapl (US-government public-domain core, so
+// unlike the SDRplay lib it MAY be redistributed) plus a ready itshfbc
+// tree. An operator's own installation always wins over the bundle.
 QString voacaplPath() {
     QString p = QStandardPaths::findExecutable("voacapl");
-    if (p.isEmpty()) {
-        const QString local = QDir::homePath() + "/.local/bin/voacapl";
-        if (QFile::exists(local)) p = local;
+    if (!p.isEmpty()) return p;
+    for (const QString& c : {QDir::homePath() + "/.local/bin/voacapl",
+                             QCoreApplication::applicationDirPath()
+                                 + "/voacapl"})
+        if (QFile::exists(c)) return c;
+    return {};
+}
+
+bool copyTree(const QString& src, const QString& dst) {
+    QDir().mkpath(dst);
+    const QDir s(src);
+    for (const QFileInfo& fi :
+         s.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (fi.isDir()) {
+            if (!copyTree(fi.absoluteFilePath(), dst + "/" + fi.fileName()))
+                return false;
+        } else if (!QFile::exists(dst + "/" + fi.fileName())
+                   && !QFile::copy(fi.absoluteFilePath(),
+                                   dst + "/" + fi.fileName())) {
+            return false;
+        }
     }
-    return p;
+    return true;
 }
 
 QString itshfbcDir() {
-    const QString d = QDir::homePath() + "/itshfbc";
-    return QDir(d + "/run").exists() ? d : QString();
+    // 1) the operator's own tree; 2) our writable working copy; 3) seed
+    // that copy from the read-only tree bundled in the AppImage (voacapl
+    // writes decks and results into <root>/run, so a mounted AppImage
+    // can't be the root itself).
+    const QString own = QDir::homePath() + "/itshfbc";
+    if (QDir(own + "/run").exists()) return own;
+    const QString mine = QStandardPaths::writableLocation(
+                             QStandardPaths::AppDataLocation) + "/itshfbc";
+    if (QDir(mine + "/run").exists()) return mine;
+    const QString bundled = QCoreApplication::applicationDirPath()
+                            + "/../share/tentec-console/itshfbc";
+    if (QDir(bundled + "/run").exists() && copyTree(bundled, mine)
+        && QDir(mine + "/run").exists())
+        return mine;
+    return {};
 }
 
 void forward(double lat1d, double lon1d, double azDeg, double km,
@@ -70,12 +105,12 @@ Voacap::Voacap(QObject* parent) : QObject(parent) {}
 QString Voacap::engineMissing() {
     if (voacaplPath().isEmpty())
         return QStringLiteral(
-            "voacapl not found — build it from github.com/jawatson/voacapl "
-            "(configure --prefix=$HOME/.local; make; make install; "
-            "makeitshfbc)");
+            "voacapl not found (the AppImage bundles it; source builds: "
+            "github.com/jawatson/voacapl — configure "
+            "--prefix=$HOME/.local; make; make install; makeitshfbc)");
     if (itshfbcDir().isEmpty())
         return QStringLiteral(
-            "~/itshfbc data tree missing — run makeitshfbc once");
+            "itshfbc data tree missing — run makeitshfbc once");
     return {};
 }
 
