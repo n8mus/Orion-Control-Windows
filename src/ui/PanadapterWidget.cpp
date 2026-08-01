@@ -20,7 +20,9 @@ namespace ttc {
 namespace {
 constexpr int   kWfHistRows   = 1024;    // raw dB rows kept for re-render on zoom
 constexpr int   kMinViewSpanHz = 4000;   // deep enough to edit a CW filter
-constexpr int   kScaleBandH    = 16;     // freq-scale strip between spectrum and wf
+constexpr int   kScaleBandH    = 32;     // freq-scale strip between spectrum and wf
+                                         // (doubled 2026-07-31: bigger labels +
+                                         // license-class letters live in it now)
 constexpr int   kDbAxisW       = 40;     // grab width of the left dB scale
 constexpr float kPeakDecayDb   = 0.15f;  // peak-hold droop per frame (~2-3 dB/s)
 constexpr float kFillGamma     = 0.6f;   // compresses the ramp: warm colors arrive
@@ -1164,24 +1166,29 @@ constexpr PrivEdge kUsPriv[] = {
 } // namespace
 
 void PanadapterWidget::drawPrivileges(QPainter& p, int hSpec) {
-    // Faint vertical guides across the spectrum at US license-class phone
-    // edges, each tagged with the class letter — so at a glance you can see
-    // where an Extra / Advanced / General / Tech may transmit on this band.
+    // License-class edges live IN the scale strip (operator call 2026-07-31:
+    // the old full-height dashed guides cluttered the spectrum; KE9NS's
+    // under-the-VFO band text has no room on our width budget). A bright
+    // tick at each US class phone edge plus the class letter in the strip's
+    // upper half — the band-plan tint next door already tells the rest.
+    // Draw AFTER drawScaleBand so the marks sit on top of the tint.
     if (!ds_.showPrivileges || centerHz_ == 0) return;
     const qint64 half = viewSpanHz_ / 2;
     const qint64 vc = qint64(centerHz_) + viewShiftHz_;   // view center RF
     QFont f = p.font();
-    f.setPixelSize(9);
+    f.setPixelSize(13);
     f.setBold(true);
     p.setFont(f);
     for (const PrivEdge& e : kUsPriv) {
         if (e.hz < vc - half || e.hz > vc + half)
             continue;
         const int x = hzToX(int(e.hz - qint64(centerHz_)));
-        p.setPen(QPen(QColor(70, 190, 120, 90), 1, Qt::DashLine));
-        p.drawLine(x, 12, x, hSpec);
-        p.setPen(QColor(150, 235, 180, 220));
-        p.drawText(x + 2, 11, QString::fromLatin1(e.cls));
+        p.fillRect(QRect(x, hSpec + 1, 2, kScaleBandH - 2),
+                   QColor(120, 235, 160, 200));
+        p.setPen(QColor(10, 20, 14, 200));                // dark halo
+        p.drawText(x + 5, hSpec + 15, QString::fromLatin1(e.cls));
+        p.setPen(QColor(160, 245, 190));
+        p.drawText(x + 4, hSpec + 14, QString::fromLatin1(e.cls));
     }
 }
 
@@ -1232,11 +1239,14 @@ void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
         }
     }
     // KE9NS-style labels: yellow, MHz.kkk.h format (e.g. 7.280.0 — the last
-    // digit is hundreds of Hz).
+    // digit is hundreds of Hz). 13 px on the doubled strip (operator asked
+    // for readable), riding the lower half; class letters get the upper.
+    f.setPixelSize(13);
+    p.setFont(f);
     for (double fq = std::ceil(f0 / step) * step; fq <= f1; fq += step) {
         const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
         p.setPen(QColor(200, 215, 230, 200));
-        p.drawLine(x, hSpec, x, hSpec + 5);
+        p.drawLine(x, hSpec, x, hSpec + 8);
         const qint64 hz  = static_cast<qint64>(std::llround(fq));
         const qint64 mhz = hz / 1000000;
         const int    khz = static_cast<int>((hz / 1000) % 1000);
@@ -1428,8 +1438,8 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     // panel: red = the transmitting VFO, green = the receiving one. Normal
     // (TX+RX both on A) keeps the plain center marker and shows B, when it's
     // in view, as a quiet blue sub-RX line.
-    drawPrivileges(p, hSpec);
     drawScaleBand(p, hSpec);
+    drawPrivileges(p, hSpec);   // class marks paint over the strip tint
     {
         const QFont savedFont = p.font();
         auto flag = [&](int x, const QString& text, const QColor& c) {
