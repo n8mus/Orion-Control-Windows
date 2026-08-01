@@ -5,6 +5,9 @@
 #include "app/MainWindow.h"
 #include "app/MainWindowInternal.h"
 #include "app/Bands.h"
+#include "ui/SmithChartWidget.h"
+
+#include <QVBoxLayout>
 
 #include <QDateTime>
 #include <QDialog>
@@ -184,6 +187,19 @@ void MainWindow::showSwrMenu(const QPoint& globalPos) {
         QSettings().setValue("swr/show", on);
         pan_->setShowSwr(on);
     });
+    // Smith chart — only for runs with impedance, i.e. LP-100A sweeps.
+    QAction* smith = m->addAction(QStringLiteral("Smith chart…"));
+    bool hasZ = false;
+    if (curBand_ >= 0)
+        for (const auto& run :
+             swrRuns_.value(QLatin1String(kBands[curBand_].label)))
+            for (const auto& pt : run.pts)
+                if (pt.zValid) { hasZ = true; break; }
+    smith->setEnabled(hasZ);
+    smith->setToolTip(hasZ ? QString()
+                           : QStringLiteral("Needs a sweep taken with the "
+                                            "LP-100A (R+jX per point)"));
+    connect(smith, &QAction::triggered, this, &MainWindow::showSmithChart);
     QAction* clear = m->addAction(QStringLiteral("Clear this band's runs"));
     clear->setEnabled(curBand_ >= 0
                       && !swrRuns_.value(QLatin1String(
@@ -341,18 +357,33 @@ void MainWindow::stopSwrSweep(bool completed) {
                           .arg(swrPts_.size());
         // With a vector meter we also know where the reactance changes sign
         // — the true resonance, which is NOT always the SWR minimum and is
-        // the number you actually want when cutting an antenna. Reported by
-        // linear interpolation between the two stops that straddle X = 0.
-        for (int i = 1; i < run.pts.size(); ++i) {
-            const auto &a = run.pts[i - 1], &b = run.pts[i];
-            if (!a.zValid || !b.zValid) continue;
-            if ((a.xOhm <= 0.0) == (b.xOhm <= 0.0)) continue;
-            const double t = a.xOhm / (a.xOhm - b.xOhm);   // denominator != 0
-            const double fRes = a.hz + t * double(b.hz - a.hz);
-            msg += QString("; X=0 at %1 MHz, R≈%2 Ω")
-                       .arg(fRes / 1e6, 0, 'f', 3)
-                       .arg(a.rOhm + t * (b.rOhm - a.rOhm), 0, 'f', 1);
-            break;
+        // the number you actually want when cutting an antenna. The meter
+        // reports |X| without its sign (live-verified: the operator's 40 m
+        // run dips to ~4 Ω and rises both sides, never negative), so the
+        // sign is inferred from the sweep shape the same way the Smith
+        // chart and the vendor's own Plot program do it.
+        // Only for a run that is vector end to end: a mid-sweep fallback to
+        // the radio leaves |X| holes that would fool the dip detector.
+        const bool allZ = std::all_of(
+            run.pts.cbegin(), run.pts.cend(),
+            [](const PanadapterWidget::SwrRun::Pt& pt) { return pt.zValid; });
+        if (allZ) {
+            QVector<double> absX;
+            for (const auto& pt : run.pts)
+                absX.append(std::fabs(pt.xOhm));
+            const QVector<int> sg = SmithChartWidget::inferXSigns(absX);
+            for (int i = 1; i < run.pts.size(); ++i) {
+                const auto &a = run.pts[i - 1], &b = run.pts[i];
+                const double xa = sg[i - 1] * std::fabs(a.xOhm);
+                const double xb = sg[i] * std::fabs(b.xOhm);
+                if ((xa <= 0.0) == (xb <= 0.0) || xa == xb) continue;
+                const double t = xa / (xa - xb);
+                const double fRes = a.hz + t * double(b.hz - a.hz);
+                msg += QString("; X=0 near %1 MHz, R≈%2 Ω")
+                           .arg(fRes / 1e6, 0, 'f', 3)
+                           .arg(a.rOhm + t * (b.rOhm - a.rOhm), 0, 'f', 1);
+                break;
+            }
         }
         statusBar()->showMessage(msg, 15000);
     } else {
@@ -361,6 +392,26 @@ void MainWindow::stopSwrSweep(bool completed) {
             8000);
     }
     swrPts_.clear();
+}
+
+// Non-modal so the operator can sweep again and compare; reopening just
+// refreshes it with the current band's runs.
+void MainWindow::showSmithChart() {
+    if (curBand_ < 0) return;
+    const QString label = QLatin1String(kBands[curBand_].label);
+    if (smithDlg_) smithDlg_->close();     // WA_DeleteOnClose reaps it
+    auto* dlg = new QDialog(this);
+    smithDlg_ = dlg;
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(QString("Smith chart — %1 m").arg(label));
+    dlg->setStyleSheet("QDialog { background: #141b24; }");
+    auto* lay = new QVBoxLayout(dlg);
+    lay->setContentsMargins(4, 4, 4, 4);
+    auto* chart = new SmithChartWidget(dlg);
+    chart->setRuns(swrRuns_.value(label), label);
+    lay->addWidget(chart);
+    dlg->resize(600, 660);
+    dlg->show();
 }
 
 void MainWindow::refreshSwrOverlay() {

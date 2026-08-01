@@ -64,6 +64,7 @@ senders and weak-signal cases are the hard set.
 | `rotortest` | rotctld client | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
 | `watchtest` | DX-watch pattern matching | — |
 | `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
+| `smithtest` | renders a band's stored sweep to PNG for eyeballing (`QT_QPA_PLATFORM=offscreen ./smithtest <swr.json> <band> <out.png>`) | — |
 | `nrtest` | noise-reduction ruler: keyed 550 Hz tone at swept SNR through {none, RNNoise, SpectralNr} into the audio-path decoder. Verdict 2026-07-16: RNNoise perfect to -6 dB; our SpectralNr lost and stays test-only | — |
 
 Run the relevant tests plus a selftest sizing check before every commit.

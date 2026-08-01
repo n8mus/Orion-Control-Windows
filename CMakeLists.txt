@@ -59,6 +59,7 @@ add_executable(tentec-console
   src/cw/SkimServer.cpp         src/cw/SkimServer.h
   src/ui/SkimmerWindow.cpp      src/ui/SkimmerWindow.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
+  src/ui/SmithChartWidget.cpp   src/ui/SmithChartWidget.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/SetupDialog.cpp        src/ui/SetupDialog.h
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h
@@ -104,6 +105,14 @@ add_executable(lptest EXCLUDE_FROM_ALL
   src/radio/LpMeter.cpp src/radio/SerialPort.cpp)
 target_include_directories(lptest PRIVATE src)
 target_link_libraries(lptest PRIVATE Qt6::Core)
+
+# Smith-chart render harness: draws a band's stored sweep runs to a PNG
+# (offscreen), for eyeballing the chart against real captured data.
+add_executable(smithtest EXCLUDE_FROM_ALL
+  tests/smithtest.cpp
+  src/ui/SmithChartWidget.cpp)
+target_include_directories(smithtest PRIVATE src)
+target_link_libraries(smithtest PRIVATE Qt6::Widgets)
 
 add_executable(skimsrvtest EXCLUDE_FROM_ALL
   tests/skimsrvtest.cpp

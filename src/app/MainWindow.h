@@ -12,6 +12,7 @@ class QToolButton;
 class QLineEdit;
 class QUdpSocket;
 class QAction;
+class QDialog;
 class QHBoxLayout;
 #include "radio/TenTecOrion.h"
 #include "radio/LpMeter.h"
@@ -25,6 +26,7 @@ class QHBoxLayout;
 #include "util/LogbookIndex.h"
 #include "util/WatchList.h"
 #include <QHash>
+#include <QPointer>
 #include "cw/CwWindow.h"
 namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
                 class AudioCwSource;
@@ -91,6 +93,7 @@ private:
     void startManualTune();            // steady carrier for amp/external tuner
     void stopManualTune();
     void showSwrMenu(const QPoint& globalPos);  // right-click TUNE
+    void showSmithChart();             // vector-meter runs on a Smith chart
     void startSwrSweep();              // step the visible span reading SWR
     void stopSwrSweep(bool completed); // unkey, restore dial, maybe save
     void swrTickStep();                // sweep state machine (150 ms timer)
@@ -189,6 +192,7 @@ private:
     bool     swrQuietTune_ = false;            // sweep tunes bypass plan-mode
     bool     swrUsedMeter_ = false;            // this run read the LP-100A
     QHash<QString, QVector<PanadapterWidget::SwrRun>> swrRuns_;  // band label ->
+    QPointer<QDialog> smithDlg_;               // non-modal Smith chart
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing
