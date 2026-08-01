@@ -32,12 +32,23 @@ class SerialPort;
 //
 // Mode control is the byte 'F', which cycles Average -> PeakHold -> Tune
 // -> Average. Bench-verified on the operator's meter 2026-08-01; all three
-// transitions observed. The 'M' byte is documented by third-party code as
-// the mode control and IS NOT — it cycles some LCD page that never appears
-// in the frame, so pressing it looks like a no-op here. Don't "fix" this
-// back to 'M'. 'A' (cycle the SWR alarm setpoint) is left unimplemented on
-// purpose: it changes a protective setting the operator chose, and we have
-// no reason to touch it.
+// transitions observed, and every one of them is visible in field 6, so a
+// seek can confirm it landed.
+//
+// NEVER SEND 'M'. Third-party code documents it as the mode control and it
+// is not — it walks the front-panel LCD through its display pages (Normal,
+// Vector, dBm, Field Strength), and NONE of that appears in the frame. So
+// it reads as a harmless no-op in the data while it silently strands the
+// meter's face on a page the operator did not choose. That is exactly what
+// happened while this protocol was being worked out: three exploratory 'M'
+// presses left the operator's meter on Field Strength, and the press count
+// never reconciled afterwards — the observed cycle is shorter than the
+// manual's five-mode list implies, and some presses appear not to register.
+// It took stepping ONE press at a time with the operator watching the LCD
+// to get home. The rule this bought: the console only ever touches state it
+// can read back. 'A' (cycle the SWR alarm setpoint) is unimplemented for
+// the same reason plus a better one — it changes a protective setting the
+// operator chose.
 class LpMeter : public QObject {
     Q_OBJECT
 public:
