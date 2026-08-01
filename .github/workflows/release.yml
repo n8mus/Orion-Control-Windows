@@ -97,6 +97,11 @@ jobs:
           curl -fSL -o linuxdeploy-plugin-qt https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy linuxdeploy-plugin-qt
           export QMAKE="$(command -v qmake6 || echo /usr/lib/qt6/bin/qmake6)"
+          # Qt's TLS backend plugin is NOT deployed by default — without it
+          # every https fetch dies (NOAA solar data, the POTA feed, and the
+          # VOACAP trigger that waits on a sunspot number). Live-found by
+          # stranger-testing the published image with a fresh HOME.
+          export EXTRA_QT_PLUGINS="tls"
           export OUTPUT="tentec-console-${GITHUB_REF_NAME}-x86_64.AppImage"
           ./linuxdeploy --appdir AppDir --plugin qt \
             --executable AppDir/usr/bin/voacapl \
