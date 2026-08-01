@@ -63,6 +63,7 @@ senders and weak-signal cases are the hard set.
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
 | `rotortest` | rotctld client | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
 | `watchtest` | DX-watch pattern matching | — |
+| `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
 | `nrtest` | noise-reduction ruler: keyed 550 Hz tone at swept SNR through {none, RNNoise, SpectralNr} into the audio-path decoder. Verdict 2026-07-16: RNNoise perfect to -6 dB; our SpectralNr lost and stays test-only | — |
 
 Run the relevant tests plus a selftest sizing check before every commit.
@@ -155,7 +156,16 @@ setting > `/dev/orion` default). The FT4232H quad converter that used
 to carry both radios was condemned 2026-07-16 — it WAS the 40 m spike
 picket (RFI), proven by pull-test at LNA 1; its `/dev/orion` udev rule
 is dead, and the Omni VII (needs RTS/CTS) has no CAT path until a clean
-converter arrives. SignaLink = "USB AUDIO CODEC" in PipeWire. cqrlog
+converter arrives. A **TelePost LP-100A vector wattmeter** lives on
+`/dev/ttyS5` (second port of the AX99100 PCIe card; `lp100a/device`, env
+`TTC_LPMETER_DEV`); poll it with the single byte `P` at 115200 8N1 and it
+answers a 43-byte `;`-led CSV frame carrying power, |Z|, phase, dBm and
+SWR (`src/radio/LpMeter`). Mode control is the byte `F`, NOT the `M` that
+third-party code claims — bench-verified 2026-08-01, and `M` really is a
+no-op on the serial mode field. The meter is opt-in (`lp100a/enabled`,
+default OFF) and the SWR sweep falls back to the radio's `@STF`, so a
+station without one behaves exactly as it did before.
+SignaLink = "USB AUDIO CODEC" in PipeWire. cqrlog
 runs the fork at `/home/jon/CQRLog` (bridge :2334, embedded MariaDB).
 If the panadapter comes up dark ("no IQ source") right after
 an unclean console death, the sdrplay_apiService handshake wedged —

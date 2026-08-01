@@ -1326,8 +1326,8 @@ void PanadapterWidget::drawSwr(QPainter& p, int hSpec) {
         qint64 minHz = 0;
         double minSwr = 99.0;
         for (const auto& pt : run.pts) {
-            poly << QPointF(hzToX(int(pt.first - qint64(centerHz_))), swrY(pt.second));
-            if (pt.second < minSwr) { minSwr = pt.second; minHz = pt.first; }
+            poly << QPointF(hzToX(int(pt.hz - qint64(centerHz_))), swrY(pt.swr));
+            if (pt.swr < minSwr) { minSwr = pt.swr; minHz = pt.hz; }
         }
         if (i == 0) {                                  // newest: glow + bright
             p.setPen(QPen(QColor(255, 150, 30, 55), 8));

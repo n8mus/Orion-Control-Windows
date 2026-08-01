@@ -15,6 +15,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QMenu>
+#include <QMessageBox>
 #include <QActionGroup>
 #include <QWidgetAction>
 #include <QDateTime>
@@ -2998,6 +2999,53 @@ MainWindow::MainWindow(QWidget* parent)
         }
     }
 
+    // External RF wattmeter (TelePost LP-100A). Opt-in: a station without
+    // one never opens a port and the SWR sweep keeps reading the radio, so
+    // this is invisible unless you have the hardware. Device precedence
+    // matches the radio's: env > setting > this station's default.
+    if (QSettings().value("lp100a/enabled", false).toBool()) {
+        const char* mEnv = std::getenv("TTC_LPMETER_DEV");
+        meterDevUsed_ = mEnv ? QString::fromLatin1(mEnv)
+                             : QSettings().value("lp100a/device", "/dev/ttyS5")
+                                   .toString();
+        lpMeter_ = new ttc::LpMeter(this);
+        connect(lpMeter_, &ttc::LpMeter::aliveChanged, this, [this](bool up) {
+            statusBar()->showMessage(up ? "LP-100A wattmeter connected"
+                                        : "LP-100A wattmeter went quiet", 6000);
+            // Connection transitions are rare and the first thing you want
+            // to see when a headless run says the sweep read the radio.
+            fprintf(stderr, "[lpmeter] %s on %s\n",
+                    up ? "connected" : "went quiet",
+                    meterDevUsed_.toLocal8Bit().constData());
+        });
+        // The mode seek only runs for a sweep, so a failure here means the
+        // sweep is about to read whatever the meter is stuck on — and if
+        // that is Peak Hold the curve is worthless. We cannot turn the knob
+        // ourselves, so ask.
+        connect(lpMeter_, &ttc::LpMeter::modeSeekFailed, this,
+                [this](ttc::LpMeter::Mode want) {
+                    const QString m = want == ttc::LpMeter::Mode::Tune ? "TUNE"
+                                    : want == ttc::LpMeter::Mode::Average ? "AVG"
+                                                                          : "PEAK";
+                    QMessageBox::warning(
+                        this, "LP-100A",
+                        QString("The wattmeter would not switch to %1 — it is "
+                                "not responding to the mode command.\n\n"
+                                "Set it with the meter's own front panel. If it "
+                                "is left in PEAK HOLD, every sweep stop inherits "
+                                "the worst reading before it and the curve will "
+                                "only climb.").arg(m));
+                });
+        if (!lpMeter_->start(meterDevUsed_)) {
+            lpMeter_->deleteLater();
+            lpMeter_ = nullptr;
+            meterDevUsed_.clear();
+            statusBar()->showMessage(
+                "LP-100A: could not open its serial port — the SWR sweep "
+                "will read the radio instead", 10000);
+        }
+    }
+
     // First run on a new station: open the setup dialog once the window is
     // up (alpha testers must point the console at THEIR hardware — the
     // settings defaults are this station's). Completing it stamps
@@ -3012,7 +3060,7 @@ void MainWindow::openSetup() {
     const QString keyerDev =
         (cwWin_ && cwWin_->keyerOpen())
             ? QSettings().value("cw/port").toString() : QString();
-    SetupDialog dlg(radioDevUsed_, keyerDev, radioUp_, this);
+    SetupDialog dlg(radioDevUsed_, keyerDev, meterDevUsed_, radioUp_, this);
     if (dlg.exec() == QDialog::Accepted)
         statusBar()->showMessage(
             "setup saved — radio, keyer and cluster changes apply on the "

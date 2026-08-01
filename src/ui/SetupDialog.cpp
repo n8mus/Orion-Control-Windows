@@ -45,10 +45,12 @@ QStringList audioSources() {
 } // namespace
 
 SetupDialog::SetupDialog(const QString& liveRadioDev,
-                         const QString& liveKeyerDev, bool radioConnected,
+                         const QString& liveKeyerDev,
+                         const QString& liveMeterDev, bool radioConnected,
                          QWidget* parent)
     : QDialog(parent), liveRadioDev_(liveRadioDev),
-      liveKeyerDev_(liveKeyerDev), radioConnected_(radioConnected) {
+      liveKeyerDev_(liveKeyerDev), liveMeterDev_(liveMeterDev),
+      radioConnected_(radioConnected) {
     setWindowTitle("Station setup");
     setStyleSheet(
         "QDialog { background: #141b24; }"
@@ -187,6 +189,50 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     rotorPort_->setValue(s.value("rotor/port", 4533).toInt());
     form->addRow("rotctld port", rotorPort_);
 
+    // RF wattmeter. Off by default: a station without an LP-100A must get
+    // exactly the behaviour it had before this section existed, which means
+    // the sweep keeps reading the radio's own SWR.
+    form->addRow(section("RF WATTMETER", this));
+    lpOn_ = new QCheckBox("TelePost LP-100A vector wattmeter", this);
+    lpOn_->setChecked(s.value("lp100a/enabled", false).toBool());
+    lpOn_->setToolTip(
+        "A calibrated external wattmeter on its own serial port.\n"
+        "Measures forward power, SWR and complex impedance (R+jX) —\n"
+        "more, and more accurate, than the radio's built-in metering.");
+    form->addRow("", lpOn_);
+
+    lpDev_ = new QComboBox(this);
+    lpDev_->setEditable(true);
+    lpDev_->setToolTip("115200 8N1. Straight-through DB9 cable, NOT a null modem.");
+    form->addRow("Meter serial port", lpDev_);
+
+    lpSwr_ = new QComboBox(this);
+    lpSwr_->addItem("LP-100A, falling back to the radio", "meter");
+    lpSwr_->addItem("Radio only", "radio");
+    lpSwr_->setCurrentIndex(
+        s.value("swr/source", "meter").toString() == "radio" ? 1 : 0);
+    lpSwr_->setToolTip(
+        "Which SWR the right-click TUNE sweep believes.\n"
+        "The meter is used only while it is enabled AND answering;\n"
+        "if it goes quiet mid-sweep the radio takes over silently.");
+    form->addRow("Sweep reads", lpSwr_);
+
+    auto* mtest = new QPushButton("Test", this);
+    lpTest_ = new QLabel(this);
+    auto* mrow = new QHBoxLayout;
+    mrow->addWidget(mtest);
+    mrow->addWidget(lpTest_, 1);
+    form->addRow("", mrow);
+    connect(mtest, &QPushButton::clicked, this, &SetupDialog::testMeter);
+
+    auto syncLpRows = [this] {
+        const bool on = lpOn_->isChecked();
+        lpDev_->setEnabled(on);
+        lpSwr_->setEnabled(on);
+    };
+    connect(lpOn_, &QCheckBox::toggled, this, syncLpRows);
+    syncLpRows();
+
     auto* bb = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     lay->addWidget(bb);
@@ -195,6 +241,56 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
 
     refreshPorts();
     applyConnMode(activeProfile());      // fills the radio device row per profile
+}
+
+// Poll the wattmeter once and decode what came back. A meter that answers
+// tells us its own callsign, which is the friendliest possible "yes, this
+// is the right port" — no other device on the desk knows it.
+void SetupDialog::testMeter() {
+    const QString dev = lpDev_->currentText().trimmed();
+    if (!liveMeterDev_.isEmpty() && dev == liveMeterDev_) {
+        lpTest_->setText("✓ in use by this console — connected");
+        return;
+    }
+    QSerialPort p;
+    p.setPortName(dev);
+    p.setBaudRate(115200);
+    p.setDataBits(QSerialPort::Data8);
+    p.setParity(QSerialPort::NoParity);
+    p.setStopBits(QSerialPort::OneStop);
+    p.setFlowControl(QSerialPort::NoFlowControl);
+    if (!p.open(QIODevice::ReadWrite)) {
+        lpTest_->setText("✗ " + p.errorString());
+        return;
+    }
+    lpTest_->setText("probing…");
+    lpTest_->repaint();
+    QByteArray got;
+    for (int attempt = 0; attempt < 3 && got.size() < 43; ++attempt) {
+        p.clear();
+        got.clear();
+        p.write(QByteArrayLiteral("P"));
+        p.flush();
+        // The measured round trip is ~10 ms; 250 ms of patience per try is
+        // for a meter that is powered off and warming, not for the link.
+        for (int i = 0; i < 5 && got.size() < 43; ++i)
+            if (p.waitForReadyRead(250)) got += p.readAll();
+    }
+    p.close();
+    const int semi = got.indexOf(';');
+    if (semi < 0 || got.size() - semi < 43) {
+        lpTest_->setText("✗ no answer — is this the LP-100A port?");
+        return;
+    }
+    const QList<QByteArray> f = got.mid(semi + 1, 42).split(',');
+    if (f.size() != 9) {
+        lpTest_->setText("✗ unrecognized reply");
+        return;
+    }
+    const QString call = QString::fromLatin1(f[4]).trimmed();
+    lpTest_->setText(call.isEmpty()
+                         ? QStringLiteral("✓ LP-100A answered")
+                         : QStringLiteral("✓ LP-100A answered — call %1").arg(call));
 }
 
 // Serial candidates: everything QSerialPortInfo can see (USB adapters AND
@@ -216,6 +312,12 @@ void SetupDialog::refreshPorts() {
     keyerDev_->addItems(ports);
     if (!ports.contains(curKeyer)) keyerDev_->addItem(curKeyer);
     keyerDev_->setCurrentText(curKeyer);
+
+    const QString curMeter = s.value("lp100a/device", "/dev/ttyS5").toString();
+    lpDev_->clear();
+    lpDev_->addItems(ports);
+    if (!ports.contains(curMeter)) lpDev_->addItem(curMeter);
+    lpDev_->setCurrentText(curMeter);
 }
 
 // Which stored device the field is editing: the Orion's serial port, the
@@ -410,6 +512,9 @@ void SetupDialog::accept() {
     s.setValue("spots/login", spotLogin_->text().trimmed().toUpper());
     s.setValue("rotor/enabled", rotorOn_->isChecked());
     s.setValue("rotor/port", rotorPort_->value());
+    s.setValue("lp100a/enabled", lpOn_->isChecked());
+    s.setValue("lp100a/device", lpDev_->currentText().trimmed());
+    s.setValue("swr/source", lpSwr_->currentData().toString());
     s.setValue("setup/done", true);
     QDialog::accept();
 }

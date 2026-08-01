@@ -20,11 +20,12 @@ namespace ttc {
 class SetupDialog : public QDialog {
     Q_OBJECT
 public:
-    // liveRadioDev/keyerDev: devices this running instance already holds
-    // open (exclusively) — the Test buttons report "connected" for those
-    // instead of probing into our own lock.
+    // liveRadioDev/keyerDev/meterDev: devices this running instance already
+    // holds open (exclusively) — the Test buttons report "connected" for
+    // those instead of probing into our own lock.
     SetupDialog(const QString& liveRadioDev, const QString& liveKeyerDev,
-                bool radioConnected, QWidget* parent = nullptr);
+                const QString& liveMeterDev, bool radioConnected,
+                QWidget* parent = nullptr);
 
     void accept() override;              // persist everything, stamp done
 
@@ -32,6 +33,7 @@ private:
     void refreshPorts();
     void testRadio();
     void testKeyer();
+    void testMeter();
     // Swap the device field between the per-radio profiles (Orion serial,
     // Omni serial, Omni udp:). Stashes the outgoing field text so flipping
     // back and forth never loses another radio's device.
@@ -53,7 +55,11 @@ private:
     QLineEdit* spotLogin_ = nullptr;
     QCheckBox* rotorOn_ = nullptr;
     QSpinBox*  rotorPort_ = nullptr;
-    QString    liveRadioDev_, liveKeyerDev_;
+    QCheckBox* lpOn_   = nullptr;        // TelePost LP-100A present at all
+    QComboBox* lpDev_  = nullptr;
+    QComboBox* lpSwr_  = nullptr;        // which SWR the sweep believes
+    QLabel*    lpTest_ = nullptr;
+    QString    liveRadioDev_, liveKeyerDev_, liveMeterDev_;
     QString    devSerial_, devRemote_;   // Omni VII serial / Ethernet profiles
     QString    devOrion_;                // Orion serial profile
     QString    connMode_;                // the Omni's serial/remote choice

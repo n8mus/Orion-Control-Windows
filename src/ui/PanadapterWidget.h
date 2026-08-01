@@ -107,8 +107,17 @@ public:
     // for before/after antenna comparisons. Points are absolute Hz so the
     // curves stay glued through zoom, shift and CTUN like the spots do.
     struct SwrRun {
+        // One measured stop. R/X are filled only by runs taken with an
+        // external vector wattmeter (LP-100A); a run read from the radio's
+        // own metering has SWR alone and leaves zValid false.
+        struct Pt {
+            qint64 hz  = 0;                         // absolute Hz
+            double swr = 1.0;
+            double rOhm = 0.0, xOhm = 0.0;
+            bool   zValid = false;
+        };
         qint64 ts = 0;                              // secs since epoch
-        QVector<QPair<qint64, double>> pts;         // absolute Hz -> SWR
+        QVector<Pt> pts;
     };
     void setSwrRuns(const QVector<SwrRun>& runs);
     void setShowSwr(bool on);

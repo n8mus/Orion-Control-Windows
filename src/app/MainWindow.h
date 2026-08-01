@@ -14,6 +14,7 @@ class QUdpSocket;
 class QAction;
 class QHBoxLayout;
 #include "radio/TenTecOrion.h"
+#include "radio/LpMeter.h"
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
 #include "net/PotaClient.h"
@@ -182,10 +183,12 @@ private:
     int      swrStepCount_ = 0;
     uint64_t swrPrevDial_ = 0;
     qint64   swrStepArmedMs_ = 0;              // accept samples after this
-    QVector<QPair<qint64, double>> swrPts_;    // this sweep's points
+    QVector<PanadapterWidget::SwrRun::Pt> swrPts_;   // this sweep's points
     double   lastSwr_ = 0.0;                   // newest @STF SWR reading
     qint64   lastSwrMs_ = 0;
     bool     swrQuietTune_ = false;            // sweep tunes bypass plan-mode
+    bool     swrUsedMeter_ = false;            // this run read the LP-100A
+    ttc::LpMeter::Mode swrPrevMeterMode_ = ttc::LpMeter::Mode::Unknown;
     QHash<QString, QVector<PanadapterWidget::SwrRun>> swrRuns_;  // band label ->
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
@@ -324,6 +327,12 @@ private:
     std::atomic<bool> txMonEnabled_{true}; // checkbox mirror (SDR thread reads)
     std::atomic<qint64> txCtxMs_{0};       // last TX-context ms (SDR thread reads)
     QString  radioDevUsed_;                // serial path this instance opened
+    // External RF wattmeter, null unless lp100a/enabled and its port opened.
+    LpMeter* lpMeter_ = nullptr;
+    QString  meterDevUsed_;
+    // True when the sweep should believe the meter: enabled, configured as
+    // the source, and actually answering right now.
+    bool     meterSwrReady() const;
     bool     radioUp_ = false;             // ...and whether the open succeeded
     int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns
     unsigned lastOverloads_ = 0;

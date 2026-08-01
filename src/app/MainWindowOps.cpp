@@ -145,8 +145,9 @@ void MainWindow::stopManualTune() {
 }
 
 // ---- SWR sweep (right-click TUNE) -----------------------------------------
-// Steps the visible span at the TUNE watts, reading the radio's own @STF
-// SWR at each stop, and paints the curve on the pan (bright = newest run,
+// Steps the visible span at the TUNE watts, reading SWR at each stop from
+// the external LP-100A wattmeter when the operator has one, otherwise from
+// the radio's own @STF, and paints the curve on the pan (bright = newest run,
 // one older run kept dim for antenna before/after). Operator-attended by
 // design: started only from the TUNE context menu, refuses with the AMP
 // enabled or on 60 m (channelized — no TX between channels), aborts on any
@@ -156,6 +157,14 @@ void MainWindow::stopManualTune() {
 // is held on the swept range with the same frame the band overview uses.
 
 static constexpr int kSwrSteps = 48;
+
+// The external meter is believed only when it is enabled, chosen as the
+// source, AND answering right now. Everything else falls through to @STF,
+// which is what a station without an LP-100A always gets.
+bool MainWindow::meterSwrReady() const {
+    return lpMeter_ && lpMeter_->isAlive()
+           && QSettings().value("swr/source", "meter").toString() != "radio";
+}
 
 void MainWindow::showSwrMenu(const QPoint& globalPos) {
     auto* m = new QMenu(this);
@@ -226,6 +235,20 @@ void MainWindow::startSwrSweep() {
     swrStepTuned_ = false;
     swrStepCount_ = kSwrSteps;
     lastSwrMs_ = 0;
+    swrUsedMeter_ = meterSwrReady();
+    // Tune, per the LP-100A manual: "for amplifier tuning, you should
+    // switch to Tune mode for fast update of both bargraph and numerical
+    // readout" — a swept measurement wants exactly that. Peak Hold is the
+    // mode that would certainly ruin a sweep (it holds for 0.25-5 s, so
+    // every stop inherits the worst of the stops before it and the curve
+    // only ever climbs); Average smooths over 2-24 samples, which smears
+    // across dial steps. Restored in stopSwrSweep().
+    if (swrUsedMeter_) {
+        swrPrevMeterMode_ = lpMeter_->mode();
+        lpMeter_->seekMode(ttc::LpMeter::Mode::Tune);
+    } else {
+        swrPrevMeterMode_ = ttc::LpMeter::Mode::Unknown;
+    }
     startManualTune();
     if (!tuning_) return;                          // carrier did not start
     tuneTimeout_->stop();                          // sweep failsafe: 75 s
@@ -239,9 +262,11 @@ void MainWindow::startSwrSweep() {
     swrSweeping_ = true;
     swrTick_->start();
     statusBar()->showMessage(
-        QString("SWR sweep: %1-%2 MHz, %3 steps at %4 W — any click aborts")
+        QString("SWR sweep: %1-%2 MHz, %3 steps at %4 W, reading %5 "
+                "— any click aborts")
             .arg(swrF0_ / 1e6, 0, 'f', 3).arg(swrF1_ / 1e6, 0, 'f', 3)
-            .arg(swrStepCount_).arg(txBar_->tuneLevel()));
+            .arg(swrStepCount_).arg(txBar_->tuneLevel())
+            .arg(swrUsedMeter_ ? "the LP-100A" : "the radio"));
 }
 
 void MainWindow::swrTickStep() {
@@ -261,10 +286,32 @@ void MainWindow::swrTickStep() {
         swrStepTuned_ = true;
         return;
     }
-    const bool fresh = lastSwrMs_ > swrStepArmedMs_;
+    // Prefer the meter, but only per-step: if it dies halfway through a
+    // sweep the remaining stops silently come from @STF rather than
+    // stalling out. A point is taken only from a reading that postdates
+    // this step's dial move, so we never record the previous frequency.
+    PanadapterWidget::SwrRun::Pt pt;
+    pt.hz = qint64(stepF);
+    bool fresh = false;
+    if (swrUsedMeter_ && lpMeter_ && lpMeter_->isAlive()) {
+        const ttc::LpMeter::Reading& r = lpMeter_->last();
+        // zValid means the meter actually saw the carrier; without it the
+        // impedance fields are idle noise and the SWR is meaningless too.
+        if (r.tsMs > swrStepArmedMs_ && r.zValid) {
+            pt.swr    = r.swr;
+            pt.rOhm   = r.rOhm;
+            pt.xOhm   = r.xOhm;
+            pt.zValid = true;
+            fresh     = true;
+        }
+    }
+    if (!fresh && lastSwrMs_ > swrStepArmedMs_) {         // radio's own @STF
+        pt.swr = lastSwr_;
+        fresh  = true;
+    }
     if (!fresh && now < swrStepArmedMs_ + 1500) return;   // wait for a reading
     if (fresh)
-        swrPts_.append({qint64(stepF), lastSwr_});
+        swrPts_.append(pt);
     swrStepIdx_++;
     swrStepTuned_ = false;
     if (swrStepIdx_ >= swrStepCount_)
@@ -276,6 +323,10 @@ void MainWindow::stopSwrSweep(bool completed) {
     swrSweeping_ = false;
     if (swrTick_) swrTick_->stop();
     stopManualTune();                              // unkey, restore mode+power
+    // Put the operator's meter back the way he left it, including on abort.
+    if (swrUsedMeter_ && lpMeter_
+        && swrPrevMeterMode_ != ttc::LpMeter::Mode::Unknown)
+        lpMeter_->seekMode(swrPrevMeterMode_);
     tuneTimeout_->setInterval(15000);              // plain TUNE failsafe back
     swrQuietTune_ = true;                          // restore tune keeps the
     tuneAbsolute(swrPrevDial_);                    // operator's restored mode
@@ -294,11 +345,26 @@ void MainWindow::stopSwrSweep(bool completed) {
         double minS = 99.0;
         qint64 minF = 0;
         for (const auto& p : run.pts)
-            if (p.second < minS) { minS = p.second; minF = p.first; }
-        statusBar()->showMessage(
-            QString("SWR sweep done: best %1 at %2 MHz (%3 points)")
-                .arg(minS, 0, 'f', 2).arg(minF / 1e6, 0, 'f', 3)
-                .arg(swrPts_.size()), 15000);
+            if (p.swr < minS) { minS = p.swr; minF = p.hz; }
+        QString msg = QString("SWR sweep done: best %1 at %2 MHz (%3 points)")
+                          .arg(minS, 0, 'f', 2).arg(minF / 1e6, 0, 'f', 3)
+                          .arg(swrPts_.size());
+        // With a vector meter we also know where the reactance changes sign
+        // — the true resonance, which is NOT always the SWR minimum and is
+        // the number you actually want when cutting an antenna. Reported by
+        // linear interpolation between the two stops that straddle X = 0.
+        for (int i = 1; i < run.pts.size(); ++i) {
+            const auto &a = run.pts[i - 1], &b = run.pts[i];
+            if (!a.zValid || !b.zValid) continue;
+            if ((a.xOhm <= 0.0) == (b.xOhm <= 0.0)) continue;
+            const double t = a.xOhm / (a.xOhm - b.xOhm);   // denominator != 0
+            const double fRes = a.hz + t * double(b.hz - a.hz);
+            msg += QString("; X=0 at %1 MHz, R≈%2 Ω")
+                       .arg(fRes / 1e6, 0, 'f', 3)
+                       .arg(a.rOhm + t * (b.rOhm - a.rOhm), 0, 'f', 1);
+            break;
+        }
+        statusBar()->showMessage(msg, 15000);
     } else {
         statusBar()->showMessage(
             "SWR sweep stopped — carrier off, dial and settings restored",
@@ -320,8 +386,15 @@ void MainWindow::saveSwrRuns() const {
         QJsonArray runs;
         for (const auto& run : it.value()) {
             QJsonArray pts;
-            for (const auto& p : run.pts)
-                pts.append(QJsonArray{double(p.first), p.second});
+            // [Hz, SWR] as always, extended to [Hz, SWR, R, X] for points
+            // measured with a vector meter. Old files (2-element points)
+            // still load; old builds reading a new file take the first two
+            // and ignore the rest, so the format degrades both ways.
+            for (const auto& p : run.pts) {
+                QJsonArray pa{double(p.hz), p.swr};
+                if (p.zValid) { pa.append(p.rOhm); pa.append(p.xOhm); }
+                pts.append(pa);
+            }
             runs.append(QJsonObject{{"ts", double(run.ts)}, {"pts", pts}});
         }
         root[it.key()] = runs;
@@ -347,8 +420,15 @@ void MainWindow::loadSwrRuns() {
             run.ts = qint64(ro.value("ts").toDouble());
             for (const QJsonValue& pv : ro.value("pts").toArray()) {
                 const QJsonArray pa = pv.toArray();
-                run.pts.append({qint64(pa.at(0).toDouble()),
-                                pa.at(1).toDouble()});
+                PanadapterWidget::SwrRun::Pt pt;
+                pt.hz  = qint64(pa.at(0).toDouble());
+                pt.swr = pa.at(1).toDouble();
+                if (pa.size() >= 4) {          // vector-meter run
+                    pt.rOhm   = pa.at(2).toDouble();
+                    pt.xOhm   = pa.at(3).toDouble();
+                    pt.zValid = true;
+                }
+                run.pts.append(pt);
             }
             if (run.pts.size() >= 2) list.append(run);
         }

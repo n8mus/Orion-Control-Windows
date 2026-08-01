@@ -35,6 +35,7 @@ add_executable(tentec-console
   src/app/Bands.h
   src/radio/RadioController.h
   src/radio/SerialPort.cpp      src/radio/SerialPort.h
+  src/radio/LpMeter.cpp         src/radio/LpMeter.h
   src/radio/TenTecOrion.cpp     src/radio/TenTecOrion.h
   src/radio/TenTecOmni7.cpp     src/radio/TenTecOmni7.h
   src/radio/RipAudio.cpp        src/radio/RipAudio.h
@@ -96,6 +97,13 @@ add_executable(rotortest EXCLUDE_FROM_ALL
   src/net/RotorClient.cpp)
 target_include_directories(rotortest PRIVATE src)
 target_link_libraries(rotortest PRIVATE Qt6::Core Qt6::Network)
+
+# LP-100A wattmeter frame decode. Pure parser test — needs no hardware.
+add_executable(lptest EXCLUDE_FROM_ALL
+  tests/lptest.cpp
+  src/radio/LpMeter.cpp src/radio/SerialPort.cpp)
+target_include_directories(lptest PRIVATE src)
+target_link_libraries(lptest PRIVATE Qt6::Core)
 
 add_executable(skimsrvtest EXCLUDE_FROM_ALL
   tests/skimsrvtest.cpp
