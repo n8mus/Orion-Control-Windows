@@ -115,6 +115,16 @@ jobs:
             --exclude-library 'libssl*' \
             --exclude-library 'libcrypto*' \
             --output appimage
+          # --exclude-library does not reach libraries the qt plugin deploys
+          # on its own (libcrypto rode in with the tls plugin's deps and the
+          # published image still failed — live-found). Strip the OpenSSL
+          # pair from the AppDir and repack: hosts load their own matched
+          # pair, and 3.x hosts satisfy any bundled lib's 3.0 symbols.
+          rm -f AppDir/usr/lib/libssl.so* AppDir/usr/lib/libcrypto.so*
+          curl -fSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          rm -f "$OUTPUT"
+          ARCH=x86_64 ./appimagetool AppDir "$OUTPUT"
           ls -lh *.AppImage
 
       - name: Publish release
