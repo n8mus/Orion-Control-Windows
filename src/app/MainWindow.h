@@ -188,7 +188,6 @@ private:
     qint64   lastSwrMs_ = 0;
     bool     swrQuietTune_ = false;            // sweep tunes bypass plan-mode
     bool     swrUsedMeter_ = false;            // this run read the LP-100A
-    ttc::LpMeter::Mode swrPrevMeterMode_ = ttc::LpMeter::Mode::Unknown;
     QHash<QString, QVector<PanadapterWidget::SwrRun>> swrRuns_;  // band label ->
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy

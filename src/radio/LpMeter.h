@@ -109,6 +109,13 @@ public:
     // modeSeekFailed() if it will not land (meter unplugged mid-seek, or a
     // firmware that ignores 'F') so the caller can ask the operator to turn
     // the knob. Mode::Unknown cancels an in-flight seek.
+    //
+    // Currently UNUSED by choice: the console never changes the operator's
+    // meter mode (his call, 2026-08-01, after a display-page incident — and
+    // TelePost's own Plot program doesn't either). Kept because it is
+    // bench-verified and is the correct tool if that decision is ever
+    // revisited with evidence, e.g. a sweep taken in Peak Hold coming out
+    // visibly smeared.
     void seekMode(Mode target);
     Mode mode() const { return last_.mode; }
 

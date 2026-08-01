@@ -15,7 +15,6 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QMenu>
-#include <QMessageBox>
 #include <QActionGroup>
 #include <QWidgetAction>
 #include <QDateTime>
@@ -3018,24 +3017,10 @@ MainWindow::MainWindow(QWidget* parent)
                     up ? "connected" : "went quiet",
                     meterDevUsed_.toLocal8Bit().constData());
         });
-        // The mode seek only runs for a sweep, so a failure here means the
-        // sweep is about to read whatever the meter is stuck on — and if
-        // that is Peak Hold the curve is worthless. We cannot turn the knob
-        // ourselves, so ask.
-        connect(lpMeter_, &ttc::LpMeter::modeSeekFailed, this,
-                [this](ttc::LpMeter::Mode want) {
-                    const QString m = want == ttc::LpMeter::Mode::Tune ? "TUNE"
-                                    : want == ttc::LpMeter::Mode::Average ? "AVG"
-                                                                          : "PEAK";
-                    QMessageBox::warning(
-                        this, "LP-100A",
-                        QString("The wattmeter would not switch to %1 — it is "
-                                "not responding to the mode command.\n\n"
-                                "Set it with the meter's own front panel. If it "
-                                "is left in PEAK HOLD, every sweep stop inherits "
-                                "the worst reading before it and the curve will "
-                                "only climb.").arg(m));
-                });
+        // Note: the console never changes the meter's mode or display —
+        // operator's decision, matching TelePost's own Plot program, which
+        // reads the meter as it finds it. LpMeter::seekMode() exists and is
+        // verified if that ever changes.
         if (!lpMeter_->start(meterDevUsed_)) {
             lpMeter_->deleteLater();
             lpMeter_ = nullptr;
