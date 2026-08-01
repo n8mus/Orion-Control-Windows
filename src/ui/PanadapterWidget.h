@@ -5,6 +5,7 @@
 #include <QStringList>
 #include <QVector>
 #include <QRect>
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <cstdlib>
@@ -123,7 +124,12 @@ public:
     // fullSpan - 2*|dialOffset|; in CTUN it tracks the held view instead
     // of shrinking as the dial tunes away from the LO.
     int  maxViewSpanHz() const {
-        return fullSpanHz_ - 2 * std::abs(dialOffsetHz_ - viewShiftHz_);
+        // Floored at the min span: mid-retune the OLD shift can sit against
+        // the NEW dial offset, and that transient geometry can push this
+        // negative — handing std::clamp a hi below its lo (UB; live it
+        // collapsed the band-overview to a sliver on a cross-band click).
+        return std::max(minViewSpanHz(),
+                        fullSpanHz_ - 2 * std::abs(dialOffsetHz_ - viewShiftHz_));
     }
     int  minViewSpanHz() const;
     void setPassband(int loHz, int hiHz);          // offsets from center, in Hz

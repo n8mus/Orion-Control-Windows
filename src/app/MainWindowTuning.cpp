@@ -316,11 +316,23 @@ void MainWindow::retuneSdrFor(uint64_t dial, uint64_t prevDial) {
         // Band overview holds the frame while the dial stays inside it
         // (wheel steps, register cycling — the marker walks the band).
         // Tuning out of the frame falls through to the classic recenter.
+        if (qEnvironmentVariableIsSet("TTC_TRACE"))
+            fprintf(stderr, "[view] retune FRAME dial=%llu frameC=%llu\n",
+                    (unsigned long long)dial,
+                    (unsigned long long)frameCenterHz_);
         const int64_t d = int64_t(dial);
         if (d >= int64_t(frameCenterHz_) - frameSpanHz_ / 2 - 20000
             && d <= int64_t(frameCenterHz_) + frameSpanHz_ / 2 + 20000) {
             setLoOff(int(int64_t(sdrLoHz_) - d));
             pan_->setViewShiftHz(int(int64_t(frameCenterHz_) - d));
+            // setLoOff's span clamp ran against the OLD shift: a big
+            // in-band jump (register cycling, click across the band) makes
+            // that transient geometry illegal and silently squeezes the
+            // span — a full-frame downward click collapsed it outright.
+            // Same cure applyFrame documents: with the shift now correct,
+            // re-assert the frame span (always legal — LO - frameCenter is
+            // the constant span/2 + guard regardless of the dial).
+            pan_->setViewSpanHz(frameSpanHz_);
             return;
         }
         exitBandFrame(0);          // classic recenter follows below
@@ -418,6 +430,9 @@ void MainWindow::applyFrame(int64_t centerAbsHz, int spanHz) {
 }
 
 void MainWindow::exitBandFrame(int reapplySpanHz) {
+    if (qEnvironmentVariableIsSet("TTC_TRACE"))
+        fprintf(stderr, "[view] exitFrame reapply=%d frameC=%llu\n",
+                reapplySpanHz, (unsigned long long)frameCenterHz_);
     if (frameCenterHz_ == 0) return;
     frameCenterHz_ = 0;
     frameSpanHz_ = 0;

@@ -408,7 +408,16 @@ MainWindow::MainWindow(QWidget* parent)
         return std::clamp(static_cast<int>(std::lround(f * 100.0)), 0, 100);
     };
     connect(zoom, &QSlider::valueChanged, this, [this, spanFromSlider](int v) {
-        pan_->setViewSpanHz(spanFromSlider(v));
+        const int spanHz = spanFromSlider(v);
+        // The slider is manual zoom too: exit the band overview exactly
+        // like Ctrl+wheel does, or the frame's parked LO squeezes the
+        // request and the next wheel step yanks the view back onto the
+        // frame (the "deliberate way out" must not depend on which zoom
+        // control the operator reached for).
+        if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
+            exitBandFrame(spanHz);
+        else
+            pan_->setViewSpanHz(spanHz);
         statusBar()->showMessage(
             QString("zoom -> span %1 kHz").arg(pan_->viewSpanHz() / 1000.0, 0, 'f', 1));
     });
@@ -1574,6 +1583,9 @@ MainWindow::MainWindow(QWidget* parent)
         // Manual zoom while the band overview is up = the deliberate way
         // out: drop the frame and land at the chosen span, classic LO
         // (exitBandFrame re-applies the span after normalizing).
+        if (qEnvironmentVariableIsSet("TTC_TRACE"))
+            fprintf(stderr, "[view] spanChanged %d frameC=%llu frameSpan=%d\n",
+                    spanHz, (unsigned long long)frameCenterHz_, frameSpanHz_);
         if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
             exitBandFrame(spanHz);
     });
