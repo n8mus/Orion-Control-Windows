@@ -32,6 +32,7 @@ struct DisplaySettings {
     bool  showCall   = true;    // subtle callsign watermark in the spectrum
     bool  showSolar  = true;    // space-weather panel in the spectrum corner
     bool  showRose   = true;    // compass rose (azimuthal world + bearing)
+    int   roseR      = 96;      // rose disc radius, px (was fixed at 64)
     bool  showBandPlan = true;  // US band-plan tints in the freq-scale strip
     bool  showPrivileges = true;// license-class (E/A/G/T) edge guides in the map
     int   traceColor = 0;       // 0 soft, 1 white, 2 green, 3 yellow, 4 cyan
@@ -327,7 +328,6 @@ private:
     // clicking inside the rose sets a manual heading, right-click clears.
     void drawCompassRose(QPainter& p, int hSpec);
     bool overRose(int x, int y) const;             // inside the disc?
-    static constexpr int kRoseR = 64;
     double  qthLat_ = 42.5, qthLon_ = -83.0;       // EN82 until the grid is set
     double  roseBearing_ = -1.0;                   // pointer heading (-1 = none)
     double  roseDistKm_  = -1.0;

@@ -48,6 +48,8 @@ private:
     QLabel*    mapDayVal_ = nullptr;
     QSlider*   mapNight_ = nullptr;   // map night-side brightness
     QLabel*    mapNightVal_ = nullptr;
+    QSlider*   roseR_    = nullptr;   // compass-rose disc radius, px
+    QLabel*    roseRVal_ = nullptr;
     int        prevBg_ = 0;           // restore target if Custom… is canceled
     QCheckBox* fill_   = nullptr;
     QCheckBox* peak_   = nullptr;

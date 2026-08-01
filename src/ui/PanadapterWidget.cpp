@@ -452,14 +452,14 @@ void PanadapterWidget::setRotorAz(double azDeg) {
 bool PanadapterWidget::overRose(int x, int y) const {
     if (!ds_.showRose) return false;
     const int hSpec = spectrumHeight();
-    if (hSpec < 2 * kRoseR + 30) return false;
-    const int cx = 10 + kRoseR, cy = hSpec - kRoseR - 10;
-    return std::hypot(double(x - cx), double(y - cy)) <= kRoseR;
+    if (hSpec < 2 * ds_.roseR + 30) return false;
+    const int cx = 10 + ds_.roseR, cy = hSpec - ds_.roseR - 10;
+    return std::hypot(double(x - cx), double(y - cy)) <= ds_.roseR;
 }
 
 void PanadapterWidget::drawCompassRose(QPainter& p, int hSpec) {
-    if (!ds_.showRose || hSpec < 2 * kRoseR + 30) return;
-    const int R = kRoseR;
+    if (!ds_.showRose || hSpec < 2 * ds_.roseR + 30) return;
+    const int R = ds_.roseR;
     const int cx = 10 + R, cy = hSpec - R - 10;
     const qint64 minute = QDateTime::currentSecsSinceEpoch() / 60;
     const QString key = QString("%1|%2|%3").arg(R).arg(qthLat_).arg(qthLon_);
@@ -1622,7 +1622,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     if (overRose(x, y)) {
         drag_ = Drag::None;
         const int hSpec = spectrumHeight();
-        const int cx = 10 + kRoseR, cy = hSpec - kRoseR - 10;
+        const int cx = 10 + ds_.roseR, cy = hSpec - ds_.roseR - 10;
         roseBearing_ = std::atan2(double(x - cx), double(cy - y)) * 180.0 / M_PI;
         if (roseBearing_ < 0.0) roseBearing_ += 360.0;
         roseDistKm_ = -1.0;

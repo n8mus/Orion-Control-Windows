@@ -458,6 +458,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/callsign",   d.showCall);
         s.setValue("display/solar",      d.showSolar);
         s.setValue("display/rose",       d.showRose);
+        s.setValue("display/roseR",      d.roseR);
         s.setValue("display/bandplan",   d.showBandPlan);
         s.setValue("display/privileges", d.showPrivileges);
         s.setValue("display/trace",      d.traceColor);
@@ -531,6 +532,8 @@ MainWindow::MainWindow(QWidget* parent)
         d.showCall   = s.value("display/callsign",   d.showCall).toBool();
         d.showSolar  = s.value("display/solar",      d.showSolar).toBool();
         d.showRose   = s.value("display/rose",       d.showRose).toBool();
+        d.roseR      = std::clamp(
+            s.value("display/roseR", d.roseR).toInt(), 64, 160);
         d.showBandPlan = s.value("display/bandplan", d.showBandPlan).toBool();
         d.showPrivileges = s.value("display/privileges", d.showPrivileges).toBool();
         d.traceColor = s.value("display/trace",      d.traceColor).toInt();

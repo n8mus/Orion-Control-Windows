@@ -158,6 +158,18 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     g->addWidget(mapNight_, 8, 1);
     g->addWidget(mapNightVal_, 8, 2);
 
+    g->addWidget(makeCaption("ROSE SIZE", this), 9, 0);
+    roseR_ = new QSlider(Qt::Horizontal, this);
+    roseR_->setRange(64, 160);
+    roseR_->setFixedWidth(225);
+    roseR_->setToolTip("Compass-rose disc radius. Sized up it is a full\n"
+                       "azimuthal beam-heading map (needs spectrum height —\n"
+                       "the rose hides when the waterfall is very tall).");
+    roseRVal_ = new QLabel(this);
+    roseRVal_->setFixedWidth(70);
+    g->addWidget(roseR_, 9, 1);
+    g->addWidget(roseRVal_, 9, 2);
+
     fill_ = new QCheckBox("Fill spectrum", this);
     peak_ = new QCheckBox("Peak hold", this);
     grid_ = new QCheckBox("Grid lines", this);
@@ -197,38 +209,39 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
         "X key: CW⇄CWR flip — if the note's pitch doesn't change,\n"
         "you are perfectly zero-beat (by ear, no spectrum needed).");
     call_ = new QCheckBox("Callsign watermark", this);
-    g->addWidget(fill_, 9, 0, 1, 3);
-    g->addWidget(peak_, 10, 0, 1, 3);
-    g->addWidget(grid_, 11, 0, 1, 3);
-    g->addWidget(solar_, 12, 0, 1, 3);
-    g->addWidget(rose_, 13, 0, 1, 3);
-    g->addWidget(plan_, 14, 0, 1, 3);
-    g->addWidget(priv_, 15, 0, 1, 3);
-    g->addWidget(bigVfo_, 16, 0, 1, 3);
-    g->addWidget(clock_, 17, 0, 1, 3);
-    g->addWidget(wfTime_, 18, 0, 1, 3);
-    g->addWidget(cursor_, 19, 0, 1, 3);
-    g->addWidget(zap_, 20, 0, 1, 3);
-    g->addWidget(call_, 21, 0, 1, 3);
+    g->addWidget(fill_, 10, 0, 1, 3);
+    g->addWidget(peak_, 11, 0, 1, 3);
+    g->addWidget(grid_, 12, 0, 1, 3);
+    g->addWidget(solar_, 13, 0, 1, 3);
+    g->addWidget(rose_, 14, 0, 1, 3);
+    g->addWidget(plan_, 15, 0, 1, 3);
+    g->addWidget(priv_, 16, 0, 1, 3);
+    g->addWidget(bigVfo_, 17, 0, 1, 3);
+    g->addWidget(clock_, 18, 0, 1, 3);
+    g->addWidget(wfTime_, 19, 0, 1, 3);
+    g->addWidget(cursor_, 20, 0, 1, 3);
+    g->addWidget(zap_, 21, 0, 1, 3);
+    g->addWidget(call_, 22, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 22, 0);
+    g->addWidget(makeCaption("CALL", this), 23, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 22, 1, 1, 2);
+    g->addWidget(callEdit_, 23, 1, 1, 2);
 
     // Station grid square: centers the compass rose (and any future
     // bearing/distance math). 4 or 6 characters.
-    g->addWidget(makeCaption("GRID", this), 23, 0);
+    g->addWidget(makeCaption("GRID", this), 24, 0);
     gridEdit_ = new QLineEdit(this);
     gridEdit_->setMaxLength(6);
     gridEdit_->setToolTip("Your Maidenhead grid square (4 or 6 chars), e.g. EN82fq");
-    g->addWidget(gridEdit_, 23, 1, 1, 2);
+    g->addWidget(gridEdit_, 24, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
         rangeVal_->setText(QString("%1 dB").arg(range_->value()));
         mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));
         mapNightVal_->setText(QString("%1 %").arg(mapNight_->value()));
+        roseRVal_->setText(QString("%1 px").arg(roseR_->value()));
         const int bg = bg_->currentIndex();
         const bool isMap = bg >= 2 && bg <= 5;
         mapDay_->setEnabled(isMap || bg == 6);     // ship art: Day = brightness
@@ -248,6 +261,10 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
         emitChanged();
     });
     connect(mapNight_, &QSlider::valueChanged, this, [this, updateLabels] {
+        updateLabels();
+        emitChanged();
+    });
+    connect(roseR_, &QSlider::valueChanged, this, [this, updateLabels] {
         updateLabels();
         emitChanged();
     });
@@ -347,6 +364,7 @@ DisplaySettings DisplayPanel::settings() const {
     s.showCall   = call_->isChecked();
     s.showSolar  = solar_->isChecked();
     s.showRose   = rose_->isChecked();
+    s.roseR      = roseR_->value();
     s.showBandPlan = plan_->isChecked();
     s.showPrivileges = priv_->isChecked();
     s.traceColor = trace_->currentIndex();
@@ -367,7 +385,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
         b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_),
         b11(mapDay_), b12(mapNight_), b13(solar_), b14(rose_),
         b15(plan_), b16(bigVfo_), b17(trace_), b18(clock_), b19(zap_),
-        b20(wfTime_), b21(cursor_), b22(priv_);
+        b20(wfTime_), b21(cursor_), b22(priv_), b23(roseR_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -386,6 +404,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     call_->setChecked(s.showCall);
     solar_->setChecked(s.showSolar);
     rose_->setChecked(s.showRose);
+    roseR_->setValue(std::clamp(s.roseR, roseR_->minimum(), roseR_->maximum()));
     plan_->setChecked(s.showBandPlan);
     priv_->setChecked(s.showPrivileges);
     bigVfo_->setChecked(s.bigVfo);
