@@ -87,7 +87,12 @@ jobs:
                    AppDir/usr/share/tentec-console
           cp build/tentec-console AppDir/usr/bin/
           cp /tmp/voa/bin/voacapl AppDir/usr/bin/
-          cp -r /tmp/voahome/itshfbc AppDir/usr/share/tentec-console/itshfbc
+          # -L matters: makeitshfbc SYMLINKS the ionosphere coefficient
+          # files back to the install prefix; carried as links they die
+          # with the build machine (live-found: the bundled tree had 1 of
+          # 45 coeffs files and the engine crashed). Dereference so the
+          # bundle is self-contained.
+          cp -rL /tmp/voahome/itshfbc AppDir/usr/share/tentec-console/itshfbc
           cp packaging/tentec-console.desktop AppDir/usr/share/applications/
           cp resources/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/tentec-console.png
 
