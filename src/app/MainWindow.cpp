@@ -97,13 +97,15 @@ static RadioController* makeRadio(QObject* parent) {
     return new TenTecOrion(parent);      // "orion" and "orion2" alike
 }
 
-// Fleet registry, operator's christening (2026-07-16, refit 2026-07-17):
-// the NCC hull numbers are the radios' real Ten-Tec model numbers.
+// Window title, operator's re-christening 2026-08-02 (the fleet names
+// with their NCC hull numbers — the radios' real Ten-Tec model numbers —
+// served 2026-07-16 to 2026-08-02; the ship theme lives on in the
+// backdrop gallery).
 static QString shipName() {
     const QString model = radioModelChoice();
-    if (model == "omni8" || model == "omni7") return "USS Omni VII NCC-588";
-    if (model == "orion2")                    return "USS Orion II NCC-566";
-    return "USS Orion NCC-565";
+    if (model == "omni8" || model == "omni7") return "Omni VII Control";
+    if (model == "orion2")                    return "Orion II Control";
+    return "Orion Control";
 }
 
 MainWindow::MainWindow(QWidget* parent)

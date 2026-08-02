@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
     if (!std::getenv("TTC_SELFTEST") && !lock.isLocked() && !lock.tryLock(100)) {
         fprintf(stderr, "REFUSED: another console instance is running "
                         "(one per station — serial + SDR are exclusive)\n");
-        QMessageBox::critical(nullptr, "USS Orion console",
+        QMessageBox::critical(nullptr, "Orion console",
             "Another console instance is already running.\n\n"
             "One instance per station — the radio's serial port and the "
             "SDR are exclusive. Find the other window (or close it) and "
@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
     signal(SIGSEGV, fatalSignal);
     signal(SIGABRT, fatalSignal);
     signal(SIGFPE, fatalSignal);
-    fprintf(stderr, "USS Orion console starting  %s  (built %s %s)\n",
+    fprintf(stderr, "Orion console starting  %s  (built %s %s)\n",
             qPrintable(QDateTime::currentDateTime().toString(Qt::ISODate)),
             __DATE__, __TIME__);
 
