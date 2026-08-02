@@ -318,14 +318,22 @@ void MainWindow::swrTickStep() {
         swrStepTuned_ = true;
         return;
     }
-    // Prefer the meter, but only per-step: if it dies halfway through a
-    // sweep the remaining stops silently come from @STF rather than
-    // stalling out. A point is taken only from a reading that postdates
-    // this step's dial move, so we never record the previous frequency.
+    // A point is taken only from a reading that postdates this step's dial
+    // move, so we never record the previous frequency. One rule keeps the
+    // curve honest: NEVER mix rulers inside a run. The meter and the
+    // radio's @STF disagree systematically (different calibrations), and a
+    // single borrowed @STF value splices a visible kink into an otherwise
+    // clean meter curve — seen live. So: while the meter is delivering,
+    // a step that misses its reading is SKIPPED (the curve bridges one
+    // step, invisibly) rather than patched from the radio. The radio still
+    // provides the WHOLE curve when the meter sees no RF at all (coupler
+    // in the other rig's line — swrMeterPts_ == 0 keeps that path open)
+    // or was never selected.
     PanadapterWidget::SwrRun::Pt pt;
     pt.hz = qint64(stepF);
     bool fresh = false;
-    if (swrUsedMeter_ && txMeter_ && txMeter_->isAlive()) {
+    const bool meterLive = swrUsedMeter_ && txMeter_ && txMeter_->isAlive();
+    if (meterLive) {
         const ttc::TxMeter::Reading& r = txMeter_->last();
         // valid means the meter actually saw the carrier; without it the
         // fields are idle noise. R/X are recorded only from a vector meter
@@ -342,13 +350,14 @@ void MainWindow::swrTickStep() {
             swrMeterPts_++;
         }
     }
-    if (!fresh && lastSwrMs_ > swrStepArmedMs_) {         // radio's own @STF
+    if (!fresh && (!meterLive || swrMeterPts_ == 0)
+        && lastSwrMs_ > swrStepArmedMs_) {                // radio's own @STF
         pt.swr = lastSwr_;
         fresh  = true;
     }
     if (!fresh && now < swrStepArmedMs_ + 1500) return;   // wait for a reading
     if (fresh)
-        swrPts_.append(pt);
+        swrPts_.append(pt);                               // timeout: skip point
     swrStepIdx_++;
     swrStepTuned_ = false;
     if (swrStepIdx_ >= swrStepCount_)

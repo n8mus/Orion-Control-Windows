@@ -1513,6 +1513,29 @@ void PanadapterWidget::drawSwr(QPainter& p, int hSpec) {
         p.drawText(QRectF(width() - 46, y - 8, 34, 15),
                    Qt::AlignRight | Qt::AlignVCenter, QString::number(s, 'g', 2));
     }
+    // Catmull-Rom through the sample points (the vendor's own Plot program
+    // offers the same "Spline" draw): the DATA stays the raw 48 stops, only
+    // the ink between them flows. Facets at whole-band widths (~38 px per
+    // step) read as "skipping"; the spline reads as an antenna.
+    const auto smooth = [](const QPolygonF& pts) {
+        QPainterPath path;
+        if (pts.size() < 3) {
+            if (!pts.isEmpty()) {
+                path.moveTo(pts.first());
+                for (const QPointF& q : pts) path.lineTo(q);
+            }
+            return path;
+        }
+        path.moveTo(pts.first());
+        for (int i = 0; i + 1 < pts.size(); ++i) {
+            const QPointF p0 = pts[std::max(0, i - 1)];
+            const QPointF p1 = pts[i];
+            const QPointF p2 = pts[i + 1];
+            const QPointF p3 = pts[std::min(int(pts.size()) - 1, i + 2)];
+            path.cubicTo(p1 + (p2 - p0) / 6.0, p2 - (p3 - p1) / 6.0, p2);
+        }
+        return path;
+    };
     const int n = int(swrRuns_.size());
     for (int i = std::min(n, 2) - 1; i >= 0; --i) {   // oldest first, newest on top
         const SwrRun& run = swrRuns_[i];
@@ -1524,11 +1547,13 @@ void PanadapterWidget::drawSwr(QPainter& p, int hSpec) {
             poly << QPointF(hzToX(int(pt.hz - qint64(centerHz_))), swrY(pt.swr));
             if (pt.swr < minSwr) { minSwr = pt.swr; minHz = pt.hz; }
         }
+        const QPainterPath path = smooth(poly);
         if (i == 0) {                                  // newest: glow + bright
+            p.setBrush(Qt::NoBrush);
             p.setPen(QPen(QColor(255, 150, 30, 55), 8));
-            p.drawPolyline(poly);
+            p.drawPath(path);
             p.setPen(QPen(QColor(255, 170, 40, 235), 3));
-            p.drawPolyline(poly);
+            p.drawPath(path);
             // Minimum diamond + value label.
             const QPointF m(hzToX(int(minHz - qint64(centerHz_))), swrY(minSwr));
             QPolygonF dia;
@@ -1547,8 +1572,9 @@ void PanadapterWidget::drawSwr(QPainter& p, int hSpec) {
             p.setPen(QColor(255, 220, 120));
             p.drawText(QPointF(m.x() + 12, m.y() - 12), lbl);
         } else {                                       // older: thin + dim
+            p.setBrush(Qt::NoBrush);
             p.setPen(QPen(QColor(255, 190, 60, 80), 2));
-            p.drawPolyline(poly);
+            p.drawPath(path);
         }
     }
     p.setRenderHint(QPainter::Antialiasing, false);
