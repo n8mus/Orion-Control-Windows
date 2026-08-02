@@ -96,7 +96,10 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
     tunerBtn_ = new QPushButton("TUNER");
     tunerBtn_->setCheckable(true);
     tunerBtn_->setFocusPolicy(Qt::NoFocus);
-    tunerBtn_->setToolTip("Enable the internal tuner (leave off with an external tuner)");
+    tunerBtn_->setToolTip(
+        "Enable the internal tuner — then press TUNE to run a match cycle\n"
+        "(the radio makes its own carrier and drops it when matched).\n"
+        "Leave off with an external tuner.");
     // MOX: manual transmit for voice — keys the rig in the current (SSB)
     // mode with no carrier, so the mic / TRIP audio goes out. Latches until
     // clicked again (the handler adds a runaway-carrier failsafe).
