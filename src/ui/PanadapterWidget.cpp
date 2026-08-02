@@ -1772,7 +1772,17 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
             update();
             return;
         }
-        if (!inScaleBand(y) && !inDbAxis(x, y)) {
+        if (inScaleBand(y)) {
+            // Toggle the divider's drag axis: vertical arrows = move the
+            // split (classic), horizontal arrows = drag the view side to
+            // side. The cursor flips right here so the mode change is
+            // visible under the finger that made it.
+            dividerPan_ = !dividerPan_;
+            setCursor(dividerPan_ ? Qt::SizeHorCursor : Qt::SizeVerCursor);
+            update();
+            return;
+        }
+        if (!inDbAxis(x, y)) {
             // Shift+right-click = pin/unpin a frequency marker here; plain
             // right-click keeps its VFO B meaning.
             if (e->modifiers() & Qt::ShiftModifier) {
@@ -1786,10 +1796,12 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         }
         return;
     }
-    // The frequency-scale band IS the split handle (KE9NS-style).
+    // The frequency-scale band IS the split handle (KE9NS-style) — or, if
+    // right-click flipped it, the view's side-to-side grab bar.
     if (inScaleBand(y)) {
         drag_ = Drag::Divider;
         dragStartSplit_ = ds_.split;
+        dragStartShift_ = viewShiftHz_;
         return;
     }
     // The notch is the narrowest target — give it priority over the passband
@@ -1931,7 +1943,9 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         bool onSpot = false;                     // spot labels are clickable
         for (const SpotHit& h : spotHits_)
             if (h.rect.contains(e->pos())) { onSpot = true; break; }
-        if (inScaleBand(hy) || inDbAxis(hx, hy) || inWfDbAxis(hx, hy))
+        if (inScaleBand(hy))
+            setCursor(dividerPan_ ? Qt::SizeHorCursor : Qt::SizeVerCursor);
+        else if (inDbAxis(hx, hy) || inWfDbAxis(hx, hy))
             setCursor(Qt::SizeVerCursor);
         else if (onSpot)                         setCursor(Qt::PointingHandCursor);
         else if (overVfoB(hx) || onAEdge
@@ -1942,6 +1956,17 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
     const int x = e->pos().x();
     const int hz = xToHz(x);
     if (drag_ == Drag::Divider) {
+        if (dividerPan_) {
+            // Hand-drag the view: pull right and the frequencies under the
+            // cursor follow the hand, so the shift moves opposite the
+            // mouse. setViewShiftHz clamps to the capture like every other
+            // shift path — the view can never scroll onto empty bins.
+            const double hzPerPx =
+                double(viewSpanHz_) / std::max(1, width());
+            setViewShiftHz(dragStartShift_
+                           - int((e->pos().x() - dragStartX_) * hzPerPx));
+            return;
+        }
         // Move the spectrum/waterfall split; the waterfall re-renders from raw
         // history at the new height, so nothing smears.
         const int usable = std::max(1, height() - kScaleBandH);

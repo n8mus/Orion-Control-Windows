@@ -292,6 +292,11 @@ private:
     int dragStartBLo_ = 0, dragStartBHi_ = 0;      // B filter edges at grab
     float dragStartRef_   = 0.0f;                  // refDb at dB-axis grab
     float dragStartSplit_ = 0.42f;                 // split at divider grab
+    // Right-click on the divider flips its drag axis: false = classic
+    // vertical (move the spectrum/waterfall split), true = horizontal
+    // (slide the view in frequency, hand-drag style). Session-local.
+    bool  dividerPan_ = false;
+    int   dragStartShift_ = 0;                     // view shift at divider grab
 
     int fullSpanHz_ = 250000;                      // what the SDR captures
     int viewSpanHz_ = 250000;                      // what we display (zoom)
