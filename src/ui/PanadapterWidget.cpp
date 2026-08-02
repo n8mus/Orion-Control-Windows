@@ -83,8 +83,10 @@ QStringList PanadapterWidget::backgroundNames() {
     // display/shipImagePath; the Day slider doubles as brightness).
     // Code-drawn ship blueprints sailed here briefly and were struck from
     // the register as tacky.
+    // 7 = "Globe: QTH" — orthographic Earth centered on the station grid,
+    // live grayline + night lights, appended 2026-08-02.
     return {"Dark", "Blue Rays", "Map: Classic", "Map: Vegetation",
-            "Map: Night lights", "Map: Custom…", "Ship"};
+            "Map: Night lights", "Map: Custom…", "Ship", "Globe: QTH"};
 }
 
 namespace {
@@ -249,12 +251,165 @@ QImage renderWorldMap(int w, int h, const QImage& earth,
     p.fillRect(QRect(0, mapH - fadeH, w, fadeH), fade);
     return out;
 }
+
+// Globe geometry, shared by the renderer and the overlay projections so
+// VOACAP rings land exactly on the ball they were computed for.
+void globeGeom(int w, int h, int& cx, int& cy, int& R) {
+    R  = int(std::min(h * 0.475, w * 0.45));
+    cx = w / 2;
+    cy = h / 2 + int(h * 0.02);
+}
+
+// The Earth from space, orthographic, centered on the QTH — the exact
+// hemisphere this station's signals actually see, with the grayline
+// crawling across it live. Day pixels from earth.jpg, night pixels from
+// earth_night.jpg (city lights), blended through the same soft-twilight
+// idea as the flat maps; a breath of atmosphere past the limb sells the
+// ball. Re-rendered once a minute by the bgMinute_ cache like the maps.
+QImage renderGlobeBackdrop(int w, int h, double lat0d, double lon0d,
+                           int dayPct, int nightPct, bool drawSun) {
+    static QImage day, night;
+    if (day.isNull()) {
+        day   = QImage(":/earth.jpg").convertToFormat(QImage::Format_RGB32);
+        night = QImage(":/earth_night.jpg")
+                    .convertToFormat(QImage::Format_RGB32);
+    }
+    QImage out(w, h, QImage::Format_RGB32);
+    out.fill(QColor(4, 6, 10));
+    if (day.isNull()) return out;
+
+    // Fixed-seed starfield: still, not twinkling — re-render is per minute
+    // and shimmering stars behind a spectrum trace would be noise.
+    {
+        QPainter sp(&out);
+        quint32 seed = 0x565u;                      // hull number, of course
+        auto rnd = [&seed] {
+            seed = seed * 1664525u + 1013904223u;
+            return seed >> 16;
+        };
+        for (int i = 0; i < 170; ++i) {
+            const int sx = int(rnd() % uint(std::max(1, w)));
+            const int sy = int(rnd() % uint(std::max(1, h)));
+            const int b  = 40 + int(rnd() % 90);
+            sp.setPen(QColor(b, b, std::min(255, b + 25)));
+            sp.drawPoint(sx, sy);
+            if (i % 23 == 0) sp.drawPoint(sx + 1, sy);   // a few doubles
+        }
+    }
+
+    int cx, cy, R;
+    globeGeom(w, h, cx, cy, R);
+    const double lat0 = lat0d * M_PI / 180.0, lon0 = lon0d * M_PI / 180.0;
+    const QDateTime utc = QDateTime::currentDateTimeUtc();
+    const double hours = utc.time().hour() + utc.time().minute() / 60.0;
+    const double decl = 23.44 * std::sin(2.0 * M_PI * (utc.date().dayOfYear() - 81)
+                                         / 365.25) * M_PI / 180.0;
+    const double subLon = (12.0 - hours) * 15.0 * M_PI / 180.0;
+    // Brightness knobs ride the existing MAP DAY / MAP NIGHT sliders,
+    // normalized so the defaults (78/18) give the photo look.
+    const double dayGain   = std::clamp(dayPct / 78.0, 0.25, 1.6);
+    const double nightGain = std::clamp(nightPct / 18.0, 0.2, 3.0);
+
+    const double sinLat0 = std::sin(lat0), cosLat0 = std::cos(lat0);
+    for (int y = std::max(0, cy - R); y < std::min(h, cy + R + 1); ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(out.scanLine(y));
+        for (int x = std::max(0, cx - R); x < std::min(w, cx + R + 1); ++x) {
+            const double dx = (x + 0.5 - cx) / double(R);
+            const double dy = (cy - (y + 0.5)) / double(R);   // +y = north
+            const double rho2 = dx * dx + dy * dy;
+            if (rho2 >= 1.0) continue;
+            const double cosc = std::sqrt(1.0 - rho2);        // view angle
+            // Inverse orthographic: pixel -> lat/lon on the near hemisphere.
+            const double la = std::asin(cosc * sinLat0 + dy * cosLat0);
+            const double lo = lon0
+                + std::atan2(dx, cosc * cosLat0 - dy * sinLat0);
+            int mx = int((lo / M_PI + 1.0) * 0.5 * day.width()) % day.width();
+            if (mx < 0) mx += day.width();
+            const int my = std::clamp(
+                int((0.5 - la / M_PI) * day.height()), 0, day.height() - 1);
+            const QRgb dc = day.pixel(mx, my);
+            const QRgb nc = night.isNull() ? qRgb(0, 0, 0)
+                                           : night.pixel(mx, my);
+            // Grayline: soft twilight band, same spirit as the flat maps.
+            const double sinElev = std::sin(la) * std::sin(decl)
+                + std::cos(la) * std::cos(decl) * std::cos(lo - subLon);
+            double t = (sinElev + 0.10) / 0.16;               // -0.10..0.06
+            t = std::clamp(t, 0.0, 1.0);
+            t = t * t * (3.0 - 2.0 * t);                      // smoothstep
+            // Gentle limb shading curves the ball without hiding the map.
+            const double limb = 0.55 + 0.45 * cosc;
+            const double dayB = t * dayGain * limb;
+            auto mix = [&](int dch, int nch, int ambient) {
+                const double v = dch * dayB
+                    + nch * (1.0 - t) * nightGain * (0.5 + 0.5 * limb)
+                    + ambient * (1.0 - t);
+                return std::min(255, int(v));
+            };
+            line[x] = qRgb(mix(qRed(dc), qRed(nc), 6),
+                           mix(qGreen(dc), qGreen(nc), 9),
+                           mix(qBlue(dc), qBlue(nc), 18));
+        }
+    }
+
+    QPainter p(&out);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    // Atmosphere: a thin scattering shell hugging the limb, additive so
+    // it glows against space exactly like the photos do.
+    {
+        QRadialGradient atm(QPointF(cx, cy), R * 1.07);
+        atm.setColorAt(0.870, QColor(90, 150, 255, 0));
+        atm.setColorAt(0.925, QColor(110, 170, 255, 40));
+        atm.setColorAt(0.935, QColor(150, 200, 255, 95));
+        atm.setColorAt(0.965, QColor(120, 180, 255, 45));
+        atm.setColorAt(1.000, QColor(80, 140, 255, 0));
+        p.setCompositionMode(QPainter::CompositionMode_Plus);
+        p.setPen(Qt::NoPen);
+        p.setBrush(atm);
+        p.drawEllipse(QPointF(cx, cy), R * 1.07, R * 1.07);
+        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    }
+    // Home marker: the disc center IS the QTH; a quiet ring, not a billboard.
+    p.setPen(QPen(QColor(255, 120, 120, 200), 1.5));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QPointF(cx, cy), 4.5, 4.5);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(255, 160, 160, 230));
+    p.drawEllipse(QPointF(cx, cy), 1.6, 1.6);
+
+    // Subsolar sun, only when it is on this side of the planet.
+    if (drawSun) {
+        const double coscS = std::sin(lat0) * std::sin(decl)
+            + std::cos(lat0) * std::cos(decl) * std::cos(subLon - lon0);
+        if (coscS > 0.05) {
+            const double sx = cx + R * std::cos(decl) * std::sin(subLon - lon0);
+            const double sy = cy - R * (cosLat0 * std::sin(decl)
+                - sinLat0 * std::cos(decl) * std::cos(subLon - lon0));
+            QRadialGradient glow(QPointF(sx, sy), 22);
+            glow.setColorAt(0.0, QColor(255, 170, 40, 150));
+            glow.setColorAt(1.0, QColor(255, 170, 40, 0));
+            p.setBrush(glow);
+            p.drawEllipse(QPointF(sx, sy), 22, 22);
+            p.setBrush(QColor(255, 176, 32));
+            p.setPen(QPen(QColor(120, 70, 0), 1));
+            p.drawEllipse(QPointF(sx, sy), 4.5, 4.5);
+        }
+    }
+
+    // Same trace-floor fade as the flat maps, so the spectrum stays boss.
+    const int fadeH = std::min(h / 4, 60);
+    QLinearGradient fade(0, h - fadeH, 0, h);
+    fade.setColorAt(0.0, QColor(12, 16, 22, 0));
+    fade.setColorAt(1.0, QColor(12, 16, 22, 255));
+    p.fillRect(QRect(0, h - fadeH, w, fadeH), fade);
+    return out;
+}
 } // namespace
 
 const QImage& PanadapterWidget::backgroundImage(int w, int h) {
     const bool isMap = ds_.background >= 2 && ds_.background <= 5;
     const bool isShip = ds_.background == 6;       // Ship: Custom…
-    const qint64 minute = isMap
+    const bool isGlobe = ds_.background == 7;      // Globe: QTH
+    const qint64 minute = (isMap || isGlobe)
         ? QDateTime::currentSecsSinceEpoch() / 60 : 0;      // grayline advances
     if (bgMode_ != ds_.background || bgW_ != w || bgH_ != h
         || bgMinute_ != minute
@@ -289,6 +444,10 @@ const QImage& PanadapterWidget::backgroundImage(int w, int h) {
                 mapSrcKey_ = key;
             }
             bgCache_ = renderShipImage(w, h, mapSrc_, ds_.mapDay);
+        } else if (isGlobe) {
+            bgCache_ = renderGlobeBackdrop(w, h, qthLat_, qthLon_,
+                                           ds_.mapDay, ds_.mapNight,
+                                           ds_.showSolar);
         } else {
             bgCache_ = renderBlueRays(w, h);
         }
@@ -435,6 +594,7 @@ void PanadapterWidget::setQth(double latDeg, double lonDeg) {
     qthLat_ = latDeg;
     qthLon_ = lonDeg;
     roseKey_.clear();                              // disc re-projects
+    bgMode_ = -1;                                  // globe backdrop recenters
     update();
 }
 
@@ -1205,11 +1365,30 @@ void PanadapterWidget::setPropForecast(const QVector<PropContour>& contours,
 // the map fills the top 84 % of the spectrum area.
 void PanadapterWidget::drawVoacap(QPainter& p, int hSpec) {
     const bool mapBg = ds_.background >= 2 && ds_.background <= 5;
-    if (!ds_.showVoacap || !mapBg || propLegend_.isEmpty()) return;
+    const bool globeBg = ds_.background == 7;
+    if (!ds_.showVoacap || !(mapBg || globeBg) || propLegend_.isEmpty())
+        return;
     const int mapH = std::max(1, int(hSpec * 0.84));
+    // Globe geometry for the orthographic projection (globe mode). A point
+    // on the far hemisphere gets vis=false and its segments are skipped —
+    // rings just wrap out of sight around the limb, like they should.
+    int gcx = 0, gcy = 0, gR = 1;
+    if (globeBg) globeGeom(width(), hSpec, gcx, gcy, gR);
+    const double la0 = qthLat_ * M_PI / 180.0, lo0 = qthLon_ * M_PI / 180.0;
     const auto px = [&](const QPointF& ll) {
         return QPointF((ll.x() + 180.0) / 360.0 * width(),
                        (90.0 - ll.y()) / 180.0 * mapH);
+    };
+    const auto pxGlobe = [&](const QPointF& ll, bool& vis) {
+        const double la = ll.y() * M_PI / 180.0;
+        const double lo = ll.x() * M_PI / 180.0;
+        const double cosc = std::sin(la0) * std::sin(la)
+            + std::cos(la0) * std::cos(la) * std::cos(lo - lo0);
+        vis = cosc > 0.02;
+        return QPointF(
+            gcx + gR * std::cos(la) * std::sin(lo - lo0),
+            gcy - gR * (std::cos(la0) * std::sin(la)
+                        - std::sin(la0) * std::cos(la) * std::cos(lo - lo0)));
     };
     const auto colorFor = [](float s) {
         if (s >= 9.0f) return QColor(80, 160, 255);
@@ -1227,25 +1406,39 @@ void PanadapterWidget::drawVoacap(QPainter& p, int hSpec) {
         if (c.ll.size() < 3) continue;
         const QColor col = colorFor(c.sLevel);
         // Draw segment-wise so a contour crossing the date line doesn't
-        // smear a horizontal band across the whole map.
+        // smear a horizontal band across the whole map (flat), and so a
+        // ring can duck behind the limb cleanly (globe).
         QVector<QPointF> pts;
+        QVector<bool> vis;
         pts.reserve(c.ll.size() + 1);
-        for (const QPointF& ll : c.ll) pts.append(px(ll));
+        vis.reserve(c.ll.size() + 1);
+        for (const QPointF& ll : c.ll) {
+            bool v = true;
+            pts.append(globeBg ? pxGlobe(ll, v) : px(ll));
+            vis.append(v);
+        }
         pts.append(pts.first());
+        vis.append(vis.first());
         for (int pass = 0; pass < 2; ++pass) {
             p.setPen(pass == 0 ? QPen(QColor(col.red(), col.green(),
                                              col.blue(), 60), 6)
                                : QPen(QColor(col.red(), col.green(),
                                              col.blue(), 210), 2));
             for (int i = 1; i < pts.size(); ++i) {
-                if (std::abs(pts[i].x() - pts[i - 1].x()) > width() / 2.0)
+                if (!vis[i - 1] || !vis[i]) continue;   // behind the limb
+                if (!globeBg
+                    && std::abs(pts[i].x() - pts[i - 1].x()) > width() / 2.0)
                     continue;                       // date-line jump
                 p.drawLine(pts[i - 1], pts[i]);
             }
         }
-        // Label the ring on its eastern lobe.
-        const QPointF lp = pts[c.ll.size() / 4];    // az ~90 degrees
-        if (lp.y() > 12 && lp.y() < mapH - 4) {
+        // Label the ring on its eastern lobe — first visible point at or
+        // after it, so globe rings that dip behind the limb still label.
+        int li = int(c.ll.size()) / 4;              // az ~90 degrees
+        while (li < vis.size() && !vis[li]) ++li;
+        if (li >= vis.size() - 1) continue;
+        const QPointF lp = pts[li];
+        if (lp.y() > 12 && lp.y() < (globeBg ? hSpec - 4 : mapH - 4)) {
             const QString t = QString("S%1").arg(int(c.sLevel));
             p.setPen(QColor(0, 0, 0, 200));
             p.drawText(lp + QPointF(4, 4), t);
@@ -1253,8 +1446,10 @@ void PanadapterWidget::drawVoacap(QPainter& p, int hSpec) {
             p.drawText(lp + QPointF(3, 3), t);
         }
     }
-    // QTH star + legend chip.
-    const QPointF q = px(QPointF(qthLon_, qthLat_));
+    // QTH star + legend chip. On the globe the QTH is the disc center by
+    // construction, and the backdrop already carries its home ring.
+    const QPointF q = globeBg ? QPointF(gcx, gcy)
+                              : px(QPointF(qthLon_, qthLat_));
     p.setPen(QPen(QColor(255, 255, 255, 200), 1));
     p.setBrush(QColor(255, 80, 80));
     QPolygonF star;

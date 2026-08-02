@@ -251,8 +251,9 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
         roseRVal_->setText(QString("%1 px").arg(roseR_->value()));
         const int bg = bg_->currentIndex();
         const bool isMap = bg >= 2 && bg <= 5;
-        mapDay_->setEnabled(isMap || bg == 6);     // ship art: Day = brightness
-        mapNight_->setEnabled(isMap);
+        const bool isGlobe = bg == 7;              // Globe: QTH
+        mapDay_->setEnabled(isMap || isGlobe || bg == 6);  // ship: brightness
+        mapNight_->setEnabled(isMap || isGlobe);   // globe: city-light level
         ship_->setEnabled(bg == 6);
     };
     connect(ref_,   &QSlider::valueChanged, this, [this, updateLabels] {
