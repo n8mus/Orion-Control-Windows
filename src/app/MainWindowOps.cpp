@@ -180,6 +180,17 @@ void MainWindow::showSwrMenu(const QPoint& globalPos) {
         if (swrSweeping_) stopSwrSweep(false);
         else startSwrSweep();
     });
+    // Edge to edge, ignoring the 480 kHz view cap — the pan paints what
+    // it can see, the Smith chart gets all of it. Only offered where it
+    // adds range the view sweep doesn't have (10 m, 6 m, 80 m).
+    if (!swrSweeping_ && curBand_ >= 0
+        && int64_t(kBands[curBand_].hiHz) - int64_t(kBands[curBand_].loHz)
+               > pan_->viewSpanHz()) {
+        QAction* whole = m->addAction(
+            QStringLiteral("Sweep SWR across the whole band"));
+        connect(whole, &QAction::triggered, this,
+                [this] { startSwrSweep(true); });
+    }
     QAction* show = m->addAction(QStringLiteral("Show SWR plots"));
     show->setCheckable(true);
     show->setChecked(QSettings().value("swr/show", true).toBool());
@@ -215,7 +226,7 @@ void MainWindow::showSwrMenu(const QPoint& globalPos) {
     m->popup(globalPos);
 }
 
-void MainWindow::startSwrSweep() {
+void MainWindow::startSwrSweep(bool wholeBand) {
     if (swrSweeping_ || tuning_ || dvrTxPlayback_) {
         statusBar()->showMessage("SWR sweep: transmitter is busy", 5000);
         return;
@@ -234,8 +245,18 @@ void MainWindow::startSwrSweep() {
     }
     const int64_t viewC = int64_t(centerHz_) + pan_->viewShiftHz();
     const int span = pan_->viewSpanHz();
-    swrF0_ = std::max<int64_t>(viewC - span / 2, int64_t(kBands[curBand_].loHz));
-    swrF1_ = std::min<int64_t>(viewC + span / 2, int64_t(kBands[curBand_].hiHz));
+    if (wholeBand) {
+        // Band edge to edge. The dial has no view limit; the pan overlay
+        // simply clips to whatever the frame can show, and the Smith
+        // chart renders the full run.
+        swrF0_ = int64_t(kBands[curBand_].loHz);
+        swrF1_ = int64_t(kBands[curBand_].hiHz);
+    } else {
+        swrF0_ = std::max<int64_t>(viewC - span / 2,
+                                   int64_t(kBands[curBand_].loHz));
+        swrF1_ = std::min<int64_t>(viewC + span / 2,
+                                   int64_t(kBands[curBand_].hiHz));
+    }
     if (swrF1_ - swrF0_ < 20000) {
         statusBar()->showMessage("SWR sweep: visible in-band range is too "
                                  "narrow — zoom out first", 6000);

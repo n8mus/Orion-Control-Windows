@@ -94,7 +94,11 @@ private:
     void stopManualTune();
     void showSwrMenu(const QPoint& globalPos);  // right-click TUNE
     void showSmithChart();             // vector-meter runs on a Smith chart
-    void startSwrSweep();              // step the visible span reading SWR
+    // Step a range reading SWR. Default = the visible span; wholeBand
+    // sweeps band edge to edge regardless of the view (the pan can only
+    // frame 480 kHz, but the dial and the Smith chart have no such limit
+    // — matters on 10 m, 1.7 MHz wide).
+    void startSwrSweep(bool wholeBand = false);
     void stopSwrSweep(bool completed); // unkey, restore dial, maybe save
     void swrTickStep();                // sweep state machine (150 ms timer)
     void refreshSwrOverlay();          // push current band's runs to the pan
