@@ -64,6 +64,7 @@ senders and weak-signal cases are the hard set.
 | `rotortest` | rotctld client | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
 | `watchtest` | DX-watch pattern matching | — |
 | `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
+| `pmtest` | PowerMaster wattmeter frame decode + CRC (pure parser, no hardware) | — |
 | `smithtest` | renders a band's stored sweep to PNG for eyeballing (`QT_QPA_PLATFORM=offscreen ./smithtest <swr.json> <band> <out.png>`) | — |
 | `nrtest` | noise-reduction ruler: keyed 550 Hz tone at swept SNR through {none, RNNoise, SpectralNr} into the audio-path decoder. Verdict 2026-07-16: RNNoise perfect to -6 dB; our SpectralNr lost and stays test-only | — |
 
@@ -157,15 +158,20 @@ setting > `/dev/orion` default). The FT4232H quad converter that used
 to carry both radios was condemned 2026-07-16 — it WAS the 40 m spike
 picket (RFI), proven by pull-test at LNA 1; its `/dev/orion` udev rule
 is dead, and the Omni VII (needs RTS/CTS) has no CAT path until a clean
-converter arrives. A **TelePost LP-100A vector wattmeter** lives on
-`/dev/ttyS5` (second port of the AX99100 PCIe card; `lp100a/device`, env
-`TTC_LPMETER_DEV`); poll it with the single byte `P` at 115200 8N1 and it
-answers a 43-byte `;`-led CSV frame carrying power, |Z|, phase, dBm and
-SWR (`src/radio/LpMeter`). Mode control is the byte `F`, NOT the `M` that
-third-party code claims — bench-verified 2026-08-01, and `M` really is a
-no-op on the serial mode field. The meter is opt-in (`lp100a/enabled`,
-default OFF) and the SWR sweep falls back to the radio's `@STF`, so a
-station without one behaves exactly as it did before.
+converter arrives. Two **external wattmeters** share one straight-through
+DB9 cable (never a null modem — it reflects DTR/RTS and reads dead) into
+the AX99100 PCIe card, selected by `meter/model` (`meter/{enabled,device}`,
+env `TTC_LPMETER_DEV`; old `lp100a/*` keys are read as defaults and
+mirrored on save): the **TelePost LP-100A** (vector; poll `;P?` at 115200
+8N1 → 43-byte `;`-led CSV of power/|Z|/phase/dBm/SWR, `src/radio/LpMeter`;
+mode control is `F` NOT `M` — bench-verified, `M` walks the LCD pages
+invisibly) and the **Array Solutions PowerMaster** (scalar; 38400 8N1,
+9-byte activation prefixed with CR to flush its jam-prone command parser,
+then a ~25 Hz `(STX)D,fwd,rev,swr,…(ETX)<crc>` stream, CRC-8 poly 0xB1
+init 0 xorout FF over payload, `src/radio/PmMeter`). Both are opt-in
+(default OFF) behind `src/radio/TxMeter`; sweeps record R+jX (and offer
+the Smith chart) only from the LP-100A, and fall back to the radio's
+`@STF` without either — a station with no meter behaves as before.
 SignaLink = "USB AUDIO CODEC" in PipeWire. cqrlog
 runs the fork at `/home/jon/CQRLog` (bridge :2334, embedded MariaDB).
 If the panadapter comes up dark ("no IQ source") right after
