@@ -193,17 +193,32 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     // exactly the behaviour it had before this section existed, which means
     // the sweep keeps reading the radio's own SWR.
     form->addRow(section("RF WATTMETER", this));
-    lpOn_ = new QCheckBox("TelePost LP-100A vector wattmeter", this);
-    lpOn_->setChecked(s.value("lp100a/enabled", false).toBool());
+    lpOn_ = new QCheckBox("External wattmeter on a serial port", this);
+    lpOn_->setChecked(
+        s.value("meter/enabled", s.value("lp100a/enabled", false)).toBool());
     lpOn_->setToolTip(
-        "A calibrated external wattmeter on its own serial port.\n"
-        "Measures forward power, SWR and complex impedance (R+jX) —\n"
+        "A calibrated external wattmeter on its own serial port —\n"
         "more, and more accurate, than the radio's built-in metering.");
     form->addRow("", lpOn_);
 
+    lpModel_ = new QComboBox(this);
+    lpModel_->addItem("TelePost LP-100A (vector: R+jX, Smith chart)",
+                      "lp100a");
+    lpModel_->addItem("Array Solutions PowerMaster (SWR + power)",
+                      "powermaster");
+    lpModel_->setCurrentIndex(
+        s.value("meter/model", "lp100a").toString() == "powermaster" ? 1 : 0);
+    lpModel_->setToolTip(
+        "LP-100A is polled at 115200 and measures complex impedance —\n"
+        "sweeps get Smith charts. The PowerMaster streams at 38400 —\n"
+        "fast forward/reflected/SWR, sweeps draw SWR curves only.");
+    form->addRow("Model", lpModel_);
+
     lpDev_ = new QComboBox(this);
     lpDev_->setEditable(true);
-    lpDev_->setToolTip("115200 8N1. Straight-through DB9 cable, NOT a null modem.");
+    lpDev_->setToolTip(
+        "Straight-through DB9 cable, NOT a null modem — a null modem\n"
+        "reads as a dead port on either meter.");
     form->addRow("Meter serial port", lpDev_);
 
     lpSwr_ = new QComboBox(this);
@@ -227,6 +242,7 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
 
     auto syncLpRows = [this] {
         const bool on = lpOn_->isChecked();
+        lpModel_->setEnabled(on);
         lpDev_->setEnabled(on);
         lpSwr_->setEnabled(on);
     };
@@ -243,18 +259,20 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     applyConnMode(activeProfile());      // fills the radio device row per profile
 }
 
-// Poll the wattmeter once and decode what came back. A meter that answers
-// tells us its own callsign, which is the friendliest possible "yes, this
-// is the right port" — no other device on the desk knows it.
+// Probe the selected wattmeter once and decode what came back. The LP-100A
+// answers its poll with the callsign programmed into it — the friendliest
+// possible "yes, this is the right port". The PowerMaster acknowledges its
+// activation command and starts streaming.
 void SetupDialog::testMeter() {
     const QString dev = lpDev_->currentText().trimmed();
+    const bool pm = lpModel_->currentData().toString() == "powermaster";
     if (!liveMeterDev_.isEmpty() && dev == liveMeterDev_) {
         lpTest_->setText("✓ in use by this console — connected");
         return;
     }
     QSerialPort p;
     p.setPortName(dev);
-    p.setBaudRate(115200);
+    p.setBaudRate(pm ? 38400 : 115200);
     p.setDataBits(QSerialPort::Data8);
     p.setParity(QSerialPort::NoParity);
     p.setStopBits(QSerialPort::OneStop);
@@ -266,17 +284,36 @@ void SetupDialog::testMeter() {
     lpTest_->setText("probing…");
     lpTest_->repaint();
     QByteArray got;
-    for (int attempt = 0; attempt < 3 && got.size() < 43; ++attempt) {
+    const QByteArray probe = pm
+        ? QByteArray("\x02" "D1" "\x03" "C0" "\r" "S\x00", 9)  // activation
+        : QByteArrayLiteral(";P?");                            // vendor poll
+    for (int attempt = 0; attempt < 3 && got.size() < 40; ++attempt) {
         p.clear();
         got.clear();
-        p.write(QByteArrayLiteral("P"));
+        p.write(probe);
         p.flush();
-        // The measured round trip is ~10 ms; 250 ms of patience per try is
-        // for a meter that is powered off and warming, not for the link.
-        for (int i = 0; i < 5 && got.size() < 43; ++i)
+        for (int i = 0; i < 5 && got.size() < 40; ++i)
             if (p.waitForReadyRead(250)) got += p.readAll();
     }
     p.close();
+    if (pm) {
+        // Expect STX-framed frames; a 'D' payload carries the live power.
+        const int d = got.indexOf("\x02" "D,");
+        if (d >= 0) {
+            const QList<QByteArray> f = got.mid(d + 1).split(',');
+            const QString fwd = f.size() > 1
+                ? QString::fromLatin1(f[1]).trimmed() : QString();
+            lpTest_->setText(fwd.isEmpty()
+                ? QStringLiteral("✓ PowerMaster streaming")
+                : QStringLiteral("✓ PowerMaster streaming — fwd %1 W").arg(fwd));
+        } else if (got.contains('\x02')) {
+            lpTest_->setText("✓ PowerMaster acknowledged");
+        } else {
+            lpTest_->setText("✗ no stream — right port? meter set to 38400? "
+                             "straight-through cable?");
+        }
+        return;
+    }
     const int semi = got.indexOf(';');
     if (semi < 0 || got.size() - semi < 43) {
         lpTest_->setText("✗ no answer — is this the LP-100A port?");
@@ -313,7 +350,9 @@ void SetupDialog::refreshPorts() {
     if (!ports.contains(curKeyer)) keyerDev_->addItem(curKeyer);
     keyerDev_->setCurrentText(curKeyer);
 
-    const QString curMeter = s.value("lp100a/device", "/dev/ttyS5").toString();
+    const QString curMeter =
+        s.value("meter/device", s.value("lp100a/device", "/dev/ttyS5"))
+            .toString();
     lpDev_->clear();
     lpDev_->addItems(ports);
     if (!ports.contains(curMeter)) lpDev_->addItem(curMeter);
@@ -512,6 +551,11 @@ void SetupDialog::accept() {
     s.setValue("spots/login", spotLogin_->text().trimmed().toUpper());
     s.setValue("rotor/enabled", rotorOn_->isChecked());
     s.setValue("rotor/port", rotorPort_->value());
+    s.setValue("meter/enabled", lpOn_->isChecked());
+    s.setValue("meter/model", lpModel_->currentData().toString());
+    s.setValue("meter/device", lpDev_->currentText().trimmed());
+    // Mirror into the original keys so a rollback to an older build keeps
+    // the meter working (those builds only know lp100a/*).
     s.setValue("lp100a/enabled", lpOn_->isChecked());
     s.setValue("lp100a/device", lpDev_->currentText().trimmed());
     s.setValue("swr/source", lpSwr_->currentData().toString());

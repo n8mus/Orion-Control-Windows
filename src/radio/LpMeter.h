@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
-#include <QByteArray>
-#include <QObject>
-#include <QString>
+#include "radio/TxMeter.h"
 
-#include <cstdint>
+#include <QByteArray>
 
 class QTimer;
 
@@ -63,32 +61,21 @@ class SerialPort;
 // can read back. 'A' (cycle the SWR alarm setpoint) is unimplemented for
 // the same reason plus a better one — it changes a protective setting the
 // operator chose.
-class LpMeter : public QObject {
+class LpMeter : public TxMeter {
     Q_OBJECT
 public:
     enum class Mode { Unknown = -1, Average = 0, PeakHold = 1, Tune = 2 };
 
-    struct Reading {
-        double  watts    = 0.0;
-        double  swr      = 1.0;
-        double  dbm      = 0.0;
-        double  zOhm     = 0.0;      // |Z| magnitude
-        double  phaseDeg = 0.0;      // signed impedance angle
-        double  rOhm     = 0.0;      // derived: |Z| cos(phase)
-        double  xOhm     = 0.0;      // derived: |Z| sin(phase)
-        bool    zValid   = false;    // false => zOhm/phase/r/x are garbage
-        Mode    mode     = Mode::Unknown;
-        // Autoranging power scale. 0 = 2500 W, 1 = 250 W, 2 = 25 W, per the
-        // range selector in TelePost's own VCP (" 25 " / " 250" / "2500",
-        // plus "10K" when the high-power coupler option is set). Community
-        // code calls these 750/125/25, which matches no TelePost coupler
-        // spec and is very probably wrong — a decade ladder is what an
-        // autoranging meter would have. Not verified under power here, so
-        // treat as informational; nothing in the console depends on it.
-        int     range    = 0;
-        QString callsign;            // as programmed into the meter
-        qint64  tsMs     = 0;
-    };
+    // Readings land in the shared TxMeter::Reading. LP-specific notes:
+    // Reading::mode carries the Mode enum as an int. Reading::range is the
+    // autoranging power scale — 0 = 2500 W, 1 = 250 W, 2 = 25 W, per the
+    // range selector in TelePost's own VCP (" 25 " / " 250" / "2500", plus
+    // "10K" with the high-power coupler option). Community code calls
+    // these 750/125/25, which matches no TelePost coupler spec and is very
+    // probably wrong — a decade ladder is what an autoranging meter would
+    // have. Not verified under power; nothing in the console depends on it.
+    // Reading::valid == Reading::zValid here: both gate on forward power.
+    using Reading = TxMeter::Reading;
 
     explicit LpMeter(QObject* parent = nullptr);
     ~LpMeter() override;
@@ -96,14 +83,13 @@ public:
     // Opens the port and starts polling. pollMs 50..5000 (the meter's own
     // control panel offers that range; 100 ms is a calm 10 Hz and the
     // round trip measured 10.5 ms, so there is plenty of headroom).
-    bool start(const QString& device, int pollMs = 100);
-    void stop();
+    bool start(const QString& device, int pollMs = 100) override;
+    void stop() override;
 
     bool isOpen() const;
     // A well-formed frame arrived recently enough to trust. Everything that
     // consumes the meter should ask this before preferring it to the radio.
-    bool isAlive() const { return alive_; }
-    const Reading& last() const { return last_; }
+    bool isAlive() const override { return alive_; }
 
     // Drive the meter to a display mode, seeking with 'F'. Emits
     // modeSeekFailed() if it will not land (meter unplugged mid-seek, or a
@@ -117,17 +103,14 @@ public:
     // revisited with evidence, e.g. a sweep taken in Peak Hold coming out
     // visibly smeared.
     void seekMode(Mode target);
-    Mode mode() const { return last_.mode; }
+    Mode mode() const { return Mode(last_.mode); }
 
     // Decode one 43-byte frame. Static and public so the wire format is
     // unit-testable (lptest) without a meter or a serial port on the bench.
     static bool parseFrame(const QByteArray& f, Reading& out);
 
 signals:
-    void reading(const ttc::LpMeter::Reading& r);
-    void aliveChanged(bool alive);          // connection came up / went away
     void modeSeekFailed(ttc::LpMeter::Mode target);
-    void error(const QString& what);
 
 private:
     void poll();
@@ -137,7 +120,6 @@ private:
     SerialPort* port_   = nullptr;
     QTimer*     tick_   = nullptr;
     QByteArray  rx_;
-    Reading     last_;
     bool        alive_  = false;
     int         pollMs_ = 100;
     qint64      lastGoodMs_ = 0;

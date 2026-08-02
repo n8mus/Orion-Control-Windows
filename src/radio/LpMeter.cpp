@@ -30,7 +30,7 @@ constexpr int kPressGapMs = 300;
 constexpr int kMaxPresses = 5;
 } // namespace
 
-LpMeter::LpMeter(QObject* parent) : QObject(parent) {}
+LpMeter::LpMeter(QObject* parent) : TxMeter(parent) {}
 
 LpMeter::~LpMeter() { stop(); }
 
@@ -84,7 +84,7 @@ void LpMeter::poll() {
     // Interleave a mode press before the poll so its effect shows up in the
     // very next frame.
     if (seekTarget_ != Mode::Unknown && now - lastPressMs_ >= kPressGapMs) {
-        if (last_.mode == seekTarget_) {
+        if (Mode(last_.mode) == seekTarget_) {
             seekTarget_ = Mode::Unknown;         // landed
             presses_    = 0;
         } else if (presses_ >= kMaxPresses) {
@@ -161,14 +161,15 @@ bool LpMeter::parseFrame(const QByteArray& f, Reading& out) {
     out.range    = p[5].trimmed().isEmpty() ? 0 : p[5].trimmed()[0] - '0';
 
     const char m = p[6].trimmed().isEmpty() ? 'x' : p[6].trimmed()[0];
-    out.mode = (m == '0') ? Mode::Average
-             : (m == '1') ? Mode::PeakHold
-             : (m == '2') ? Mode::Tune
-                          : Mode::Unknown;
+    out.mode = int((m == '0') ? Mode::Average
+                 : (m == '1') ? Mode::PeakHold
+                 : (m == '2') ? Mode::Tune
+                              : Mode::Unknown);
 
     // Rectangular form for the R+jX curve. Only meaningful with a carrier;
     // see the class comment on the idle-noise trap.
     out.zValid = watts >= kZFloorW;
+    out.valid  = out.zValid;         // same gate: carrier present
     if (out.zValid) {
         const double rad = ph * M_PI / 180.0;
         out.rOhm = z * std::cos(rad);

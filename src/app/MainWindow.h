@@ -334,8 +334,9 @@ private:
     std::atomic<bool> txMonEnabled_{true}; // checkbox mirror (SDR thread reads)
     std::atomic<qint64> txCtxMs_{0};       // last TX-context ms (SDR thread reads)
     QString  radioDevUsed_;                // serial path this instance opened
-    // External RF wattmeter, null unless lp100a/enabled and its port opened.
-    LpMeter* lpMeter_ = nullptr;
+    // External RF wattmeter (LP-100A or PowerMaster per meter/model), null
+    // unless enabled and its port opened.
+    TxMeter* txMeter_ = nullptr;
     QString  meterDevUsed_;
     // True when the sweep should believe the meter: enabled, configured as
     // the source, and actually answering right now.

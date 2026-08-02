@@ -37,6 +37,7 @@
 #include <cstring>
 #include "ui/DisplayPanel.h"
 #include "ui/SetupDialog.h"
+#include "radio/PmMeter.h"
 #include "cw/CwDecoder.h"
 #include "cw/SkimmerEngine.h"
 #include "cw/SkimServer.h"
@@ -2998,36 +2999,55 @@ MainWindow::MainWindow(QWidget* parent)
         }
     }
 
-    // External RF wattmeter (TelePost LP-100A). Opt-in: a station without
-    // one never opens a port and the SWR sweep keeps reading the radio, so
-    // this is invisible unless you have the hardware. Device precedence
+    // External RF wattmeter. Opt-in: a station without one never opens a
+    // port and the SWR sweep keeps reading the radio, so this is invisible
+    // unless you have the hardware. meter/model picks the instrument:
+    // "lp100a" (TelePost LP-100A, vector — sweeps get R+jX and the Smith
+    // chart) or "powermaster" (Array Solutions PowerMaster, fast scalar —
+    // SWR curves only). The meter/* keys default from the older lp100a/*
+    // keys so existing configs keep working untouched. Device precedence
     // matches the radio's: env > setting > this station's default.
-    if (QSettings().value("lp100a/enabled", false).toBool()) {
-        const char* mEnv = std::getenv("TTC_LPMETER_DEV");
-        meterDevUsed_ = mEnv ? QString::fromLatin1(mEnv)
-                             : QSettings().value("lp100a/device", "/dev/ttyS5")
-                                   .toString();
-        lpMeter_ = new ttc::LpMeter(this);
-        connect(lpMeter_, &ttc::LpMeter::aliveChanged, this, [this](bool up) {
-            statusBar()->showMessage(up ? "LP-100A wattmeter connected"
-                                        : "LP-100A wattmeter went quiet", 6000);
-            // Connection transitions are rare and the first thing you want
-            // to see when a headless run says the sweep read the radio.
-            fprintf(stderr, "[lpmeter] %s on %s\n",
-                    up ? "connected" : "went quiet",
-                    meterDevUsed_.toLocal8Bit().constData());
-        });
-        // Note: the console never changes the meter's mode or display —
-        // operator's decision, matching TelePost's own Plot program, which
-        // reads the meter as it finds it. LpMeter::seekMode() exists and is
-        // verified if that ever changes.
-        if (!lpMeter_->start(meterDevUsed_)) {
-            lpMeter_->deleteLater();
-            lpMeter_ = nullptr;
-            meterDevUsed_.clear();
-            statusBar()->showMessage(
-                "LP-100A: could not open its serial port — the SWR sweep "
-                "will read the radio instead", 10000);
+    {
+        QSettings s;
+        const bool en =
+            s.value("meter/enabled", s.value("lp100a/enabled", false)).toBool();
+        if (en) {
+            const QString model =
+                s.value("meter/model", "lp100a").toString();
+            const char* mEnv = std::getenv("TTC_LPMETER_DEV");
+            meterDevUsed_ = mEnv ? QString::fromLatin1(mEnv)
+                : s.value("meter/device",
+                          s.value("lp100a/device", "/dev/ttyS5")).toString();
+            const QString name = model == "powermaster"
+                ? QStringLiteral("PowerMaster") : QStringLiteral("LP-100A");
+            if (model == "powermaster")
+                txMeter_ = new ttc::PmMeter(this);
+            else
+                txMeter_ = new ttc::LpMeter(this);
+            connect(txMeter_, &ttc::TxMeter::aliveChanged, this,
+                    [this, name](bool up) {
+                statusBar()->showMessage(
+                    QString("%1 wattmeter %2")
+                        .arg(name, up ? "connected" : "went quiet"), 6000);
+                // Connection transitions are rare and the first thing you
+                // want when a headless run says the sweep read the radio.
+                fprintf(stderr, "[meter] %s %s on %s\n",
+                        name.toLocal8Bit().constData(),
+                        up ? "connected" : "went quiet",
+                        meterDevUsed_.toLocal8Bit().constData());
+            });
+            // Note: the console never changes either meter's mode or
+            // display — operator's decision (2026-08-01), matching the
+            // vendors' own practice. LpMeter::seekMode() exists, verified,
+            // if that ever changes.
+            if (!txMeter_->start(meterDevUsed_)) {
+                txMeter_->deleteLater();
+                txMeter_ = nullptr;
+                meterDevUsed_.clear();
+                statusBar()->showMessage(
+                    name + ": could not open its serial port — the SWR "
+                           "sweep will read the radio instead", 10000);
+            }
         }
     }
 

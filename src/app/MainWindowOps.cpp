@@ -165,7 +165,7 @@ static constexpr int kSwrSteps = 48;
 // source, AND answering right now. Everything else falls through to @STF,
 // which is what a station without an LP-100A always gets.
 bool MainWindow::meterSwrReady() const {
-    return lpMeter_ && lpMeter_->isAlive()
+    return txMeter_ && txMeter_->isAlive()
            && QSettings().value("swr/source", "meter").toString() != "radio";
 }
 
@@ -324,16 +324,20 @@ void MainWindow::swrTickStep() {
     PanadapterWidget::SwrRun::Pt pt;
     pt.hz = qint64(stepF);
     bool fresh = false;
-    if (swrUsedMeter_ && lpMeter_ && lpMeter_->isAlive()) {
-        const ttc::LpMeter::Reading& r = lpMeter_->last();
-        // zValid means the meter actually saw the carrier; without it the
-        // impedance fields are idle noise and the SWR is meaningless too.
-        if (r.tsMs > swrStepArmedMs_ && r.zValid) {
-            pt.swr    = r.swr;
-            pt.rOhm   = r.rOhm;
-            pt.xOhm   = r.xOhm;
-            pt.zValid = true;
-            fresh     = true;
+    if (swrUsedMeter_ && txMeter_ && txMeter_->isAlive()) {
+        const ttc::TxMeter::Reading& r = txMeter_->last();
+        // valid means the meter actually saw the carrier; without it the
+        // fields are idle noise. R/X are recorded only from a vector meter
+        // (zValid) — a PowerMaster run yields an SWR-only curve, and the
+        // Smith chart simply stays unavailable for it.
+        if (r.tsMs > swrStepArmedMs_ && r.valid) {
+            pt.swr = r.swr;
+            if (r.zValid) {
+                pt.rOhm   = r.rOhm;
+                pt.xOhm   = r.xOhm;
+                pt.zValid = true;
+            }
+            fresh = true;
         }
     }
     if (!fresh && lastSwrMs_ > swrStepArmedMs_) {         // radio's own @STF

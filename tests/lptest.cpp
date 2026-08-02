@@ -49,7 +49,7 @@ int main() {
         near(r.xOhm, 0.0, 1e-9, "idle X suppressed");
         check(r.callsign == "N8EM", "callsign trimmed");
         check(r.range == 2, "range 2 = 25 W (lowest, autoranged at idle)");
-        check(r.mode == LpMeter::Mode::PeakHold, "mode 1 = peak hold");
+        check(r.mode == int(LpMeter::Mode::PeakHold), "mode 1 = peak hold");
     }
 
     // 2. A carrier up into a purely resistive 50 ohm load: X must come out
@@ -62,7 +62,7 @@ int main() {
         check(r.zValid, "35 W is a valid impedance measurement");
         near(r.rOhm, 50.0, 1e-6, "R of 50+j0");
         near(r.xOhm, 0.0, 1e-6, "X of 50+j0");
-        check(r.mode == LpMeter::Mode::Tune, "mode 2 = tune");
+        check(r.mode == int(LpMeter::Mode::Tune), "mode 2 = tune");
         check(r.range == 1, "range 1 = 250 W");
     }
 
@@ -76,7 +76,7 @@ int main() {
         check(r.zValid, "100 W is valid");
         near(r.rOhm, 50.0, 0.05, "R of 70.7 ohms at -45 deg");
         near(r.xOhm, -50.0, 0.05, "X negative for a capacitive load");
-        check(r.mode == LpMeter::Mode::Average, "mode 0 = average");
+        check(r.mode == int(LpMeter::Mode::Average), "mode 0 = average");
         check(r.range == 0, "range 0 = 2500 W");
     }
 

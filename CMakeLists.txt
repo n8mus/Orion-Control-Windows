@@ -35,7 +35,9 @@ add_executable(tentec-console
   src/app/Bands.h
   src/radio/RadioController.h
   src/radio/SerialPort.cpp      src/radio/SerialPort.h
+  src/radio/TxMeter.h
   src/radio/LpMeter.cpp         src/radio/LpMeter.h
+  src/radio/PmMeter.cpp         src/radio/PmMeter.h
   src/radio/TenTecOrion.cpp     src/radio/TenTecOrion.h
   src/radio/TenTecOmni7.cpp     src/radio/TenTecOmni7.h
   src/radio/RipAudio.cpp        src/radio/RipAudio.h
@@ -102,9 +104,16 @@ target_link_libraries(rotortest PRIVATE Qt6::Core Qt6::Network)
 # LP-100A wattmeter frame decode. Pure parser test — needs no hardware.
 add_executable(lptest EXCLUDE_FROM_ALL
   tests/lptest.cpp
-  src/radio/LpMeter.cpp src/radio/SerialPort.cpp)
+  src/radio/LpMeter.cpp src/radio/SerialPort.cpp src/radio/TxMeter.h)
 target_include_directories(lptest PRIVATE src)
 target_link_libraries(lptest PRIVATE Qt6::Core)
+
+# PowerMaster wattmeter frame decode. Pure parser test — needs no hardware.
+add_executable(pmtest EXCLUDE_FROM_ALL
+  tests/pmtest.cpp
+  src/radio/PmMeter.cpp src/radio/SerialPort.cpp src/radio/TxMeter.h)
+target_include_directories(pmtest PRIVATE src)
+target_link_libraries(pmtest PRIVATE Qt6::Core)
 
 # Smith-chart render harness: draws a band's stored sweep runs to a PNG
 # (offscreen), for eyeballing the chart against real captured data.

@@ -55,10 +55,11 @@ private:
     QLineEdit* spotLogin_ = nullptr;
     QCheckBox* rotorOn_ = nullptr;
     QSpinBox*  rotorPort_ = nullptr;
-    QCheckBox* lpOn_   = nullptr;        // TelePost LP-100A present at all
-    QComboBox* lpDev_  = nullptr;
-    QComboBox* lpSwr_  = nullptr;        // which SWR the sweep believes
-    QLabel*    lpTest_ = nullptr;
+    QCheckBox* lpOn_    = nullptr;       // external wattmeter present at all
+    QComboBox* lpModel_ = nullptr;       // lp100a | powermaster
+    QComboBox* lpDev_   = nullptr;
+    QComboBox* lpSwr_   = nullptr;       // which SWR the sweep believes
+    QLabel*    lpTest_  = nullptr;
     QString    liveRadioDev_, liveKeyerDev_, liveMeterDev_;
     QString    devSerial_, devRemote_;   // Omni VII serial / Ethernet profiles
     QString    devOrion_;                // Orion serial profile
