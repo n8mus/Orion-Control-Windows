@@ -273,6 +273,7 @@ void MainWindow::startSwrSweep(bool wholeBand) {
     swrStepCount_ = kSwrSteps;
     lastSwrMs_ = 0;
     swrUsedMeter_ = meterSwrReady();
+    swrMeterPts_ = 0;
     startManualTune();
     if (!tuning_) return;                          // carrier did not start
     // The sweep does NOT touch the meter's display mode — operator's call
@@ -297,7 +298,7 @@ void MainWindow::startSwrSweep(bool wholeBand) {
                 "— any click aborts")
             .arg(swrF0_ / 1e6, 0, 'f', 3).arg(swrF1_ / 1e6, 0, 'f', 3)
             .arg(swrStepCount_).arg(txBar_->tuneLevel())
-            .arg(swrUsedMeter_ ? "the LP-100A" : "the radio"));
+            .arg(swrUsedMeter_ ? "the wattmeter" : "the radio"));
 }
 
 void MainWindow::swrTickStep() {
@@ -338,6 +339,7 @@ void MainWindow::swrTickStep() {
                 pt.zValid = true;
             }
             fresh = true;
+            swrMeterPts_++;
         }
     }
     if (!fresh && lastSwrMs_ > swrStepArmedMs_) {         // radio's own @STF
@@ -412,6 +414,18 @@ void MainWindow::stopSwrSweep(bool completed) {
                 break;
             }
         }
+        // The trap this catches is real (it caught the operator): meter
+        // alive and streaming, but its COUPLER is in the other radio's
+        // antenna line, so it honestly reports 0 W all sweep and every
+        // point silently falls back to the radio's coarse @STF. Say so —
+        // a curve that quietly isn't what the operator asked for is worse
+        // than an error.
+        if (swrUsedMeter_ && swrMeterPts_ == 0)
+            msg += " — WATTMETER SAW NO RF (coupler in this radio's "
+                   "line?); curve is the radio's own reading";
+        else if (swrUsedMeter_ && swrMeterPts_ < swrPts_.size())
+            msg += QString(" (%1 of %2 points from the wattmeter)")
+                       .arg(swrMeterPts_).arg(swrPts_.size());
         statusBar()->showMessage(msg, 15000);
     } else {
         statusBar()->showMessage(

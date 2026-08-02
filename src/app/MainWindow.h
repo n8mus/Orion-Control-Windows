@@ -194,7 +194,8 @@ private:
     double   lastSwr_ = 0.0;                   // newest @STF SWR reading
     qint64   lastSwrMs_ = 0;
     bool     swrQuietTune_ = false;            // sweep tunes bypass plan-mode
-    bool     swrUsedMeter_ = false;            // this run read the LP-100A
+    bool     swrUsedMeter_ = false;            // this run wanted the wattmeter
+    int      swrMeterPts_ = 0;                 // points that actually came from it
     QHash<QString, QVector<PanadapterWidget::SwrRun>> swrRuns_;  // band label ->
     QPointer<QDialog> smithDlg_;               // non-modal Smith chart
     void setLoOff(int off);                   // pan + CW decoder follow
