@@ -1463,6 +1463,22 @@ MainWindow::MainWindow(QWidget* parent)
         "While transmitting, drop the RSP2 gain hard so your own signal\n"
         "shows cleanly on the panadapter (keying envelope, speech width)\n"
         "instead of overload hash. Restores receive gain ~1 s after unkey.");
+    // Antenna flip on TX: hop the RSP2 to the OTHER port while the
+    // transmitter is up, so the pan shows that port instead of the blast
+    // on the shared feed. With the far port empty that's a calm screen;
+    // with the RF sampler (bench plan) on it, it becomes a clean TX
+    // monitor. Rides the TX monitor's detection and hang timer.
+    txFlipAct_ = sdrMenu->addAction("Flip to the other antenna on TX");
+    txFlipAct_->setCheckable(true);
+    txFlipAct_->setChecked(QSettings().value("sdr/txAntFlip", false).toBool());
+    txFlipAct_->setToolTip(
+        "While transmitting, switch the RSP2 to the opposite antenna port\n"
+        "(back on the receive port after the TX-monitor hang). Empty port =\n"
+        "quiet screen during TX; a TX sampler on that port = clean TX view.\n"
+        "Needs TX monitor enabled — it shares the same transmit detection.");
+    connect(txFlipAct_, &QAction::toggled, this, [](bool on) {
+        QSettings().setValue("sdr/txAntFlip", on);
+    });
     // Panic arming is TX-scoped by the txTick below — never armed on a
     // plain receive, no matter how hot the band runs the ADC.
     sdr_.setTxPanic(false);
@@ -1519,6 +1535,11 @@ MainWindow::MainWindow(QWidget* parent)
         if (tx) lastTxMs_ = now;
         if (!txMonAct_->isChecked()) {
             panicked_ = false;             // disabled = nothing slams; a
+            if (txAntFlipped_) {           // monitor turned off mid-TX:
+                txAntFlipped_ = false;     // never strand the RX antenna
+                sdr_.setAntennaB(
+                    QSettings().value("sdr/antennaB", false).toBool());
+            }
             return;                        // latched flag was muting Auto
         }                                  // LNA (live-found: stuck LNA 0)
         // Arm the callback's panic slam ONLY around actual transmit
@@ -1547,10 +1568,25 @@ MainWindow::MainWindow(QWidget* parent)
             txSaveGr_ = sdr_.gainReduction();
             txSaveLna_ = sdr_.lnaState();
             sdr_.setGainLive(59, 8);
-            statusBar()->showMessage("TX monitor: gain dropped");
+            // Antenna flip: hop to the port the transmitter is NOT on.
+            // The RX port is re-read from settings at both ends so a
+            // mid-session A/B change never restores to a stale port.
+            if (txFlipAct_->isChecked()) {
+                txAntFlipped_ = true;
+                sdr_.setAntennaB(
+                    !QSettings().value("sdr/antennaB", false).toBool());
+            }
+            statusBar()->showMessage(txAntFlipped_
+                ? "TX monitor: gain dropped, antenna flipped"
+                : "TX monitor: gain dropped");
         } else if (txMonOn_ && now - lastTxMs_ > txMonHangMs_) {
             txMonOn_ = false;
             panicked_ = false;
+            if (txAntFlipped_) {
+                txAntFlipped_ = false;
+                sdr_.setAntennaB(
+                    QSettings().value("sdr/antennaB", false).toBool());
+            }
             sdr_.setGainLive(txSaveGr_, txSaveLna_);
             iqPeak_.exchange(0.0f);        // don't feed TX peaks to Auto LNA
             {

@@ -318,6 +318,8 @@ private:
     // txTick timer in MainWindow.cpp. Ant-B coupler switch lands here
     // when the RF sampler hardware arrives (Option C).
     QAction* txMonAct_ = nullptr;
+    QAction* txFlipAct_ = nullptr;         // hop to the other antenna on TX
+    bool     txAntFlipped_ = false;        // RSP2 currently on the TX-side port
     bool     txMonOn_ = false;
     bool     radioTx_ = false;
     int      txSaveGr_ = 45, txSaveLna_ = 3;
