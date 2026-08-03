@@ -131,6 +131,7 @@ private:
     quint64  voacapKey_ = 0;
     bool     voacapEnabled_ = true;
     bool     voacapWarned_ = false;
+    bool     voacapSsnWarned_ = false;     // one-time "waiting for SSN" note
     void maybeRunVoacap();
     QStringList      parkFilter_;                  // POTA park countries in area
     CtyLookup        cty_;                         // callsign -> country coords

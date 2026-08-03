@@ -564,9 +564,12 @@ MainWindow::MainWindow(QWidget* parent)
         freqDisp_->setLargeDigits(d.bigVfo);
         freqDispB_->setLargeDigits(d.bigVfo);
         panel_->setClockVisible(d.showClock);
-        // The "Solar data panel" toggle governs everything solar (corner
-        // panel AND the map sun marker), so it alone gates the NOAA poller.
-        solarClient_.setEnabled(d.showSolar);
+        // The "Solar data panel" toggle governs the solar DISPLAY (corner
+        // panel + map sun marker) — but the NOAA poller feeds VOACAP's SSN
+        // too, so it runs when EITHER consumer wants it. solar=false with
+        // voacap=true silently starved the forecast for an entire session
+        // (live-found: 20 m, band wide open, not one contour).
+        solarClient_.setEnabled(d.showSolar || d.showVoacap);
         voacapEnabled_ = d.showVoacap;
     }
     connect(&solarClient_, &SolarClient::updated, this, [this] {
@@ -592,8 +595,8 @@ MainWindow::MainWindow(QWidget* parent)
                 freqDispB_->setLargeDigits(d.bigVfo);
                 panel_->setClockVisible(d.showClock);
                 voacapEnabled_ = d.showVoacap;
+                solarClient_.setEnabled(d.showSolar || d.showVoacap);
                 maybeRunVoacap();
-                solarClient_.setEnabled(d.showSolar);
                 cwZap_ = d.cwZap;
                 saveDisplay(d);
             });
@@ -3146,7 +3149,18 @@ void MainWindow::maybeRunVoacap() {
         return;
     }
     const int ssn = solarClient_.data().ssn;
-    if (ssn <= 0 || curBand_ < 0 || is60m(curBand_)) return;
+    if (ssn <= 0) {
+        // Starving for solar data is a state the operator can't see —
+        // say it once instead of silently skipping every recheck.
+        if (!voacapSsnWarned_) {
+            voacapSsnWarned_ = true;
+            statusBar()->showMessage(
+                "VOACAP: waiting for solar data (SSN) from NOAA", 8000);
+        }
+        return;
+    }
+    voacapSsnWarned_ = false;
+    if (curBand_ < 0 || is60m(curBand_)) return;
     double la = 0.0, lo = 0.0;
     const QString grid =
         QSettings().value("station/grid", "EN83al").toString().trimmed();
