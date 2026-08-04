@@ -411,7 +411,7 @@ MainWindow::MainWindow(QWidget* parent)
         return std::clamp(static_cast<int>(std::lround(f * 100.0)), 0, 100);
     };
     connect(zoom, &QSlider::valueChanged, this,
-            [this, zoom, spanFromSlider, sliderFromSpan](int v) {
+            [this, zoom, spanFromSlider](int v) {
         const int spanHz = spanFromSlider(v);
         // Zooming OUT to (or past) the band's width lands on the band
         // overview — the whole-band view is the terminal zoomed-out state
@@ -422,8 +422,11 @@ MainWindow::MainWindow(QWidget* parent)
         // Ctrl+wheel does (the "deliberate way out" must not depend on
         // which zoom control the operator reached for).
         if (zoomToBandFrame(spanHz)) {
-            const QSignalBlocker b(zoom);      // land the knob on the frame
-            zoom->setValue(sliderFromSpan(pan_->viewSpanHz()));
+            // The overview IS this band's "fully out" — park the knob at
+            // full-left instead of yanking it back to the frame span's
+            // nominal position (which read as a stuck slider, live-found).
+            const QSignalBlocker b(zoom);
+            zoom->setValue(0);
         } else if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
             exitBandFrame(spanHz);
         else
@@ -1645,7 +1648,7 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(pan_, &PanadapterWidget::passbandChanged,  this, &MainWindow::onPassbandChanged);
     connect(pan_, &PanadapterWidget::viewSpanChanged,  this,
-            [this, zoom, sliderFromSpan](int spanHz) {
+            [this, zoom](int spanHz) {
         statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
         // Zoom-out terminal state: at or past the band's width, land on
         // the band overview (see the zoom slider's handler — same rule,
@@ -1657,8 +1660,8 @@ MainWindow::MainWindow(QWidget* parent)
             fprintf(stderr, "[view] spanChanged %d frameC=%llu frameSpan=%d\n",
                     spanHz, (unsigned long long)frameCenterHz_, frameSpanHz_);
         if (zoomToBandFrame(spanHz)) {
-            const QSignalBlocker b(zoom);      // knob follows the frame, not
-            zoom->setValue(sliderFromSpan(pan_->viewSpanHz()));   // the wheel
+            const QSignalBlocker b(zoom);      // overview = fully out: knob
+            zoom->setValue(0);                 // parks full-left (see slider)
             return;
         }
         if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
