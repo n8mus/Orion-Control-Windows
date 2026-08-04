@@ -410,14 +410,21 @@ MainWindow::MainWindow(QWidget* parent)
         const double f = std::log(double(spanHz) / pan_->maxViewSpanHz()) / std::log(ratio);
         return std::clamp(static_cast<int>(std::lround(f * 100.0)), 0, 100);
     };
-    connect(zoom, &QSlider::valueChanged, this, [this, spanFromSlider](int v) {
+    connect(zoom, &QSlider::valueChanged, this,
+            [this, zoom, spanFromSlider, sliderFromSpan](int v) {
         const int spanHz = spanFromSlider(v);
-        // The slider is manual zoom too: exit the band overview exactly
-        // like Ctrl+wheel does, or the frame's parked LO squeezes the
-        // request and the next wheel step yanks the view back onto the
-        // frame (the "deliberate way out" must not depend on which zoom
-        // control the operator reached for).
-        if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
+        // Zooming OUT to (or past) the band's width lands on the band
+        // overview — the whole-band view is the terminal zoomed-out state
+        // inside a ham band. Without this, zoom-out went classic and
+        // expanded around wherever the last click left the dial: a view
+        // wider than the band and off its center (live-found). Otherwise
+        // the slider is manual zoom: exit the band overview exactly like
+        // Ctrl+wheel does (the "deliberate way out" must not depend on
+        // which zoom control the operator reached for).
+        if (zoomToBandFrame(spanHz)) {
+            const QSignalBlocker b(zoom);      // land the knob on the frame
+            zoom->setValue(sliderFromSpan(pan_->viewSpanHz()));
+        } else if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
             exitBandFrame(spanHz);
         else
             pan_->setViewSpanHz(spanHz);
@@ -1637,14 +1644,23 @@ MainWindow::MainWindow(QWidget* parent)
         sinceFilterEdit_.restart();
     });
     connect(pan_, &PanadapterWidget::passbandChanged,  this, &MainWindow::onPassbandChanged);
-    connect(pan_, &PanadapterWidget::viewSpanChanged,  this, [this](int spanHz) {
+    connect(pan_, &PanadapterWidget::viewSpanChanged,  this,
+            [this, zoom, sliderFromSpan](int spanHz) {
         statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
-        // Manual zoom while the band overview is up = the deliberate way
-        // out: drop the frame and land at the chosen span, classic LO
-        // (exitBandFrame re-applies the span after normalizing).
+        // Zoom-out terminal state: at or past the band's width, land on
+        // the band overview (see the zoom slider's handler — same rule,
+        // same reason). Zooming IN while the overview is up remains the
+        // deliberate way out: drop the frame and land at the chosen span,
+        // classic LO (exitBandFrame re-applies the span after
+        // normalizing).
         if (qEnvironmentVariableIsSet("TTC_TRACE"))
             fprintf(stderr, "[view] spanChanged %d frameC=%llu frameSpan=%d\n",
                     spanHz, (unsigned long long)frameCenterHz_, frameSpanHz_);
+        if (zoomToBandFrame(spanHz)) {
+            const QSignalBlocker b(zoom);      // knob follows the frame, not
+            zoom->setValue(sliderFromSpan(pan_->viewSpanHz()));   // the wheel
+            return;
+        }
         if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
             exitBandFrame(spanHz);
     });

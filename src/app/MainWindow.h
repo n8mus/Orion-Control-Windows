@@ -202,6 +202,7 @@ private:
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing
+    bool zoomToBandFrame(int spanHz);         // zoom-out terminal = band view
     void applyFrame(int64_t centerAbsHz, int spanHz);     // hold view on a range
     void exitBandFrame(int reapplySpanHz);    // 0 = leave view to the caller
     QTimer* sfTx_ = nullptr;                  // coalesced sub-filter drag stream

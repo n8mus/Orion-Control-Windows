@@ -377,8 +377,30 @@ void MainWindow::setLoOff(int off) {
 // all just move the marker inside it (operator verdict after the live
 // try: a click must not yank the view off the band — the first cut dove
 // back to the old zoom and showed out-of-band half the time). Exit is
-// deliberate: manual zoom (keeps the span you chose), tuning out of the
-// frame, or another band button.
+// deliberate: manual zoom IN (keeps the span you chose), tuning out of
+// the frame, or another band button.
+
+// Zoom-out's landing pad: once a manual zoom reaches (or passes) the
+// band's framed width, re-enter the band overview instead of going
+// classic — otherwise the view expands around wherever the last click
+// left the dial, wider than the band and off its center (live-found:
+// zoom in, work a few signals, zoom out, land in the void). The rule is
+// one-sided on purpose: zooming IN is still the deliberate way out of
+// the overview; zooming OUT just arrives home. 60 m stays out
+// (channelized, no overview), and out-of-band dials keep the classic
+// behavior — there is no band to land on.
+bool MainWindow::zoomToBandFrame(int spanHz) {
+    if (curBand_ < 0 || is60m(curBand_)) return false;
+    constexpr int kGuardHz = 20000;
+    const int64_t bandW =
+        int64_t(kBands[curBand_].hiHz) - int64_t(kBands[curBand_].loHz);
+    const int frameSpan = int(std::min<int64_t>(
+        bandW, (kSdrCaptureHz - 2 * kGuardHz) / 2));
+    if (spanHz < frameSpan) return false;
+    frameBand(kBands[curBand_].loHz, kBands[curBand_].hiHz);
+    return true;
+}
+
 void MainWindow::frameBand(uint64_t bandLo, uint64_t bandHi) {
 #ifdef HAVE_SDRPLAY
     if (sdrLoHz_ == 0) return;                       // no SDR running
