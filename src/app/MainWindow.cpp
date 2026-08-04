@@ -2273,13 +2273,21 @@ MainWindow::MainWindow(QWidget* parent)
     // antenna button groups, driven over *KV / *KA).
     connect(routing_, &RoutingPanel::vfoAssignmentEdited, this,
             [this, applyVfoColors](char m, char s, char t) {
+                // Snapshot BEFORE the radio call: the Omni driver confirms
+                // its split flag by emitting vfoAssignmentReported
+                // synchronously inside setVfoAssignment, and that handler
+                // sets txVfo_/rxVfo_ — so testing them after the call sees
+                // "B was already engaged" and skips the park (live-found:
+                // split on the Omni never parked B). The Orion answers by
+                // poll, later, and never hit this.
+                const char prevTx = txVfo_, prevRx = rxVfo_;
                 radio_->setVfoAssignment(m, s, t);
                 // One-click split setup (no separate split button): the moment a
                 // click puts VFO B on TX or RX, park B above the dial — 5 kHz
                 // in voice, 1 kHz in CW. The radio's own menu copies the mode
                 // to the sub, so only the dial needs setting.
-                const bool bEngaged = (t == 'B' && txVfo_ != 'B')
-                                   || (m == 'B' && rxVfo_ != 'B');
+                const bool bEngaged = (t == 'B' && prevTx != 'B')
+                                   || (m == 'B' && prevRx != 'B');
                 txVfo_ = t;
                 rxVfo_ = m;
                 if (bEngaged && !vfoLockB_) {       // locked B: engage without the park
