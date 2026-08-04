@@ -401,13 +401,26 @@ MainWindow::MainWindow(QWidget* parent)
         topGrid->setColumnMinimumWidth(5, sym);
     }
 
-    auto spanFromSlider = [this](int v) {
-        const double ratio = double(pan_->minViewSpanHz()) / pan_->maxViewSpanHz();
-        return static_cast<int>(std::lround(pan_->maxViewSpanHz() * std::pow(ratio, v / 100.0)));
+    // The zoom scale's top is band-aware: inside a ham band, full-left is
+    // the band overview itself, so the knob has zero dead travel — the
+    // first nudge right leaves the frame and starts zooming. A
+    // capture-wide top left an inch of travel that all mapped to "wider
+    // than the band" and read as a hitch (live-found). Out of band, or on
+    // 60 m, the top is the capture-wide maximum as before.
+    auto zoomTopSpan = [this] {
+        const int frame = bandFrameSpanHz();
+        return frame > 0 ? std::min(frame, pan_->maxViewSpanHz())
+                         : pan_->maxViewSpanHz();
     };
-    auto sliderFromSpan = [this](int spanHz) {
-        const double ratio = double(pan_->minViewSpanHz()) / pan_->maxViewSpanHz();
-        const double f = std::log(double(spanHz) / pan_->maxViewSpanHz()) / std::log(ratio);
+    auto spanFromSlider = [this, zoomTopSpan](int v) {
+        const int top = zoomTopSpan();
+        const double ratio = double(pan_->minViewSpanHz()) / top;
+        return static_cast<int>(std::lround(top * std::pow(ratio, v / 100.0)));
+    };
+    auto sliderFromSpan = [this, zoomTopSpan](int spanHz) {
+        const int top = zoomTopSpan();
+        const double ratio = double(pan_->minViewSpanHz()) / top;
+        const double f = std::log(double(spanHz) / top) / std::log(ratio);
         return std::clamp(static_cast<int>(std::lround(f * 100.0)), 0, 100);
     };
     connect(zoom, &QSlider::valueChanged, this,

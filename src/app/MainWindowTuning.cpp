@@ -389,14 +389,22 @@ void MainWindow::setLoOff(int off) {
 // the overview; zooming OUT just arrives home. 60 m stays out
 // (channelized, no overview), and out-of-band dials keep the classic
 // behavior — there is no band to land on.
-bool MainWindow::zoomToBandFrame(int spanHz) {
-    if (curBand_ < 0 || is60m(curBand_)) return false;
+// The span the band overview would use for the current band — also the
+// zoom scale's top while in a band, so the slider's full-left IS the
+// overview and the first nudge right starts zooming (a capture-wide top
+// left an inch of dead travel that all mapped to "wider than the band",
+// live-found as a hitch in the knob).
+int MainWindow::bandFrameSpanHz() const {
+    if (curBand_ < 0 || is60m(curBand_)) return -1;
     constexpr int kGuardHz = 20000;
     const int64_t bandW =
         int64_t(kBands[curBand_].hiHz) - int64_t(kBands[curBand_].loHz);
-    const int frameSpan = int(std::min<int64_t>(
-        bandW, (kSdrCaptureHz - 2 * kGuardHz) / 2));
-    if (spanHz < frameSpan) return false;
+    return int(std::min<int64_t>(bandW, (kSdrCaptureHz - 2 * kGuardHz) / 2));
+}
+
+bool MainWindow::zoomToBandFrame(int spanHz) {
+    const int frameSpan = bandFrameSpanHz();
+    if (frameSpan < 0 || spanHz < frameSpan) return false;
     frameBand(kBands[curBand_].loHz, kBands[curBand_].hiHz);
     return true;
 }
