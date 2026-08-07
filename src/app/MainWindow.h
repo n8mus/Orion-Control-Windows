@@ -319,6 +319,7 @@ private:
     QDateTime qsoStartUtc_;                    // when the call landed in the field
     AutoGain autoLna_;                         // RF AGC policy (skimmer)
     std::atomic<float> iqPeak_{0.0f};          // wideband |peak| since last read
+    std::atomic<uint64_t> iqSampleCount_{0};   // delivery meter (SDR thread)
     // TX monitor (Option A): gain slam while transmitting; see the
     // txTick timer in MainWindow.cpp. Ant-B coupler switch lands here
     // when the RF sampler hardware arrives (Option C).

@@ -5,6 +5,7 @@
 #include <QHash>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace ttc {
 
@@ -231,9 +232,22 @@ QString FldigiCwEngine::process(float mag) {
                                     0.0, 100.0);
 
     // hysteresis detector around the signal average (fldigi: ±5%).
+    // Dominance gate (our divergence from the port, sweepable via
+    // TTC_DOMGATE while it earns its keep): a tone may only START above
+    // this fraction of the AGC peak — i.e. of the STRONG station's
+    // level. A co-channel interferer 6-9 dB down keys the stock
+    // detector in the strong station's gaps (live-found: a practice
+    // along-sender zero-beat under W1AW shredded 27 dB copy); normValue
+    // is already value/agcPeak_, so the gate is a direct fraction, and
+    // a lone weak station still normalizes to ~1 and passes.
+    static const double kDom = [] {
+        const char* v = std::getenv("TTC_DOMGATE");
+        return v ? atof(v) : 0.0;
+    }();
     const double upper = 1.05 * normSig, lower = 0.95 * normSig;
+    const double startThr = std::max(upper, kDom);
     if (metric_ > squelch_) {
-        if (normValue > upper && state_ != State::InTone) {
+        if (normValue > startThr && state_ != State::InTone) {
             if (state_ == State::Idle) {
                 repBuf_.clear();
                 durBuf_.clear();

@@ -2769,6 +2769,7 @@ MainWindow::MainWindow(QWidget* parent)
     cwDec_ = new CwDecoder(double(spanHz), -double(kLoOffsetHz), this);
     Q_ASSERT(spanHz == kSdrCaptureHz);     // skim_ mixes at this same constant
     const auto iqHandler = [this](const IqBlock& iq) {
+        iqSampleCount_.fetch_add(iq.size(), std::memory_order_relaxed);
         spectrum_.addSamples(iq);
         // During ADC clip (TX onset) the stream is broadband hash — keep
         // it out of the decoders; the display freeze handles the eyes.
@@ -2864,6 +2865,34 @@ MainWindow::MainWindow(QWidget* parent)
         sdrLoHz_ = centerHz_ + kLoOffsetHz;
         statusBar()->showMessage(QString("RSP2 panadapter %1 MHz, span %2 kHz  |  rigctld :4532")
                                      .arg(centerHz_ / 1e6, 0, 'f', 4).arg(spanHz / 1000));
+        // Delivery meter: a silently starving USB stream is a night-
+        // killer — a shared hub segment once delivered 37% of samples
+        // and every decoder garbled identically while the radio path
+        // read clean (live-found 2026-08-07, a full evening of decoder
+        // suspicion later). The console now watches its own feed.
+        {
+            auto* iqRate = new QTimer(this);
+            iqRate->setInterval(5000);
+            connect(iqRate, &QTimer::timeout, this, [this] {
+                static uint64_t last = 0;
+                const uint64_t now =
+                    iqSampleCount_.load(std::memory_order_relaxed);
+                const uint64_t d = now - last;
+                last = now;
+                if (d == 0) return;            // stream not running
+                const double pct = 100.0 * double(d) / 5.0
+                    / double(sdrSpanHz_ > 0 ? sdrSpanHz_ : 1);
+                if (std::getenv("TTC_SELFTEST"))
+                    std::fprintf(stderr, "[iqrate] %.0f%% (%.2f MS/s)\n",
+                                 pct, double(d) / 5e6);
+                if (pct < 95.0)
+                    statusBar()->showMessage(
+                        QString("⚠ SDR delivering %1% of samples — USB "
+                                "starving? decoders unreliable")
+                            .arg(pct, 0, 'f', 0), 6000);
+            });
+            iqRate->start();
+        }
         // Unattended capture: TTC_RECIQ=<secs> records from startup (pair
         // with TTC_SELFTEST a little longer to quit cleanly after).
         // TTC_RECIQ_AFTER=<secs> delays the start — the dial begins on

@@ -119,9 +119,13 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         const float ditEst = legacy ? float(gapMin_)
             : float(bayes ? bayes_.dotMs() : eng_.dotMs());
         const bool deep = deep_.load(std::memory_order_relaxed);
+        static const float kFirLo = [] {   // sweepable floor (TTC_FIRLO)
+            const char* v = std::getenv("TTC_FIRLO");
+            return v ? float(atof(v)) : 40.0f;
+        }();
         const float fc = deep
             ? std::clamp(2400.0f / ditEst, 15.0f, 60.0f)
-            : std::clamp(2400.0f / ditEst, 40.0f, 150.0f);
+            : std::clamp(2400.0f / ditEst, kFirLo, 150.0f);
         std::complex<float> s;
         if (legacy) {
             const float a =
@@ -169,7 +173,9 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         }
         // AFC: while the key is down the filtered sample is a carrier;
         // successive-sample phase advance IS the residual frequency error.
-        if (legacy ? key_ : (bayes ? bayes_.inTone() : eng_.inTone())) {
+        static const bool kNoAfc = std::getenv("TTC_NOAFC") != nullptr;
+        if (!kNoAfc
+            && (legacy ? key_ : (bayes ? bayes_.inTone() : eng_.inTone()))) {
             const std::complex<float> d = s * std::conj(afcPrevZ_);
             if (std::abs(d) > 1e-9f) {
                 const double errHz =
@@ -205,9 +211,19 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
             // same places on tonight's W1AW capture until this was added
             // — the errors tracked the flutter, not the algorithms.
             const float mag = std::abs(s);
+            // Release rate is sweepable (TTC_AGCDN) while the Farnsworth
+            // fix is being tuned on live W1AW captures.
+            static const float kAgcDn = [] {
+                const char* v = std::getenv("TTC_AGCDN");
+                return v ? float(atof(v)) : 0.0017f;
+            }();
             if (mag > agcPk_) agcPk_ += 0.5f * (mag - agcPk_);   // ~1 ms up
-            else              agcPk_ += 0.0017f * (mag - agcPk_); // ~300 ms dn
+            else              agcPk_ += kAgcDn * (mag - agcPk_); // ~300 ms dn
             const float norm = agcPk_ > 1e-6f ? mag / agcPk_ : 0.0f;
+            if (std::getenv("TTC_CWENV")) {   // engine-path envelope dump
+                static int k = 0;
+                std::fprintf(stderr, "[env] %d %.6f %.6f\n", k++, mag, norm);
+            }
             const QString out =
                 bayes ? bayes_.process(norm) : eng_.process(norm);
             if (!out.isEmpty()) emit textDecoded(out);
