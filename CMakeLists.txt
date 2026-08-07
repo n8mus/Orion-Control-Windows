@@ -59,7 +59,9 @@ add_executable(tentec-console
   src/cw/AudioCwSource.cpp      src/cw/AudioCwSource.h
   src/cw/SkimmerEngine.cpp      src/cw/SkimmerEngine.h
   src/cw/SkimServer.cpp         src/cw/SkimServer.h
+  src/cw/SkimStft.cpp           src/cw/SkimStft.h
   src/ui/SkimmerWindow.cpp      src/ui/SkimmerWindow.h
+  src/ui/SkimViewWindow.cpp     src/ui/SkimViewWindow.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/SmithChartWidget.cpp   src/ui/SmithChartWidget.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h

@@ -12,9 +12,11 @@
 #include "cw/CwDecoder.h"
 #include "cw/SkimmerEngine.h"
 #include "cw/SkimServer.h"
+#include "cw/SkimStft.h"
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
 #include "ui/SkimmerWindow.h"
+#include "ui/SkimViewWindow.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -197,9 +199,10 @@ void MainWindow::setupCwUi() {
                             applyRouting();
                         });
                 // Decode-engine adjustments: apply the persisted state now,
-                // then live-follow the window's controls. This tuned reader
-                // is the only instance that runs the fldigi engine — the
-                // skimmer's channels stay on the legacy path.
+                // then live-follow the window's controls. These knobs steer
+                // the tuned reader (and its audio twin) only — the skimmer's
+                // channels run the engine at its defaults (SOM off; see
+                // SkimmerEngine's constructor for why).
                 const auto applyCfg = [this](bool eng, bool som, bool deep,
                                              int atk, int dcy) {
                     for (CwDecoder* d : {cwDec_, audioDec_}) {
@@ -248,6 +251,9 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
         return cty_.lookup(call, la, lo);          // no country prefix
     });
     skim_->setKnownCalls(loadMasterScp());
+    // The SKIM view's fast STFT taps the IQ stream in MainWindow's
+    // iqHandler; it costs one branch per block until the window opens.
+    skimStft_ = new SkimStft(double(kSdrCaptureHz), this);
     auto* skimBtn = new QToolButton(topStrip_);
     skimBtn->setText("SKIM ▾");
     skimBtn->setPopupMode(QToolButton::InstantPopup);
@@ -291,6 +297,14 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
         skimWin_->raise();
         skimWin_->activateWindow();
     });
+    // Waterfall: the CW-Skimmer-style view — keying visible per station,
+    // decoded calls riding the traces.
+    auto* skimView = skimMenu->addAction("Waterfall view…");
+    skimView->setToolTip(
+        "High-resolution waterfall of the CW segment: every station's dits\n"
+        "and dahs visible, decoded callsigns next to their traces. Click a\n"
+        "trace to tune, wheel to zoom.");
+    connect(skimView, &QAction::triggered, this, &MainWindow::openSkimView);
     // Local RBN: serve the finds over cluster telnet while the skimmer
     // runs — point cqrlog's DX-cluster window at localhost:7300 and this
     // station spots for itself.
@@ -365,6 +379,33 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
                     8000);
             });
 
+}
+
+void MainWindow::openSkimView() {
+    if (!skimView_) {
+        skimView_ = new SkimViewWindow(
+            skimStft_, skim_,
+            [this](const QString& call, qint64 hz) {
+                if (!logbook_.ready()) return QChar('?');
+                return logbook_.status(call, LogbookIndex::bandForHz(hz));
+            },
+            [this](qint64& dial, int& loOff) {
+                dial = qint64(centerHz_);
+                loOff = loOffHz_;
+            },
+            this);
+        connect(skimView_, &SkimViewWindow::tuneTo, this,
+                [this](qint64 hz, const QString& call) {
+                    tuneAbsolute(uint64_t(hz));
+                    if (!call.isEmpty()) {
+                        if (cwWin_) cwWin_->setHisCall(call);
+                        sendCqrLookup(call);
+                    }
+                });
+    }
+    skimView_->show();
+    skimView_->raise();
+    skimView_->activateWindow();
 }
 
 void MainWindow::setupDigiUi() {

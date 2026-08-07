@@ -41,6 +41,8 @@
 #include "cw/CwDecoder.h"
 #include "cw/SkimmerEngine.h"
 #include "cw/SkimServer.h"
+#include "cw/SkimStft.h"
+#include "ui/SkimViewWindow.h"
 #include "net/FldigiClient.h"
 #include "net/SpotClient.h"
 #include "ui/DigiWindow.h"
@@ -1287,10 +1289,10 @@ MainWindow::MainWindow(QWidget* parent)
     // included) can be re-run on a real recording. Park on the band first
     // — the recording stops itself if the dial moves.
     iqRec_ = new IqRecorder(this);
-    recIqAct_ = sdrMenu->addAction("Record band IQ (~2 MB/s)");
+    recIqAct_ = sdrMenu->addAction("Record band IQ (~4 MB/s)");
     recIqAct_->setCheckable(true);
     recIqAct_->setToolTip(
-        "Write the raw 500 kHz capture to disk (.tciq). Everything the "
+        "Write the raw 1 MHz capture to disk (.tciq). Everything the "
         "panadapter\nsees, replayable through the skimmer/decoder later. "
         "Park on the band first;\ntuning stops the recording.");
     connect(recIqAct_, &QAction::toggled, this, [this](bool on) {
@@ -1300,7 +1302,12 @@ MainWindow::MainWindow(QWidget* parent)
                       .arg(QDateTime::currentDateTimeUtc()
                                .toString("yyyyMMdd-hhmmss"))
                       .arg(centerHz_ / 1000);
-            if (iqRec_->start(path, 500000.0,
+            // Header rate must be the rate feed() actually receives — it
+            // was left at the old 500 k literal when the capture went to
+            // 1 MHz (found 2026-08-06 before any capture was taken wrong).
+            if (iqRec_->start(path,
+                              sdrSpanHz_ > 0 ? double(sdrSpanHz_)
+                                             : double(kSdrCaptureHz),
                               double(centerHz_) + loOffHz_))
                 statusBar()->showMessage("IQ recording -> " + path);
             else {
@@ -2767,6 +2774,7 @@ MainWindow::MainWindow(QWidget* parent)
         if (!clipped) {
             cwDec_->processIq(iq.data(), iq.size());
             skim_->processIq(iq.data(), iq.size());
+            skimStft_->processIq(iq.data(), iq.size());
         }
         iqRec_->feed(iq);
         // Wideband peak for the Auto LNA loop (read+reset by a GUI timer).
@@ -2787,12 +2795,28 @@ MainWindow::MainWindow(QWidget* parent)
             && std::memcmp(hdr, "TTCIQ01", 7) == 0) {
             std::memcpy(&fRate, hdr + 8, 8);
             std::memcpy(&fCenter, hdr + 16, 8);
-            centerHz_ = uint64_t(fCenter) - kLoOffsetHz;
+            // Era facts the header doesn't carry: the 500 ksps captures
+            // rode a 60 kHz LO offset, the 1 MHz era rides kLoOffsetHz —
+            // and an old capture must rescale the whole pipeline or every
+            // decoder runs at half time (dits read double, dial 200 kHz
+            // off; the constants changed 2026-07-31).
+            const int fLoOff = fRate < 750000.0 ? 60000 : kLoOffsetHz;
+            centerHz_ = uint64_t(fCenter) - fLoOff;
             sdrLoHz_ = uint64_t(fCenter);       // replay LO is frozen classic
             freqDisp_->setFrequency(centerHz_);
             pan_->setCenterHz(centerHz_);
+            if (int(fRate) != spanHz) {
+                pan_->setSpanHz(int(fRate));
+                sdrSpanHz_ = int(fRate);
+                cwDec_->setInputRate(fRate);
+                skim_->setInputRate(fRate);
+                skimStft_->setInputRate(fRate);
+            }
+            setLoOff(fLoOff);
             const bool fast = std::getenv("TTC_IQFAST") != nullptr;
-            replayThread_ = QThread::create([this, f, fast] {
+            const unsigned long paceUs =
+                static_cast<unsigned long>(16384.0 * 1e6 / fRate);
+            replayThread_ = QThread::create([this, f, fast, paceUs] {
                 std::vector<int16_t> raw(16384 * 2);
                 IqBlock blk(16384);
                 while (!replayStop_.load(std::memory_order_relaxed)) {
@@ -2806,7 +2830,8 @@ MainWindow::MainWindow(QWidget* parent)
                     spectrum_.addSamples(blk);
                     cwDec_->processIq(blk.data(), blk.size());
                     skim_->processIq(blk.data(), blk.size());
-                    if (!fast) QThread::usleep(32768);         // real time
+                    skimStft_->processIq(blk.data(), blk.size());
+                    if (!fast) QThread::usleep(paceUs);        // real time
                 }
                 std::fprintf(stderr, "[replay] end of file\n");
             });
@@ -2837,6 +2862,22 @@ MainWindow::MainWindow(QWidget* parent)
         }
     } else if (!replayThread_) {
         statusBar()->showMessage("SDR unavailable: " + QString::fromStdString(sdr_.lastError()));
+    }
+    // Headless verification: TTC_SKIMVIEW=<png path> opens the SKIM
+    // waterfall at startup and grabs it near the end of the selftest —
+    // pairs with TTC_IQFILE so the view can be eyeballed against a
+    // ground-truth capture without a WM.
+    if (const char* sv = std::getenv("TTC_SKIMVIEW")) {
+        const QString png = QString::fromLocal8Bit(sv);
+        QTimer::singleShot(0, this, [this] { openSkimView(); });
+        if (png.endsWith(QLatin1String(".png"))) {
+            int delayMs = 20000;
+            if (const char* st = std::getenv("TTC_SELFTEST"))
+                delayMs = std::max(1000, atoi(st) * 1000 - 2000);
+            QTimer::singleShot(delayMs, this, [this, png] {
+                if (skimView_) skimView_->grab().save(png);
+            });
+        }
     }
 #endif
 

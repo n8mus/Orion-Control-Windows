@@ -30,7 +30,8 @@ class QHBoxLayout;
 #include "cw/CwWindow.h"
 namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
                 class AudioCwSource;
-                class DigiWindow; class SkimServer; class SkimmerWindow; }
+                class DigiWindow; class SkimServer; class SkimmerWindow;
+                class SkimStft; class SkimViewWindow; }
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
@@ -75,6 +76,7 @@ private:
                        const QString& grid = {});
     void setupCwUi();
     void setupSkimUi(const QString& stationCall);
+    void openSkimView();               // lazy CW-Skimmer-style waterfall
     void setupDigiUi();
     void setupRotorUi();
     int  snapToCwPeak(int offsetHz, int windowHz) const; // CW zap peak finder
@@ -370,6 +372,8 @@ private:
     QLabel*  skimStatus_ = nullptr;            // live channel readout (menu)
     SkimServer* skimSrv_ = nullptr;            // local RBN telnet (:7300)
     SkimmerWindow* skimWin_ = nullptr;         // band map (lazy)
+    SkimStft* skimStft_ = nullptr;             // SKIM view's fast STFT
+    SkimViewWindow* skimView_ = nullptr;       // CW-Skimmer waterfall (lazy)
     FldigiClient* fldigi_ = nullptr;           // XML-RPC link (lazy)
     DigiWindow*   digiWin_ = nullptr;          // fldigi companion (lazy)
     RotorClient rotor_;                        // rotctld link (:4533)
