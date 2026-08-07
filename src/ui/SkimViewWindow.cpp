@@ -308,7 +308,25 @@ private:
     }
 
     void renderPixelColumn(int x, const uint8_t* col) {
-        const float floor = floorDb_ < -998.0f ? -120.0f : floorDb_;
+        // Per-column floor: a lightning crash is broadband, so it lifts
+        // its own column's median as much as its bins — normalizing
+        // against it erases the stripe while narrowband keying (a few
+        // bins above ITS column's median) keeps full contrast. QRN
+        // nights went from picket fence to readable (live-found).
+        float floor = floorDb_ < -998.0f ? -120.0f : floorDb_;
+        {
+            int b0 = int(binOfHz(viewLo_)), b1 = int(binOfHz(viewHi_));
+            b0 = std::clamp(b0, 0, SkimStft::kFft - 1);
+            b1 = std::clamp(b1, b0 + 1, SkimStft::kFft);
+            if (b1 - b0 >= 32) {
+                uint8_t s[64];
+                const int step = std::max(1, (b1 - b0) / 64);
+                int n = 0;
+                for (int b = b0; b < b1 && n < 64; b += step) s[n++] = col[b];
+                std::nth_element(s, s + n / 2, s + n);
+                floor = SkimStft::kDbMin + s[n / 2] * SkimStft::kDbStep;
+            }
+        }
         for (int y = 0; y < wfImg_.height(); ++y) {
             const auto& [b0, b1] = yBins_[size_t(y)];
             float v;
