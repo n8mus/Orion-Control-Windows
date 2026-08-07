@@ -2768,8 +2768,9 @@ MainWindow::MainWindow(QWidget* parent)
     // the SDR LO, so the decoder's mixer never moves.
     cwDec_ = new CwDecoder(double(spanHz), -double(kLoOffsetHz), this);
     Q_ASSERT(spanHz == kSdrCaptureHz);     // skim_ mixes at this same constant
-    const auto iqHandler = [this](const IqBlock& iq) {
-        iqSampleCount_.fetch_add(iq.size(), std::memory_order_relaxed);
+    // The consumer chain — runs on the IQ WORKER thread, never on the
+    // USB callback (see iqWorker_ in the header for the scar story).
+    const auto fanOut = [this](const IqBlock& iq) {
         spectrum_.addSamples(iq);
         // During ADC clip (TX onset) the stream is broadband hash — keep
         // it out of the decoders; the display freeze handles the eyes.
@@ -2793,6 +2794,36 @@ MainWindow::MainWindow(QWidget* parent)
         float cur = iqPeak_.load(std::memory_order_relaxed);
         while (m > cur && !iqPeak_.compare_exchange_weak(
                               cur, m, std::memory_order_relaxed)) {}
+        iqProcessedCount_.fetch_add(iq.size(), std::memory_order_relaxed);
+    };
+    iqWorker_ = QThread::create([this, fanOut] {
+        std::unique_lock<std::mutex> lk(iqRingMux_);
+        while (!iqWorkerStop_.load(std::memory_order_relaxed)) {
+            iqRingCv_.wait_for(lk, std::chrono::milliseconds(200), [this] {
+                return !iqRing_.empty()
+                    || iqWorkerStop_.load(std::memory_order_relaxed);
+            });
+            while (!iqRing_.empty()) {
+                IqBlock blk = std::move(iqRing_.front());
+                iqRing_.pop_front();
+                lk.unlock();
+                fanOut(blk);
+                lk.lock();
+            }
+        }
+    });
+    // Decoders must outrank GUI paints, or a busy repaint starves copy.
+    iqWorker_->start(QThread::HighPriority);
+    const auto iqHandler = [this](const IqBlock& iq) {
+        // USB callback: count, copy, go. Anything heavier here and the
+        // SDRplay service drops transfers under load.
+        iqSampleCount_.fetch_add(iq.size(), std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lg(iqRingMux_);
+            if (iqRing_.size() >= 64) iqRing_.pop_front();   // ~1 s cap
+            iqRing_.push_back(iq);
+        }
+        iqRingCv_.notify_one();
     };
     // Replay mode: TTC_IQFILE feeds a band recording through the exact
     // pipeline the RSP2 would (paced to real time; TTC_IQFAST=1 free-runs).
@@ -2874,22 +2905,32 @@ MainWindow::MainWindow(QWidget* parent)
             auto* iqRate = new QTimer(this);
             iqRate->setInterval(5000);
             connect(iqRate, &QTimer::timeout, this, [this] {
-                static uint64_t last = 0;
+                static uint64_t last = 0, lastP = 0;
                 const uint64_t now =
                     iqSampleCount_.load(std::memory_order_relaxed);
-                const uint64_t d = now - last;
+                const uint64_t nowP =
+                    iqProcessedCount_.load(std::memory_order_relaxed);
+                const uint64_t d = now - last, dp = nowP - lastP;
                 last = now;
+                lastP = nowP;
                 if (d == 0) return;            // stream not running
-                const double pct = 100.0 * double(d) / 5.0
-                    / double(sdrSpanHz_ > 0 ? sdrSpanHz_ : 1);
+                const double nom = double(sdrSpanHz_ > 0 ? sdrSpanHz_ : 1);
+                const double pct = 100.0 * double(d) / 5.0 / nom;
+                const double ppct = 100.0 * double(dp) / 5.0 / nom;
                 if (std::getenv("TTC_SELFTEST"))
-                    std::fprintf(stderr, "[iqrate] %.0f%% (%.2f MS/s)\n",
-                                 pct, double(d) / 5e6);
+                    std::fprintf(stderr,
+                                 "[iqrate] usb %.0f%%  processed %.0f%%\n",
+                                 pct, ppct);
                 if (pct < 95.0)
                     statusBar()->showMessage(
                         QString("⚠ SDR delivering %1% of samples — USB "
                                 "starving? decoders unreliable")
                             .arg(pct, 0, 'f', 0), 6000);
+                else if (ppct < 95.0)
+                    statusBar()->showMessage(
+                        QString("⚠ IQ worker at %1% — CPU overloaded, "
+                                "decoders lagging")
+                            .arg(ppct, 0, 'f', 0), 6000);
             });
             iqRate->start();
         }
@@ -3264,6 +3305,13 @@ MainWindow::~MainWindow() {
     // spectrum_/dsp members it references are destroyed. Without this, member
     // teardown order frees the FFT under a still-running callback (use-after-free).
     sdr_.stop();
+    // Then the fan-out worker (producer is quiet now), same rule: it
+    // references spectrum_/decoders and must die before they do.
+    if (iqWorker_) {
+        iqWorkerStop_.store(true, std::memory_order_relaxed);
+        iqRingCv_.notify_all();
+        iqWorker_->wait(2000);
+    }
 #endif
 }
 

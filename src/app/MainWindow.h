@@ -4,6 +4,9 @@
 #include <QElapsedTimer>
 #include <QDateTime>
 #include <cmath>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <vector>
 class QTimer;
 class QSlider;
@@ -385,6 +388,18 @@ private:
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{16384};  // 61 Hz/bin at 1 MHz capture — survives deep zoom
+    // IQ fan-out worker: the USB callback only enqueues into iqRing_;
+    // this thread runs the FFT/decoders/recorder with ~1 s of elastic
+    // buffer. Running the consumers inside the callback let ordinary
+    // CPU load starve the SDRplay stream to 37% delivery — randomly
+    // spliced time that garbled every decode brain at once while the
+    // radio-audio path read clean (live-found 2026-08-07).
+    QThread* iqWorker_ = nullptr;
+    std::atomic<bool> iqWorkerStop_{false};
+    std::mutex iqRingMux_;
+    std::condition_variable iqRingCv_;
+    std::deque<IqBlock> iqRing_;
+    std::atomic<uint64_t> iqProcessedCount_{0};
 #endif
 };
 
