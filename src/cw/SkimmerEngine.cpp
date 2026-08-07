@@ -92,7 +92,15 @@ void SkimmerEngine::setBayes(bool on) {
 
 void SkimmerEngine::processIq(const std::complex<float>* d, size_t n) {
     if (!enabled_.load(std::memory_order_relaxed)) return;
-    for (auto& c : ch_) c.dec->processIq(d, n);   // each gated by its atomic
+    // Channels are independent (own mixer, own brain, queued signals
+    // out) — spread the bank across cores. A 24-channel bank costs more
+    // than one core at 1 MS/s, and a single feed thread fell to 40%
+    // throughput (live-found 2026-08-07: the ring overflowed and the
+    // decoders got spliced time). Without OpenMP the pragma is a no-op
+    // and the loop runs serial — tests don't need the flag.
+#pragma omp parallel for schedule(static) num_threads(4)
+    for (int i = 0; i < int(ch_.size()); ++i)
+        ch_[i].dec->processIq(d, n);              // each gated by its atomic
 }
 
 bool SkimmerEngine::cwSegment(qint64 dialHz, qint64& lo, qint64& hi) {

@@ -399,6 +399,7 @@ private:
     std::mutex iqRingMux_;
     std::condition_variable iqRingCv_;
     std::deque<IqBlock> iqRing_;
+    size_t iqRingSamples_ = 0;         // guarded by iqRingMux_
     std::atomic<uint64_t> iqProcessedCount_{0};
 #endif
 };

@@ -2806,6 +2806,7 @@ MainWindow::MainWindow(QWidget* parent)
             while (!iqRing_.empty()) {
                 IqBlock blk = std::move(iqRing_.front());
                 iqRing_.pop_front();
+                iqRingSamples_ -= blk.size();
                 lk.unlock();
                 fanOut(blk);
                 lk.lock();
@@ -2816,12 +2817,22 @@ MainWindow::MainWindow(QWidget* parent)
     iqWorker_->start(QThread::HighPriority);
     const auto iqHandler = [this](const IqBlock& iq) {
         // USB callback: count, copy, go. Anything heavier here and the
-        // SDRplay service drops transfers under load.
+        // SDRplay service drops transfers under load. The cap is in
+        // SAMPLES: the API delivers small blocks (~1-4 k samples each),
+        // and a block-count cap turned the intended 1 s cushion into
+        // ~130 ms — any GUI-held lock stall longer than that spliced
+        // the stream (live-found: 74% processed on an optimized build).
         iqSampleCount_.fetch_add(iq.size(), std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lg(iqRingMux_);
-            if (iqRing_.size() >= 64) iqRing_.pop_front();   // ~1 s cap
             iqRing_.push_back(iq);
+            iqRingSamples_ += iq.size();
+            const size_t cap = size_t(sdrSpanHz_ > 0 ? sdrSpanHz_
+                                                     : kSdrCaptureHz) * 2;
+            while (iqRingSamples_ > cap && iqRing_.size() > 1) {
+                iqRingSamples_ -= iqRing_.front().size();
+                iqRing_.pop_front();       // overload: drop oldest, 2 s in
+            }
         }
         iqRingCv_.notify_one();
     };

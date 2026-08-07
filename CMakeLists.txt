@@ -7,7 +7,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Debug)
+  # RelWithDebInfo, NOT Debug: the DSP chain (16k FFT, 24-channel skimmer
+  # bank, the SKIM view's STFT) runs 10-30x slower unoptimized, and at
+  # the 1 MHz capture rate (since 2026-07-31) a Debug build could not
+  # keep up with the IQ stream — the SDRplay service silently dropped
+  # transfers to ~40% and every CW decoder garbled on spliced time while
+  # the radio-audio path read clean. A full evening of decoder suspicion
+  # traced back to this line (2026-08-07). Keep it optimized; -g stays
+  # for backtraces.
+  set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
 # Compile cache if available (sudo pacman -S ccache) — MainWindow's split
@@ -20,6 +28,10 @@ if(CCACHE_PROGRAM)
 endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort)
+
+# OpenMP parallelizes the skimmer's channel bank (SkimmerEngine.cpp);
+# optional — without it the pragma is ignored and the bank runs serial.
+find_package(OpenMP QUIET)
 
 # SDRplay RSP source is optional so the core app always builds. Turn on with
 # -DBUILD_SDRPLAY=ON once the SDRplay API service is running (Phase 0).
@@ -83,6 +95,9 @@ add_executable(tentec-console
 )
 target_include_directories(tentec-console PRIVATE src)
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort rnnoise)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(tentec-console PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 # Offline harnesses (not built by default): synthetic-IQ skimmer test and
 # the fldigi XML-RPC client test (pair with tests/fake_fldigi.py).
