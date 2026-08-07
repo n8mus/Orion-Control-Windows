@@ -2866,11 +2866,21 @@ MainWindow::MainWindow(QWidget* parent)
                                      .arg(centerHz_ / 1e6, 0, 'f', 4).arg(spanHz / 1000));
         // Unattended capture: TTC_RECIQ=<secs> records from startup (pair
         // with TTC_SELFTEST a little longer to quit cleanly after).
+        // TTC_RECIQ_AFTER=<secs> delays the start — the dial begins on
+        // the built-in default until the first CAT poll lands, and that
+        // sync counts as a dial move, which stops a recording already
+        // running (live-found: a 180 s capture cut at 65 s with the
+        // startup 7150 in the header).
         if (const char* rs = std::getenv("TTC_RECIQ")) {
             const int secs = atoi(rs);
-            recIqAct_->setChecked(true);
-            QTimer::singleShot(secs * 1000, this, [this] {
-                if (recIqAct_->isChecked()) recIqAct_->setChecked(false);
+            const char* ra = std::getenv("TTC_RECIQ_AFTER");
+            const int after = ra ? atoi(ra) : 0;
+            QTimer::singleShot(after * 1000, this, [this, secs] {
+                recIqAct_->setChecked(true);
+                QTimer::singleShot(secs * 1000, this, [this] {
+                    if (recIqAct_->isChecked())
+                        recIqAct_->setChecked(false);
+                });
             });
         }
     } else if (!replayThread_) {
