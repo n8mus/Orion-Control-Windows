@@ -52,8 +52,12 @@ void SkimServer::onNewConnection() {
                 c->setProperty("greeted", true);
                 const QString who =
                     QString::fromLatin1(in).trimmed().section(' ', 0, 0);
+                // "HELLO" is Not1MM's connected-handshake magic word: its
+                // cluster client only flips to line-based reads and sends
+                // its filter setup after seeing it (cqrlog doesn't care).
                 sendLine(c, QStringLiteral(
-                    "%1 de %2-# >  spots follow as the skimmer hears them")
+                    "HELLO %1 de %2-# >  spots follow as the skimmer "
+                    "hears them")
                         .arg(who.isEmpty() ? QStringLiteral("OM") : who,
                              spotter_));
             }
