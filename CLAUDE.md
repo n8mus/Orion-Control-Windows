@@ -11,6 +11,20 @@ The hull numbers are the real Ten-Tec model numbers; the binary stays
     cmake -B build -DBUILD_SDRPLAY=ON && cmake --build build -j8
     ./build/tentec-console
 
+The default build type is **RelWithDebInfo** (since 2026-08-07) — NOT
+Debug. This is load-bearing: an unoptimized DSP chain cannot keep up
+with the 1 MHz IQ stream and the SDRplay service silently drops
+transfers to ~40%, which shreds decode timing (a whole evening of "the
+skimmer is broken" traced to a Debug build). The IQ fan-out (FFT +
+24-channel skimmer bank + SKIM-view STFT + recorder) runs on a
+dedicated **worker thread** off the USB callback, fed by a 2-second
+sample-capped ring; the callback only copies+enqueues. The console
+watches its own feed — a status-bar warning fires below 95% delivery
+("USB starving" vs "IQ worker … CPU overloaded"). The skimmer bank is
+OpenMP-parallel (optional; `find_package(OpenMP QUIET)`, pragma is a
+no-op without it). If spots/decode look like garbage, CHECK THE STATUS
+BAR FIRST — starved samples mimic every decoder bug.
+
 ccache is used automatically when installed. Headless verification (also
 releases the SDR cleanly on exit):
 
@@ -98,7 +112,10 @@ that night's own capture).
   resource**, everything else connects to a service it exposes:
   rig = rigctld server `:4532` (fldigi/cqrlog/wsjt-x point here);
   WinKeyer = cwdaemon server `:6789` (cqrlog keys through us);
-  skimmer finds = DX-cluster telnet `:7300`;
+  skimmer finds = DX-cluster telnet `:7300` (cqrlog AND Not1MM point
+    their band map here — server `127.0.0.1` port `7300`; the greeting
+    carries the word HELLO because Not1MM's client waits for it before
+    reading spots, cqrlog ignores it);
   QSO logging = UDP ADIF datagram to cqrlog's bridge on `:2334`.
   New integrations should follow this pattern, not grab devices.
 - **Spot pipeline**: sources (cluster telnet, POTA API, own skimmer) →
