@@ -40,6 +40,15 @@ public:
     void setEnabled(bool on);              // gates the whole bank
     bool enabled() const { return enabled_.load(std::memory_order_relaxed); }
 
+    // Rescale the whole bank for a different stream rate (capture-file
+    // replay of the old 500 ksps era). Before streaming starts only.
+    void setInputRate(double rate);
+
+    // The band's practical CW window (RBN convention, stops below the FT8
+    // hotspot); false when the dial isn't near one. Shared with the SKIM
+    // view so both agree on what "the CW segment" means.
+    static bool cwSegment(qint64 dialHz, qint64& lo, qint64& hi);
+
     // Optional callsign sanity check (the console wires this to cty.dat:
     // a "call" whose prefix maps to no country is a decode artifact).
     void setCallValidator(std::function<bool(const QString&)> v) {
@@ -100,7 +109,6 @@ private:
     void onText(int idx, const QString& t);
     void extractCall(Chan& c);
     void freeChannel(Chan& c);
-    static bool cwSegment(qint64 dialHz, qint64& lo, qint64& hi);
 
     std::atomic<bool> enabled_{false};
     double inputRate_;

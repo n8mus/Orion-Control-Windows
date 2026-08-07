@@ -185,7 +185,10 @@ int main(int argc, char** argv) {
     std::memcpy(&rate, hdr + 8, 8);
     std::memcpy(&center, hdr + 16, 8);
     std::memcpy(&epoch, hdr + 24, 8);
-    constexpr int kLoOff = 60000;
+    // The header stores the LO's absolute frequency but not the dial; the
+    // LO offset is an era fact — 60 kHz in the 500 ksps captures, 260 kHz
+    // since the 1 MHz capture (2026-07-31). Derive it from the rate.
+    const int kLoOff = rate < 750000.0 ? 60000 : 260000;
     const qint64 dial = qint64(center) - kLoOff;
     const double secs = (f.size() - 32) / (rate * 4.0);
     printf("capture: %.1f s at %.0f ksps, dial %.4f MHz, taken %s\n",

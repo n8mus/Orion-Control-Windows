@@ -12,16 +12,14 @@ namespace ttc {
 // CW reader fed straight from the SDR IQ stream — no audio cable, works
 // with the AF gain at zero. The tuned station's carrier sits at a FIXED
 // offset from the SDR LO (-kLoOffsetHz, because the capture LO rides
-// 60 kHz above the dial and both radios read the carrier on the dial in
-// CW), so the mixer never needs retuning: CW zap puts the carrier at the
-// dial, the dial is always -60 kHz from the LO, and this decoder listens
-// exactly there in a ~±110 Hz window.
+// that far above the dial and both radios read the carrier on the dial
+// in CW), so the mixer never needs retuning: CW zap puts the carrier at
+// the dial, the dial is always -loOff from the LO, and this decoder
+// listens exactly there in a narrow matched-filter window.
 //
-// Chain (input 500 ksps, SDR thread): mix +60 kHz to DC -> 250:1 boxcar
-// decimate (2 ksps) -> 8-tap complex moving average (~±110 Hz) ->
-// magnitude envelope -> adaptive two-level slicer (tracks signal peak and
-// noise floor separately) -> mark/space run lengths -> adaptive-dit Morse
-// classifier. Characters are emitted via queued signal to the GUI.
+// Chain (SDR thread): mix the offset to DC -> boxcar decimate to 2 ksps
+// -> speed-tracked matched filter -> magnitude envelope -> decode brain
+// (see below) -> characters emitted via queued signal to the GUI.
 class CwDecoder : public QObject {
     Q_OBJECT
 public:
@@ -35,6 +33,11 @@ public:
     // channels hop between stations). Safe from any thread; the SDR thread
     // applies it at the next block and resets all demod state.
     void retune(double offsetHz);
+
+    // Adapt to a different stream rate (old 500 ksps era captures replayed
+    // through today's 1 MHz pipeline). Call before streaming starts; resets
+    // all demod state via retune().
+    void setInputRate(double rate);
 
     // AFC: how far the mixer has been steered off the assigned offset to
     // stay centered on the station (Hz; reads from any thread).

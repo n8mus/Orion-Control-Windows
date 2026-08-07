@@ -51,6 +51,13 @@ void CwDecoder::retune(double offsetHz) {
     retunePending_.store(true, std::memory_order_release);
 }
 
+void CwDecoder::setInputRate(double rate) {
+    inputRate_ = rate;
+    decim_ = static_cast<int>(rate / 2000.0);    // envelope stays 2 ksps
+    tickMs_ = 1000.0 * decim_ / rate;
+    retune(pendingOffset_.load(std::memory_order_relaxed));
+}
+
 void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
     if (!enabled_.load(std::memory_order_relaxed)) return;
     if (retunePending_.exchange(false, std::memory_order_acquire)) {

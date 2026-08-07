@@ -17,7 +17,8 @@ namespace ttc {
 // guesswork the day this landed). Format ".tciq": 32-byte header
 // (magic "TTCIQ01\0", double sampleRate, double centerHz = the LO's
 // absolute frequency, qint64 epoch ms), then interleaved int16 I/Q.
-// 500 ksps is ~2 MB/s, ~7 GB/hour.
+// 1 MS/s is ~4 MB/s, ~14 GB/hour (the 2026-07 captures are 500 ksps —
+// the header rate is authoritative, replay tools scale from it).
 //
 // feed() runs on the SDR streaming thread and only converts + appends
 // under a mutex; a GUI-thread timer drains to the file so disk latency
