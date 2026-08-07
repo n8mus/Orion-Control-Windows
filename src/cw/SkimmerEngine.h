@@ -112,6 +112,11 @@ private:
         QString show;                      // rolling display buffer (SOM)
         qint64  lastCharMs = 0;            // activity clock (ms epoch)
         qint64  assignedMs = 0;
+        // WPM spread across the current candidate's sightings. A real
+        // sender holds a near-constant clock; a call mined from keyer-
+        // test junk or spliced audio swings wildly (2026-08-07: phantom
+        // E3MT re-announced 42/60/58/42 WPM). 0 = unset.
+        int     candWpmLo = 0, candWpmHi = 0;
     };
 
     void onText(int idx, const QString& t);

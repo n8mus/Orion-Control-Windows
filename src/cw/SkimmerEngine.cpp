@@ -250,6 +250,7 @@ void SkimmerEngine::freeChannel(Chan& c) {
     c.call.clear();
     c.candidate.clear();
     c.candCount = 0;
+    c.candWpmLo = c.candWpmHi = 0;
     c.text.clear();
     c.show.clear();
     c.wpm = 0;
@@ -310,10 +311,18 @@ void SkimmerEngine::extractCall(Chan& c) {
         // may OPEN a candidacy; fragments/merges only confirm.
         const bool fresh = (i == toks.size() - 1);
         if (tok == c.candidate) {
-            if (fresh) ++c.candCount;
+            if (fresh) {
+                ++c.candCount;
+                if (c.wpm > 0) {           // track the clock's spread
+                    if (c.candWpmLo == 0 || c.wpm < c.candWpmLo)
+                        c.candWpmLo = c.wpm;
+                    if (c.wpm > c.candWpmHi) c.candWpmHi = c.wpm;
+                }
+            }
         } else if (fresh && fullToken && tok.size() >= 4) {
             c.candidate = tok;
             c.candCount = 1;
+            c.candWpmLo = c.candWpmHi = c.wpm > 0 ? c.wpm : 0;
         }
         // Confidence: DE spots at once; MASTER.SCP calls need 2 distinct
         // sightings; unlisted calls need 3 (recurring garbage can shape
@@ -322,6 +331,85 @@ void SkimmerEngine::extractCall(Chan& c) {
         const bool listed = known_.isEmpty() || known_.contains(tok);
         if (!afterDe && c.candCount < (listed ? 2 : 3)) continue;
         if (tok != c.candidate && !afterDe) continue;
+
+        // Phantom-junk gates (2026-08-07): a keyer tester and a
+        // starved-stream evening minted cty-valid calls (XS6MB, E3MT,
+        // S6TUU, A5OJ) from dit-string junk — recurring enough to pass
+        // the sighting count. Two fingerprints separate a real weak
+        // station from junk with a call-shaped hole in it; DE-adjacency
+        // is trusted evidence that clears them.
+        {
+            static const double kJunkMax = [] {   // fresh-confirm ceiling
+                const char* v = std::getenv("TTC_SKIMJUNK");
+                return v ? atof(v) : 0.55;
+            }();
+            static const double kJunkHold = [] {  // re-announce ceiling
+                const char* v = std::getenv("TTC_SKIMHOLD");
+                return v ? atof(v) : 0.70;
+            }();
+            static const double kWpmSwing = [] {  // hi/lo ratio ceiling
+                const char* v = std::getenv("TTC_SKIMWPM");
+                return v ? atof(v) : 1.6;
+            }();
+            static const double kSingleMax = [] {  // single-char-token frac
+                const char* v = std::getenv("TTC_SKIMSGL");
+                return v ? atof(v) : 0.40;
+            }();
+            // Two shape stats of the recent honest copy. junkFrac is a
+            // weak discriminator on its own (real English prose is ~45%
+            // E/T/I/space), so it only flags the egregious. The stronger
+            // signal is single-char TOKENS: a keyer tester or dit-string
+            // junk decodes to isolated letters ("E T I E T"), where real
+            // copy is words (measured: K3KY 0.12 vs junk 0.46).
+            const QString recent = c.text.right(40);
+            double junkFrac = 0.0, singleFrac = 0.0;
+            if (recent.size() >= 16) {
+                int junk = 0;
+                for (const QChar ch : recent)
+                    if (ch == 'E' || ch == 'T' || ch == 'I' || ch == '*'
+                        || ch == ' ')
+                        ++junk;
+                junkFrac = double(junk) / recent.size();
+                const QStringList w =
+                    recent.split(' ', Qt::SkipEmptyParts);
+                if (w.size() >= 4) {
+                    int singles = 0;
+                    for (const QString& tk : w)
+                        if (tk.size() == 1) ++singles;
+                    singleFrac = double(singles) / w.size();
+                }
+            }
+            const bool refresh = (tok == c.call);
+            bool blocked = false;
+            if (!afterDe) {
+                if (refresh) {
+                    // The held call is only re-announced while its channel
+                    // still carries real copy; once it decays to noise the
+                    // station is gone and the spot ages out (10 min) — this
+                    // is what stops a phantom re-announcing 140x after one
+                    // lucky confirmation (the pre-hardening leak).
+                    if (junkFrac >= kJunkHold
+                        || singleFrac >= kSingleMax + 0.15) blocked = true;
+                } else {
+                    if (junkFrac >= kJunkMax || singleFrac >= kSingleMax)
+                        blocked = true;
+                    // Clock stability: a real sender re-sighted 3+ times
+                    // holds its WPM; junk swings (a 2-sighting listed call
+                    // hasn't the samples to judge, so it's exempt).
+                    if (c.candWpmHi > 0 && c.candWpmLo > 0
+                        && c.candCount >= 3
+                        && c.candWpmHi > kWpmSwing * c.candWpmLo)
+                        blocked = true;
+                }
+            }
+            if (std::getenv("TTC_SKIMDBG"))
+                fprintf(stderr,
+                        "[gate] %-8s %s junk %.2f sgl %.2f wpm %d-%d n%d -> %s\n",
+                        qPrintable(tok), afterDe ? "DE" : refresh ? "rf" : "  ",
+                        junkFrac, singleFrac, c.candWpmLo, c.candWpmHi,
+                        c.candCount, blocked ? "BLOCK" : "pass");
+            if (blocked) continue;
+        }
         // Duplicate listener: a strong station's keying sidebands raise
         // peaks of their own, and several channels end up copying the SAME
         // station (replay-found: one CQ, three channels, spot frequency
