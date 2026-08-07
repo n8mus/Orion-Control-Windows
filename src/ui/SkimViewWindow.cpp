@@ -6,6 +6,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QSet>
+#include <QSettings>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -37,7 +38,6 @@ double niceStep(double span) {
     return 10.0 * mag;
 }
 
-constexpr int    kColsPerPx = 2;      // ~16 ms/px -> ~61 px/s scroll
 constexpr size_t kHistCols  = 4096;   // ~34 s of raw columns for re-render
 constexpr float  kRangeDb   = 45.0f;  // floor..top of the color ramp
 constexpr float  kFloorPad  = 3.0f;   // keep the noise just above black
@@ -56,6 +56,8 @@ public:
           onTune_(std::move(onTune)) {
         setMouseTracking(true);
         setCursor(Qt::CrossCursor);
+        colsPerPx_ = std::clamp(
+            QSettings().value("skimview/speed", 1).toInt(), 1, 4);
         for (int i = 0; i < 256; ++i) {                // palette LUT
             const float t = i / 255.0f;
             size_t k = 1;
@@ -125,8 +127,19 @@ protected:
 
     void mouseReleaseEvent(QMouseEvent* e) override {
         if (e->button() != Qt::LeftButton || dragging_) return;
-        // A label click tunes to the spot and carries the call; a trace
-        // click tunes to the frequency under the cursor.
+        // Speed chips first, then labels (tune + carry the call), then
+        // the trace under the cursor.
+        for (const auto& [rect, cpp] : speedHits_)
+            if (rect.contains(e->pos())) {
+                if (cpp != colsPerPx_) {
+                    colsPerPx_ = cpp;
+                    QSettings().setValue("skimview/speed", cpp);
+                    accumN_ = 0;
+                    wfDirty_ = true;
+                }
+                update();
+                return;
+            }
         for (const auto& L : labelHits_)
             if (L.rect.contains(e->pos())) {
                 onTune_(L.hz, L.call);
@@ -242,7 +255,7 @@ private:
                     accum_[i] = std::max(accum_[i], c.db[i]);
             raw_.push_back(std::move(c.db));
             if (raw_.size() > kHistCols) raw_.pop_front();
-            if (++accumN_ >= kColsPerPx) {
+            if (++accumN_ >= colsPerPx_) {
                 px.push_back(accum_);
                 accumN_ = 0;
             }
@@ -336,14 +349,14 @@ private:
             yBins_[size_t(y)] = {b0, b1};
         }
         accumN_ = 0;
-        const size_t groups = raw_.size() / kColsPerPx;
+        const size_t groups = raw_.size() / size_t(colsPerPx_);
         const size_t useGroups = std::min(groups, size_t(w));
-        size_t idx = raw_.size() - useGroups * kColsPerPx;
+        size_t idx = raw_.size() - useGroups * size_t(colsPerPx_);
         int x = w - int(useGroups);
         std::vector<uint8_t> merged;
         for (size_t g = 0; g < useGroups; ++g, ++x) {
             merged = raw_[idx++];
-            for (int k = 1; k < kColsPerPx; ++k, ++idx)
+            for (int k = 1; k < colsPerPx_; ++k, ++idx)
                 for (size_t i = 0; i < merged.size(); ++i)
                     merged[i] = std::max(merged[i], raw_[idx][i]);
             renderPixelColumn(x, merged.data());
@@ -488,8 +501,23 @@ private:
                     .arg(viewLo_ / 1000.0, 0, 'f', 1)
                     .arg(viewHi_ / 1000.0, 0, 'f', 1)
                     .arg(stft_->binHz(), 0, 'f', 0)
-                    .arg(stft_->colSecs() * 1000.0 * kColsPerPx, 0, 'f', 0);
+                    .arg(stft_->colSecs() * 1000.0 * colsPerPx_, 0, 'f', 0);
         p.drawText(QPoint(48, 14), t);
+        // Scroll-speed chips (×1 fastest — a dit at 25 WPM is ~6 px).
+        speedHits_.clear();
+        static const int kSpeeds[] = {1, 2, 4};
+        int x = width() - 4;
+        for (int i = 2; i >= 0; --i) {
+            const QString lbl = QStringLiteral("×%1").arg(kSpeeds[i]);
+            const int w = 26;
+            x -= w + 4;
+            const QRect r(x, 4, w, 15);
+            const bool on = colsPerPx_ == kSpeeds[i];
+            p.fillRect(r, on ? QColor(44, 78, 112) : QColor(20, 27, 36));
+            p.setPen(on ? QColor(200, 220, 240) : QColor(120, 136, 152));
+            p.drawText(r, Qt::AlignCenter, lbl);
+            speedHits_.push_back({r, kSpeeds[i]});
+        }
     }
 
     SkimStft* stft_;
@@ -512,6 +540,8 @@ private:
     std::deque<std::vector<uint8_t>> raw_;
     std::vector<uint8_t> accum_;
     int accumN_ = 0;
+    int colsPerPx_ = 1;                    // scroll speed (raw cols / px)
+    std::vector<std::pair<QRect, int>> speedHits_;
     QImage wfImg_;
     bool wfDirty_ = true;
     std::vector<std::pair<int, int>> yBins_;
