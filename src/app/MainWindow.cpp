@@ -1305,10 +1305,14 @@ MainWindow::MainWindow(QWidget* parent)
             // Header rate must be the rate feed() actually receives — it
             // was left at the old 500 k literal when the capture went to
             // 1 MHz (found 2026-08-06 before any capture was taken wrong).
+            // The dial rides in the v2 header because center − dial is
+            // whatever the LO policy made it (band frames park the LO
+            // above the frame, CTUN parks it anywhere).
             if (iqRec_->start(path,
                               sdrSpanHz_ > 0 ? double(sdrSpanHz_)
                                              : double(kSdrCaptureHz),
-                              double(centerHz_) + loOffHz_))
+                              double(centerHz_) + loOffHz_,
+                              double(centerHz_)))
                 statusBar()->showMessage("IQ recording -> " + path);
             else {
                 statusBar()->showMessage("IQ record: cannot open " + path,
@@ -2723,7 +2727,11 @@ MainWindow::MainWindow(QWidget* parent)
             int lo = 0, hi = 0;
             edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
             const int    n     = static_cast<int>(copy.size());
-            const double binHz = double(spanHz) / n;
+            // sdrSpanHz_, not the captured constant: replaying an old
+            // 500 ksps capture rescales the member, and a baked 1 MHz
+            // span would integrate the wrong bins (review-found).
+            const double binHz = double(sdrSpanHz_ > 0 ? sdrSpanHz_
+                                                       : spanHz) / n;
             int i0 = n / 2 + static_cast<int>(std::floor((lo - loOffHz_) / binHz));
             int i1 = n / 2 + static_cast<int>(std::ceil((hi - loOffHz_) / binHz));
             i0 = std::clamp(i0, 0, n - 1);
@@ -2792,15 +2800,20 @@ MainWindow::MainWindow(QWidget* parent)
         char hdr[32];
         double fRate = 0.0, fCenter = 0.0;
         if (f->open(QIODevice::ReadOnly) && f->read(hdr, 32) == 32
-            && std::memcmp(hdr, "TTCIQ01", 7) == 0) {
+            && std::memcmp(hdr, "TTCIQ0", 6) == 0) {
             std::memcpy(&fRate, hdr + 8, 8);
             std::memcpy(&fCenter, hdr + 16, 8);
-            // Era facts the header doesn't carry: the 500 ksps captures
-            // rode a 60 kHz LO offset, the 1 MHz era rides kLoOffsetHz —
-            // and an old capture must rescale the whole pipeline or every
-            // decoder runs at half time (dits read double, dial 200 kHz
-            // off; the constants changed 2026-07-31).
-            const int fLoOff = fRate < 750000.0 ? 60000 : kLoOffsetHz;
+            // v2 headers carry the dial; the v1 era captures (all 500
+            // ksps) rode a fixed 60 kHz LO offset. An old capture must
+            // also rescale the whole pipeline or every decoder runs at
+            // half time (dits read double; the rate changed 2026-07-31).
+            int fLoOff = fRate < 750000.0 ? 60000 : kLoOffsetHz;
+            if (hdr[6] == '2') {
+                double fDial = 0.0;
+                if (f->read(reinterpret_cast<char*>(&fDial), 8) == 8
+                    && fDial > 0.0)
+                    fLoOff = int(fCenter - fDial);
+            }
             centerHz_ = uint64_t(fCenter) - fLoOff;
             sdrLoHz_ = uint64_t(fCenter);       // replay LO is frozen classic
             freqDisp_->setFrequency(centerHz_);

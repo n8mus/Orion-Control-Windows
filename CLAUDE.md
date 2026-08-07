@@ -57,7 +57,7 @@ senders and weak-signal cases are the hard set.
 
 | target | what | pairs with |
 |---|---|---|
-| `cwtest` | decoder quality matrix, prints % (full ~8 min, `--quick` ~90 s) | — |
+| `cwtest` | decoder quality matrix, prints % (full ~8 min, `--quick` ~90 s, `--only <substr>` isolates rows) | — |
 | `skimtest` | 10-station synthetic segment through the skimmer | — |
 | `skimsrvtest` | RBN telnet protocol/format/throttle | — |
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
@@ -69,9 +69,10 @@ senders and weak-signal cases are the hard set.
 | `nrtest` | noise-reduction ruler: keyed 550 Hz tone at swept SNR through {none, RNNoise, SpectralNr} into the audio-path decoder. Verdict 2026-07-16: RNNoise perfect to -6 dB; our SpectralNr lost and stays test-only | — |
 
 Run the relevant tests plus a selftest sizing check before every commit.
-`cwtest` full matrix currently scores 94% — treat any drop as a
-regression. Decoder changes must keep "dead channel" quiet (noise babble
-was a real on-air bug, twice).
+`cwtest` full-matrix baselines (2026-08-06): legacy 94%, engine 95%,
+bayes 100% — treat any drop as a regression, per brain. Decoder changes
+must keep "dead channel" quiet (noise babble was a real on-air bug,
+twice); the bayes brain's bar there is ZERO garbage chars.
 
 ## Architecture in 60 seconds
 
@@ -102,23 +103,45 @@ was a real on-air bug, twice).
   Kinds: 'D' DX yellow, 'P' POTA green, 'F' FT8 cyan, 'S' skimmer violet;
   call text is colored by cqrlog worked-before status (LogbookIndex),
   watch-list hits get an orange ring.
+- **SKIM view** (SKIM ▾ → Waterfall view): CW-Skimmer-style zoomed
+  waterfall — `src/cw/SkimStft` (4096-pt STFT at ~125 ksps, 31 Hz/bin,
+  8 ms columns, fed in the iqHandler on the SDR thread, gated by window
+  visibility) + `src/ui/SkimViewWindow` (frequency vertical, time
+  flowing left, keying visible per station, skimmer calls labeled next
+  to traces in worked-before colors, click tunes / wheel zooms / drag
+  pans). Headless check: `TTC_SKIMVIEW=<png>` opens it at startup and
+  grabs it (pair with `TTC_IQFILE` + `TTC_IQFAST=1` on a ground-truth
+  capture). Old 500 ksps captures replay correctly — the pipeline
+  rescales from the header rate (the LO-offset era is derived from it:
+  60 kHz at 500 k, 260 kHz at 1 M).
 - **CW decoding** (`src/cw/CwDecoder`): IQ-fed, one recurrence-phasor
-  mixer per instance, so banks are cheap (SkimmerEngine runs 24). TWO
+  mixer per instance, so banks are cheap (SkimmerEngine runs 24). THREE
   decode brains behind one front end: the legacy battle-tuned slicer
-  (skimmer default; every threshold has an on-air story in a comment)
-  and `src/cw/FldigiCwEngine` — fldigi's decode logic ported under
+  (every threshold has an on-air story in a comment),
+  `src/cw/FldigiCwEngine` — fldigi's decode logic ported under
   GPL-3 (W1HKJ et al.; keep the attribution header) — used by the CW
-  window's tuned reader with FLD/SOM/DEEP/ATK/DCY controls. Full matrix:
-  engine 95%, legacy 94% (engine wins sloppy timing via SOM, loses a
-  little at 45+ WPM; quick-tier QSB rows under-read the engine — its
-  trackers need the full-length runs to warm up, so the quick sentinel
-  is `TTC_CWLEGACY=1 cwtest --quick` = 100%; the engine gate is the
-  full matrix ≥95%). `TTC_CWENGINE=1` / `TTC_CWLEGACY=1` force either
-  path in tests. The ENGINE is the default everywhere (flipped
-  2026-07-15 after it out-copied real fldigi on the same live signal —
-  operator-verified). The repo
-  is public and ships GPL-3 because of this file (fine), and released
-  binaries must not bundle the proprietary SDRplay lib.
+  window's tuned reader with FLD/SOM/DEEP/ATK/DCY controls, and
+  `src/cw/BayesCwEngine` (2026-08-06): two-state HMM soft keying +
+  whole-character duration inference with ins/del/split/merge alignment
+  over marks AND gaps, boundaries at MAP points against a LEARNED
+  element gap. Full matrix: bayes 100%, engine 95%, legacy 94% (engine
+  wins sloppy timing via SOM but loses a little at 45+ WPM; bayes takes
+  both; quick-tier QSB rows under-read the engine — its trackers need
+  the full-length runs to warm up, so the quick sentinel is
+  `TTC_CWLEGACY=1 cwtest --quick` = 100%; gates: engine full matrix
+  ≥95%, bayes = 100% AND a silent dead channel). On real captures the
+  bayes brain reads cleaner on solid/jittery copy and goes QUIET on
+  fades where the engine strings plausible-but-wrong letters — aligned
+  with the skimmer's anti-phantom rules, but the tuned-reader feel is
+  the operator's call. `TTC_CWENGINE=1` / `TTC_CWBAYES=1` /
+  `TTC_CWLEGACY=1` force a path in tests (legacy wins ties);
+  `TTC_BAYESDBG=1` dumps per-char inference state. The ENGINE is the
+  default everywhere (flipped 2026-07-15 after it out-copied real
+  fldigi on the same live signal — operator-verified); the SKIM ▾ menu's
+  "Bayes decoder (experimental)" toggle (`skim/bayes`) flips the
+  skimmer bank live for the on-air A/B that would earn a default flip.
+  The repo is public and ships GPL-3 because of the fldigi port (fine),
+  and released binaries must not bundle the proprietary SDRplay lib.
   Tried and rejected (2026-07-14): an fldigi-style per-element release
   threshold (`off = 0.35 × this element's own peak`). The fast in-key
   peak re-training already collapses the tracker to the current

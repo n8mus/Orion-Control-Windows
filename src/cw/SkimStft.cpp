@@ -105,14 +105,15 @@ void SkimStft::processIq(const std::complex<float>* d, size_t n) {
         if (++hopFill_ < kHop) continue;
         hopFill_ = 0;
         if (primed_ > 0) continue;           // window not yet full of data
-        // Assemble oldest->newest, subtract the complex mean (kills the
-        // residual DC line at the source, same trick as SpectrumComputer),
-        // window, FFT.
-        std::complex<float> mean(0.0f, 0.0f);
-        for (const auto& z : ring_) mean += z;
-        mean *= 1.0f / float(kFft);
+        // Assemble oldest->newest, window, FFT. NO mean subtraction: the
+        // mixer already moved the SDR's residual DC line off to −offset
+        // (normally outside the slice), so post-mix DC is the SLICE
+        // CENTER — subtracting it notched out whatever station sat there
+        // (review-found: off-segment the slice centers on the DIAL, and
+        // these radios are carrier-at-dial in CW — the display nulled
+        // exactly the station being worked).
         for (int k = 0; k < kFft; ++k)
-            frame_[k] = (ring_[(rpos_ + k) % kFft] - mean) * window_[k];
+            frame_[k] = ring_[(rpos_ + k) % kFft] * window_[k];
         fft_.forward(frame_);
         Column col;
         col.gen = curGen_;

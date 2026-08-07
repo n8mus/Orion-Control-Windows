@@ -25,16 +25,17 @@ QString IqRecorder::defaultDir() {
 }
 
 bool IqRecorder::start(const QString& path, double sampleRate,
-                       double centerHz) {
+                       double centerHz, double dialHz) {
     if (active_) return true;
     file_.setFileName(path);
     if (!file_.open(QIODevice::WriteOnly)) return false;
-    char hdr[32] = {};
-    std::memcpy(hdr, "TTCIQ01", 8);
+    char hdr[40] = {};
+    std::memcpy(hdr, "TTCIQ02", 8);
     std::memcpy(hdr + 8, &sampleRate, 8);
     std::memcpy(hdr + 16, &centerHz, 8);
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     std::memcpy(hdr + 24, &now, 8);
+    std::memcpy(hdr + 32, &dialHz, 8);
     file_.write(hdr, sizeof hdr);
     rate_ = sampleRate;
     written_ = 0;

@@ -115,6 +115,28 @@ int generate(const char* path) {
     printf("generated %s\n", path);
     return 0;
 }
+// Reads a v1/v2 .tciq header, leaving the file positioned at the first
+// sample. loOff comes out exact from a v2 header (center − dial as
+// recorded); v1 headers carry no dial, and every v1 capture on disk is
+// from the 500 ksps / 60 kHz-offset world — the rate gate covers the
+// 1 MHz constant change (2026-07-31) that shipped together with v2.
+bool readTciqHeader(QFile& f, double& rate, double& center, qint64& epoch,
+                    int& loOff) {
+    char hdr[32];
+    if (f.read(hdr, 32) != 32 || std::memcmp(hdr, "TTCIQ0", 6) != 0)
+        return false;
+    std::memcpy(&rate, hdr + 8, 8);
+    std::memcpy(&center, hdr + 16, 8);
+    std::memcpy(&epoch, hdr + 24, 8);
+    loOff = rate < 750000.0 ? 60000 : 260000;
+    if (hdr[6] == '2') {
+        double dial = 0.0;
+        if (f.read(reinterpret_cast<char*>(&dial), 8) == 8 && dial > 0.0)
+            loOff = int(center - dial);
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -129,11 +151,14 @@ int main(int argc, char** argv) {
     // one frequency, 100 ms per line — keying rhythm and SNR by eye.
     if (QString(argv[1]) == "--peek" && argc > 3) {
         QFile pf(QString::fromLocal8Bit(argv[2]));
-        char ph[32];
-        if (!pf.open(QIODevice::ReadOnly) || pf.read(ph, 32) != 32) return 2;
-        double pRate = 0.0;
-        std::memcpy(&pRate, ph + 8, 8);
-        const double off = atof(argv[3]) - 60000.0;   // rel. to the LO
+        double pRate = 0.0, pCenter = 0.0;
+        qint64 pEpoch = 0;
+        int pLoOff = 0;
+        if (!pf.open(QIODevice::ReadOnly)
+            || !readTciqHeader(pf, pRate, pCenter, pEpoch, pLoOff))
+            return 2;
+        const int decim = int(pRate / 2000.0);        // envelope at 2 ksps
+        const double off = atof(argv[3]) - pLoOff;    // rel. to the LO
         const double inc = -2.0 * M_PI * off / pRate;
         const std::complex<double> step(std::cos(inc), std::sin(inc));
         std::complex<double> lo(1.0, 0.0), acc(0.0, 0.0);
@@ -151,9 +176,9 @@ int main(int argc, char** argv) {
                                              raw[2 * i + 1] / 32767.0);
                 acc += z * lo;
                 lo *= step;
-                if (++accN < 250) continue;
-                std::complex<float> zz(float(acc.real() / 250),
-                                       float(acc.imag() / 250));
+                if (++accN < decim) continue;
+                std::complex<float> zz(float(acc.real() / decim),
+                                       float(acc.imag() / decim));
                 acc = {0, 0};
                 accN = 0;
                 lp1 += a * (zz - lp1);
@@ -174,23 +199,16 @@ int main(int argc, char** argv) {
         return 0;
     }
     QFile f(QString::fromLocal8Bit(argv[1]));
-    char hdr[32];
-    if (!f.open(QIODevice::ReadOnly) || f.read(hdr, 32) != 32
-        || std::memcmp(hdr, "TTCIQ01", 7) != 0) {
+    double rate = 0.0, center = 0.0;
+    qint64 epoch = 0;
+    int kLoOff = 0;
+    if (!f.open(QIODevice::ReadOnly)
+        || !readTciqHeader(f, rate, center, epoch, kLoOff)) {
         printf("bad .tciq file\n");
         return 2;
     }
-    double rate = 0.0, center = 0.0;
-    qint64 epoch = 0;
-    std::memcpy(&rate, hdr + 8, 8);
-    std::memcpy(&center, hdr + 16, 8);
-    std::memcpy(&epoch, hdr + 24, 8);
-    // The header stores the LO's absolute frequency but not the dial; the
-    // LO offset is an era fact — 60 kHz in the 500 ksps captures, 260 kHz
-    // since the 1 MHz capture (2026-07-31). Derive it from the rate.
-    const int kLoOff = rate < 750000.0 ? 60000 : 260000;
     const qint64 dial = qint64(center) - kLoOff;
-    const double secs = (f.size() - 32) / (rate * 4.0);
+    const double secs = (f.size() - f.pos()) / (rate * 4.0);
     printf("capture: %.1f s at %.0f ksps, dial %.4f MHz, taken %s\n",
            secs, rate / 1000.0, dial / 1e6,
            qPrintable(QDateTime::fromMSecsSinceEpoch(epoch)

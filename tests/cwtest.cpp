@@ -190,6 +190,10 @@ int main(int argc, char** argv) {
                c.name, pct, hits, expected,
                qPrintable(got.right(40)));
     }
+    if (overallMax == 0) {                 // --only typo: say so, no SIGFPE
+        printf("no rows matched '%s'\n", qPrintable(only));
+        return 2;
+    }
     printf("TOTAL: %d%% (%d/%d)\n", 100 * overallScore / overallMax,
            overallScore, overallMax);
     return 0;

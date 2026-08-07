@@ -142,6 +142,11 @@ protected:
         const double hzC = double(hzOfY(int(e->position().y())));
         const double top = hzC + (viewHi_ - hzC) * ns / span;
         setView(top - ns, top);
+        // Re-anchor an in-flight drag: the pan math works from the
+        // press-time view, and a zoom mid-drag would make the next
+        // mouse-move snap the view back (review-found lurch).
+        pressPos_ = e->position().toPoint();
+        pressView0_ = viewLo_;
         e->accept();
     }
 
@@ -200,13 +205,21 @@ private:
             - stft_->binHz() * SkimStft::kFft / 2.0;
         off = std::clamp(off, -lim, lim);
         if (std::abs(off - sliceOff_) > 0.5 || loAbs != loAbs_) {
+            const qint64 center = loAbs + qint64(std::llround(off));
             sliceOff_ = off;
             loAbs_ = loAbs;
-            sliceCenterAbs_ = loAbs + qint64(std::llround(off));
             curGen_ = stft_->setViewOffset(off);
-            raw_.clear();
             accumN_ = 0;
-            wfDirty_ = true;
+            // Keep the history when only the LO moved under a fixed
+            // slice (classic-mode tuning re-parks the LO on every dial
+            // step): the stored columns are slice-center-relative and
+            // still true. Without this, every wheel click blanked ~30 s
+            // of waterfall (review-found).
+            if (center != sliceCenterAbs_) {
+                sliceCenterAbs_ = center;
+                raw_.clear();
+                wfDirty_ = true;
+            }
             if (segLo != segLo_ || segHi != segHi_) {
                 segLo_ = segLo;
                 segHi_ = segHi;
@@ -232,7 +245,10 @@ private:
                 px.push_back(accum_);
                 accumN_ = 0;
             }
-            if (++floorTick_ >= 8) {
+            // The very first column must seed the floor or the opening
+            // pixel columns paint against the -120 fallback — a bright
+            // full-height stripe on any real band (review-found).
+            if (floorDb_ < -998.0f || ++floorTick_ >= 8) {
                 floorTick_ = 0;
                 updateFloor(raw_.back());
             }
