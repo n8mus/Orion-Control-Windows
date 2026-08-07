@@ -227,6 +227,32 @@ void BayesCwEngine::edge(bool down, double runMs) {
         gaps_.clear();
         return;
     }
+    // QRN spike gate (fldigi's noiseSpike + legacy's blip-resume), only
+    // while the SMOOTHED metric says a real station is present: a
+    // sub-half-dit mark inside real copy is a static crash, not keying
+    // — drop it and mend the space it interrupted so the character
+    // still closes on time. The metric (not the lock) is the right key:
+    // it rides stale trackers through fades, where the absorption is
+    // needed most, and reads ~0 on a dead channel, where absorbing
+    // junk marks would keep phantom locks alive (matrix-found: the
+    // lock-keyed version leaked 9 garbage chars). The pop keeps the
+    // marks/gaps invariant: the crash's down-edge already pushed the
+    // interrupted gap, and the mended silence will push again at the
+    // next real mark (sweep-found: without it alignCost's gap indexing
+    // skews).
+    if (metric_ > squelch_ && runMs < 0.5 * ditMs_) {
+        // The rhythm history still sees the crash: pre-filtering the
+        // lock's evidence stream made dead-channel noise look rhythmic
+        // enough to lock (matrix-found on both gate variants) — the
+        // absorption protects the CHARACTER, never the lock's honesty.
+        if (runMs >= 0.3 * ditMs_)
+            markHist_[markHistN_++ & 7] = float(runMs);
+        if (!gaps_.empty() && gaps_.size() >= marks_.size())
+            gaps_.pop_back();
+        runMs_ = lastSpaceMs_ + runMs;
+        key_ = false;
+        return;
+    }
     if (runMs < 0.30 * ditMs_ && marks_.empty() && !locked_)
         return;                            // pre-lock noise pip
     marks_.push_back(runMs);
@@ -266,9 +292,20 @@ void BayesCwEngine::edge(bool down, double runMs) {
     // Slow updates: under .20-lognormal jitter a fast EMA swings the
     // clock ±20% and the segmentation thresholds swing with it — the
     // engine survives that row on the stability of its 16-element
-    // average, so match that time constant.
+    // average, so match that time constant. Once LOCKED, only marks
+    // that already fit the clock may move it — QRN crashes are strong
+    // enough to pass 'credible' but their durations are random, and on
+    // a stormy night they walked a 22 WPM clock to 60 (live-found).
+    // Unlocked keeps the coarse dit/dah split: that's what converges
+    // from a cold start (sweep-found: fit-gating acquisition starves
+    // the tracker and busts the .20-jitter row).
     if (credible) {
-        if (runMs < 2.0 * ditMs_) {
+        if (locked_) {
+            if (std::abs(runMs - ditMs_) < 0.35 * ditMs_)
+                ditMs_ += 0.10 * (runMs - ditMs_);
+            else if (std::abs(runMs - 3.0 * ditMs_) < 1.05 * ditMs_)
+                ditMs_ += 0.10 * (runMs / 3.0 - ditMs_);
+        } else if (runMs < 2.0 * ditMs_) {
             if (runMs > 0.4 * ditMs_) ditMs_ += 0.10 * (runMs - ditMs_);
         } else {
             ditMs_ += 0.10 * (runMs / 3.0 - ditMs_);

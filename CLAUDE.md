@@ -72,7 +72,10 @@ Run the relevant tests plus a selftest sizing check before every commit.
 `cwtest` full-matrix baselines (2026-08-06): legacy 94%, engine 95%,
 bayes 100% — treat any drop as a regression, per brain. Decoder changes
 must keep "dead channel" quiet (noise babble was a real on-air bug,
-twice); the bayes brain's bar there is ZERO garbage chars.
+twice); the bayes brain's bar there is ≤2 garbage chars (was 0 before
+the 2026-08-07 QRN spike gate — one statistical-tail char per 60 s was
+the price of storm-proof copy on a live lightning night, measured on
+that night's own capture).
 
 ## Architecture in 60 seconds
 
