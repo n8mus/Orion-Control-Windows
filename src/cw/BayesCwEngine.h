@@ -46,6 +46,13 @@ public:
     QString process(float mag);
 
     void   setSquelch(double s) { squelch_ = s; }
+    // Display stream: best-guess characters without the garbage
+    // threshold (see FldigiCwEngine::takeLoose — same contract).
+    QString takeLoose() {
+        QString t;
+        t.swap(loose_);
+        return t;
+    }
     bool   inTone() const { return key_; }
     double dotMs() const { return ditMs_; }
     int    wpm() const { return int(1200.0 / ditMs_ + 0.5); }
@@ -86,6 +93,7 @@ private:
     // --- per-character observation ------------------------------------
     std::vector<double> marks_;            // element durations, ms
     std::vector<double> gaps_;             // gaps BETWEEN those marks, ms
+    QString loose_;                        // display stream (takeLoose)
     bool   wordGapSent_ = true;
     double lastSpaceMs_ = 0.0;
     int    lastWpm_ = 0;

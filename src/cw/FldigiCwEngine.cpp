@@ -95,6 +95,7 @@ void FldigiCwEngine::reset() {
     spaceSent_ = true;
     repBuf_.clear();
     durBuf_.clear();
+    loose_.clear();
     std::fill(bitBuf_.begin(), bitBuf_.end(), 0.0f);
     bitSum_ = 0.0;
 }
@@ -180,7 +181,9 @@ QString FldigiCwEngine::handleQuery() {
     const double silence = tMs_ - toneEnd_;
     if (silence < 2.0 * dot) return {};
     if (silence <= 4.0 * dot && state_ == State::AfterTone) {
-        const QString sc = useSom_ ? somWinner() : lookup();
+        const QString som = somWinner();
+        const QString sc = useSom_ ? som : lookup();
+        loose_ += som;                     // display always gets the guess
         repBuf_.clear();
         durBuf_.clear();
         state_ = State::Idle;
@@ -189,6 +192,7 @@ QString FldigiCwEngine::handleQuery() {
     }
     if (silence > 4.0 * dot && !spaceSent_) {
         spaceSent_ = true;
+        loose_ += QLatin1Char(' ');
         return QStringLiteral(" ");
     }
     return {};

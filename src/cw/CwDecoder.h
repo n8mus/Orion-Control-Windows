@@ -78,6 +78,12 @@ public:
 
 signals:
     void textDecoded(const QString& text); // one or more characters
+    // Display twin: the best-guess (SOM) characters for the same events.
+    // textDecoded stays honest ('*' junk markers) for the skimmer's call
+    // miner; this one feeds human eyes — waterfall trace text, SKIM menu
+    // — so the skimmer reads the way the CW window does. Engine + Bayes
+    // paths only (the legacy slicer has no fuzzy matcher).
+    void textLoose(const QString& text);
     void wpmEstimated(int wpm);
 
 private:

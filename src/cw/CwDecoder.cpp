@@ -211,6 +211,9 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
             const QString out =
                 bayes ? bayes_.process(norm) : eng_.process(norm);
             if (!out.isEmpty()) emit textDecoded(out);
+            const QString loose =
+                bayes ? bayes_.takeLoose() : eng_.takeLoose();
+            if (!loose.isEmpty()) emit textLoose(loose);
             const int wpm = bayes ? bayes_.wpm() : eng_.wpm();
             const double metric = bayes ? bayes_.metric() : eng_.metric();
             if (wpm != engWpm_ && wpm >= 5 && wpm <= 60 && metric > 10.0

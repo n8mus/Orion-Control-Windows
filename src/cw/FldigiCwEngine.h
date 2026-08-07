@@ -28,6 +28,19 @@ public:
     // sometimes one character or a space).
     QString process(float mag);
 
+    // Companion best-guess stream for DISPLAY: the SOM (fuzzy) winner
+    // for the same character events process() just returned. The
+    // skimmer's call miner needs honest '*' markers (SOM never prints
+    // junk, and a quiet band's noise once assembled a cty-valid phantom
+    // through it), but the human-facing waterfall/menu text wants the
+    // closest letter — the way the CW window reads. One decode, two
+    // streams; drain after each process() call.
+    QString takeLoose() {
+        QString t;
+        t.swap(loose_);
+        return t;
+    }
+
     // fldigi's CW config knobs, same value ranges.
     void setSom(bool on) { useSom_ = on; }
     void setAttack(int idx);               // 0 slow, 1 normal, 2 fast
@@ -79,6 +92,7 @@ private:
     // per-character element buffers
     std::string repBuf_;                   // '.'/'-' representation
     std::vector<double> durBuf_;           // element durations, ms (SOM)
+    QString loose_;                        // display stream (see takeLoose)
 };
 
 } // namespace ttc

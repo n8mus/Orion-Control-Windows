@@ -74,7 +74,9 @@ public:
     void updateFromSpectrum(const std::vector<float>& db, int spanHz,
                             qint64 dialHz, int loOffsetHz);
 
-    // Live snapshot for the SKIM menu readout.
+    // Live snapshot for the SKIM menu readout and the waterfall labels.
+    // text is the DISPLAY stream (best-guess characters, reads like the
+    // CW window); the call miner works on the honest stream internally.
     struct ChanInfo {
         bool    active = false;
         qint64  hz = 0;                    // absolute carrier frequency
@@ -106,7 +108,8 @@ private:
         QString call;
         QString candidate;                 // current unconfirmed call
         int     candCount = 0;             // distinct sightings of it
-        QString text;                      // rolling decode buffer
+        QString text;                      // rolling decode buffer (honest)
+        QString show;                      // rolling display buffer (SOM)
         qint64  lastCharMs = 0;            // activity clock (ms epoch)
         qint64  assignedMs = 0;
     };

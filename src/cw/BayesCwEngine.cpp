@@ -102,6 +102,7 @@ void BayesCwEngine::reset() {
     locked_ = false;
     marks_.clear();
     gaps_.clear();
+    loose_.clear();
     wordGapSent_ = true;
     lastSpaceMs_ = 0.0;
     lastWpm_ = 0;
@@ -187,6 +188,7 @@ QString BayesCwEngine::process(float mag) {
             if (!wordGapSent_ && runMs_ > 2.65 * charGapMs()) {
                 wordGapSent_ = true;
                 out += QLatin1Char(' ');
+                loose_ += QLatin1Char(' ');
             }
         }
     }
@@ -389,6 +391,9 @@ QString BayesCwEngine::closeChar() {
             out = QChar::fromLatin1(best);
         else
             out = QStringLiteral("*");
+        // Display stream: the closest character regardless of the
+        // garbage threshold — the honest '*' is for the call miner.
+        loose_ += best != 0 ? QChar::fromLatin1(best) : QChar('*');
         if (std::getenv("TTC_BAYESDBG"))
             std::fprintf(stderr,
                          "[bayes] '%s' cost %.1f k=%d ratio %.2f metric "

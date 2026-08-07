@@ -57,6 +57,16 @@ SkimmerEngine::SkimmerEngine(double inputRate, int channels, QObject* parent)
         connect(ch_[i].dec, &CwDecoder::textDecoded, this,
                 [this, i](const QString& t) { onText(i, t); },
                 Qt::QueuedConnection);
+        // Display twin: the SOM best-guess stream reads like the CW
+        // window; the miner above keeps its honest '*' markers.
+        connect(ch_[i].dec, &CwDecoder::textLoose, this,
+                [this, i](const QString& t) {
+                    Chan& c = ch_[i];
+                    if (!c.active) return;
+                    c.show += t;
+                    if (c.show.size() > 160) c.show = c.show.right(120);
+                },
+                Qt::QueuedConnection);
         connect(ch_[i].dec, &CwDecoder::wpmEstimated, this,
                 [this, i](int wpm) { ch_[i].wpm = wpm; },
                 Qt::QueuedConnection);
@@ -233,6 +243,7 @@ void SkimmerEngine::freeChannel(Chan& c) {
     c.candidate.clear();
     c.candCount = 0;
     c.text.clear();
+    c.show.clear();
     c.wpm = 0;
 }
 
@@ -378,7 +389,7 @@ QVector<SkimmerEngine::ChanInfo> SkimmerEngine::channelInfo() const {
     out.reserve(int(ch_.size()));
     for (const auto& c : ch_)
         out.push_back({c.active, c.hz, c.wpm, c.call,
-                       c.text.right(28)});
+                       (c.show.isEmpty() ? c.text : c.show).right(28)});
     return out;
 }
 
