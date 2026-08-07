@@ -5,6 +5,7 @@
 
 #include <QMouseEvent>
 #include <QPainter>
+#include <QSet>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -381,51 +382,86 @@ private:
         labelHits_.clear();
         struct Row {
             double y;
-            QString text;
+            QString head;              // call (or "?" while hunting)
+            QString tail;              // live decode text, CW Skimmer style
             QColor color;
             qint64 hz;
             QString call;
         };
         std::vector<Row> rows;
-        for (const auto& s : eng_->spots()) {
-            if (s.hz < viewLo_ || s.hz > viewHi_) continue;
+        const auto statusColor = [this](const QString& call, qint64 hz) {
             QColor col(205, 140, 255);                 // skimmer violet
-            if (status_) switch (status_(s.call, s.hz).toLatin1()) {
+            if (status_) switch (status_(call, hz).toLatin1()) {
                 case 'N': col = QColor(255, 92, 70); break;
                 case 'B': col = QColor(255, 190, 60); break;
                 case 'W': col = QColor(130, 222, 140); break;
                 case 'C': col = QColor(150, 162, 178); break;
             }
-            QString t = s.call;
-            if (s.wpm > 0) t += QStringLiteral(" ·%1").arg(s.wpm);
-            rows.push_back({yOfHz(double(s.hz)), t, col, s.hz, s.call});
-        }
+            return col;
+        };
+        // Live channels print their decode as it happens — the CW-Skimmer
+        // behavior the operator expects; the confirmed call (once the
+        // miner is sure) rides in front in worked-before color.
+        QSet<QString> live;
         for (const auto& c : eng_->channelInfo()) {
-            if (!c.active || !c.call.isEmpty()) continue;
+            if (!c.active) continue;
             if (c.hz < viewLo_ || c.hz > viewHi_) continue;
-            rows.push_back({yOfHz(double(c.hz)), QStringLiteral("?"),
-                            QColor(74, 90, 110), c.hz, QString()});
+            Row r;
+            r.y = yOfHz(double(c.hz));
+            r.hz = c.hz;
+            r.call = c.call;
+            r.tail = c.text.right(18);
+            if (c.call.isEmpty()) {
+                r.head = QStringLiteral("?");
+                r.color = QColor(74, 90, 110);
+            } else {
+                r.head = c.call;
+                r.color = statusColor(c.call, c.hz);
+                live.insert(c.call);
+            }
+            rows.push_back(std::move(r));
+        }
+        // Spots whose channel moved on (kept 10 min): call + WPM, no text.
+        for (const auto& s : eng_->spots()) {
+            if (live.contains(s.call)) continue;
+            if (s.hz < viewLo_ || s.hz > viewHi_) continue;
+            QString head = s.call;
+            if (s.wpm > 0) head += QStringLiteral(" ·%1").arg(s.wpm);
+            rows.push_back({yOfHz(double(s.hz)), head, QString(),
+                            statusColor(s.call, s.hz), s.hz, s.call});
         }
         std::sort(rows.begin(), rows.end(),
                   [](const Row& a, const Row& b) { return a.y < b.y; });
-        // De-collide downward so stacked spots stay readable; a thin
+        // De-collide downward so stacked stations stay readable; a thin
         // connector keeps a displaced label pointing at its trace.
-        QFont f(QStringLiteral("monospace"), 10, QFont::Bold);
-        p.setFont(f);
-        const QFontMetrics fm(f);
+        QFont fb(QStringLiteral("monospace"), 10, QFont::Bold);
+        QFont fr(QStringLiteral("monospace"), 10);
+        const QFontMetrics fmB(fb), fmR(fr);
         double nextFree = -1e9;
         for (auto& r : rows) {
             const double y = std::max(r.y, nextFree);
             nextFree = y + 14.0;
             if (y > height() + 8) break;
-            const int tw = fm.horizontalAdvance(r.text);
-            const QRect box(width() - tw - 26, int(y) - 7, tw + 8, 14);
-            p.fillRect(box, QColor(5, 8, 12, 170));
+            const int hw = fmB.horizontalAdvance(r.head);
+            const int tw = r.tail.isEmpty()
+                ? 0 : fmR.horizontalAdvance(r.tail) + 6;
+            const QRect box(width() - hw - tw - 26, int(y) - 7,
+                            hw + tw + 8, 14);
+            p.fillRect(box, QColor(5, 8, 12, 190));
             p.setPen(QPen(r.color.darker(140), 1));
             p.drawLine(box.right() + 2, box.center().y(),
                        width() - 4, int(r.y));
+            p.setFont(fb);
             p.setPen(r.color);
-            p.drawText(box, Qt::AlignCenter, r.text);
+            p.drawText(QRect(box.left() + 4, box.top(), hw, 14),
+                       Qt::AlignLeft | Qt::AlignVCenter, r.head);
+            if (tw > 0) {
+                p.setFont(fr);
+                p.setPen(QColor(126, 146, 166));
+                p.drawText(QRect(box.left() + 4 + hw + 6, box.top(),
+                                 tw - 6, 14),
+                           Qt::AlignLeft | Qt::AlignVCenter, r.tail);
+            }
             labelHits_.push_back({box, r.hz, r.call});
         }
     }
