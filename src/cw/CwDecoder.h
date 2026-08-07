@@ -5,6 +5,7 @@
 #include <complex>
 #include <cstddef>
 
+#include "cw/BayesCwEngine.h"
 #include "cw/FldigiCwEngine.h"
 
 namespace ttc {
@@ -43,19 +44,28 @@ public:
     // stay centered on the station (Hz; reads from any thread).
     double afcHz() const { return afcTotal_.load(std::memory_order_relaxed); }
 
-    // Decode-engine adjustments (fldigi engine only; the legacy path
-    // ignores them). GUI-thread writes are safe: plain flags/params read
+    // THREE decode brains behind one front end: the battle-tuned legacy
+    // slicer, the ported fldigi engine (the default everywhere since the
+    // 2026-07-15 live A/B), and the Bayesian engine (soft keying +
+    // whole-character duration inference; experimental until it earns a
+    // default the same way — on the air). TTC_CWLEGACY / TTC_CWBAYES /
+    // TTC_CWENGINE override at construction for tests (legacy wins ties).
+    enum class Brain { Legacy, Engine, Bayes };
+    void setBrain(Brain b) { brain_ = b; }
+    // Decode-engine adjustments (fldigi engine only; the other paths
+    // ignore them). GUI-thread writes are safe: plain flags/params read
     // by the SDR thread with no torn-value hazard worse than one sample.
-    // Engine choice is per instance: the CW window's tuned reader runs
-    // the fldigi engine (operator-adjustable), the skimmer's 24 channels
-    // stay on the battle-tuned legacy path until the engine beats it on
-    // the full matrix. TTC_CWLEGACY / TTC_CWENGINE override for tests.
-    void setEngineMode(bool fldigi) { legacy_ = !fldigi; }
+    void setEngineMode(bool fldigi) {
+        brain_ = fldigi ? Brain::Engine : Brain::Legacy;
+    }
     void setSom(bool on) { eng_.setSom(on); }
-    // Noise squelch on the fldigi signal metric (0..100). Higher = the
-    // reader needs a stronger signal before it registers keying, so a
-    // quiet band stops printing stray letters. Fldigi engine only.
-    void setSquelch(double s) { eng_.setSquelch(s); }
+    // Noise squelch on the signal metric (0..100). Higher = the reader
+    // needs a stronger signal before it registers keying, so a quiet
+    // band stops printing stray letters. Engine + Bayes paths.
+    void setSquelch(double s) {
+        eng_.setSquelch(s);
+        bayes_.setSquelch(s);
+    }
     void setAttack(int idx) { eng_.setAttack(idx); }
     void setDecay(int idx) { eng_.setDecay(idx); }
     // DEEP: narrow the matched filter well below real-time comfort —
@@ -80,15 +90,14 @@ private:
     std::atomic<bool> retunePending_{false};
     double inputRate_ = 500000.0;
 
-    // Decode brain: fldigi's ported engine by default (see
-    // FldigiCwEngine.h); TTC_CWLEGACY=1 selects the original tick() path
-    // for A/B comparison in cwtest/skimreplay.
+    // Decode brains (see Brain above). Engine default flipped after the
+    // live A/B (2026-07-15): on the same air the ported engine out-copied
+    // real fldigi (VP2MAA session) while the legacy path produced mush —
+    // skimmer channels run it too. Legacy stays reachable (TTC_CWLEGACY /
+    // the CW window's FLD box); Bayes via TTC_CWBAYES or setBrain().
     FldigiCwEngine eng_;
-    // Engine default flipped after the live A/B (2026-07-15): on the same
-    // air the ported engine out-copied real fldigi (VP2MAA session) while
-    // the legacy path produced mush — skimmer channels now run it too.
-    // Legacy stays reachable (TTC_CWLEGACY / the CW window's FLD box).
-    bool legacy_ = false;
+    BayesCwEngine bayes_;
+    Brain brain_ = Brain::Engine;
     std::atomic<bool> deep_{false};
     int engWpm_ = 0;
     // Engine-path FIR lowpass (see processIq): windowed sinc, recomputed

@@ -56,6 +56,7 @@ add_executable(tentec-console
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
   src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
   src/cw/FldigiCwEngine.cpp     src/cw/FldigiCwEngine.h
+  src/cw/BayesCwEngine.cpp      src/cw/BayesCwEngine.h
   src/cw/AudioCwSource.cpp      src/cw/AudioCwSource.h
   src/cw/SkimmerEngine.cpp      src/cw/SkimmerEngine.h
   src/cw/SkimServer.cpp         src/cw/SkimServer.h
@@ -87,7 +88,7 @@ target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6
 # the fldigi XML-RPC client test (pair with tests/fake_fldigi.py).
 add_executable(skimtest EXCLUDE_FROM_ALL
   tests/skimtest.cpp
-  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/SkimmerEngine.cpp)
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/BayesCwEngine.cpp src/cw/SkimmerEngine.cpp)
 target_include_directories(skimtest PRIVATE src)
 target_link_libraries(skimtest PRIVATE Qt6::Core)
 
@@ -133,7 +134,7 @@ target_link_libraries(skimsrvtest PRIVATE Qt6::Core Qt6::Network)
 
 add_executable(skimreplay EXCLUDE_FROM_ALL
   tests/skimreplay.cpp
-  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/SkimmerEngine.cpp
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/BayesCwEngine.cpp src/cw/SkimmerEngine.cpp
   src/dsp/SpectrumComputer.cpp src/dsp/Fft.cpp
   src/util/CtyLookup.cpp
   resources/resources.qrc)
@@ -142,7 +143,7 @@ target_link_libraries(skimreplay PRIVATE Qt6::Core Qt6::Gui)
 
 add_executable(cwtest EXCLUDE_FROM_ALL
   tests/cwtest.cpp
-  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp)
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/BayesCwEngine.cpp)
 target_include_directories(cwtest PRIVATE src)
 target_link_libraries(cwtest PRIVATE Qt6::Core)
 
@@ -157,13 +158,13 @@ target_include_directories(trimtest PRIVATE src)
 
 add_executable(cohtest EXCLUDE_FROM_ALL
   tests/cohtest.cpp
-  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/dsp/Fft.cpp)
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/BayesCwEngine.cpp src/dsp/Fft.cpp)
 target_include_directories(cohtest PRIVATE src)
 target_link_libraries(cohtest PRIVATE Qt6::Core)
 
 add_executable(nrtest EXCLUDE_FROM_ALL
   tests/nrtest.cpp
-  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp
+  src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/BayesCwEngine.cpp
   src/audio/SpectralNr.cpp src/dsp/Fft.cpp)
 target_include_directories(nrtest PRIVATE src)
 target_link_libraries(nrtest PRIVATE Qt6::Core rnnoise)

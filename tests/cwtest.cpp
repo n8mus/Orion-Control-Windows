@@ -74,6 +74,10 @@ int main(int argc, char** argv) {
     const bool quick = argc > 1 && QString(argv[1]) == "--quick";
     const QStringList quickSet = {"20 wpm clean", "45 wpm clean",
                                   "20 wpm qsb 97%", "dead channel (quiet?)"};
+    // --only <substr>: run matching rows only (decoder-tuning inner loop).
+    QString only;
+    for (int i = 1; i + 1 < argc; ++i)
+        if (QString(argv[i]) == "--only") only = argv[i + 1];
     constexpr double kRate = 500000.0;
     constexpr double kOffset = -60000.0;   // where the tuned reader listens
     const QString story = "CQ CQ DE W1AW W1AW K  ";
@@ -105,6 +109,7 @@ int main(int argc, char** argv) {
     int overallScore = 0, overallMax = 0;
     for (const Case& c : cases) {
         if (quick && !quickSet.contains(c.name)) continue;
+        if (!only.isEmpty() && !QString(c.name).contains(only)) continue;
         std::mt19937 rng(11);
         std::normal_distribution<float> noise(0.0f, 0.004f);
         ttc::CwDecoder dec(kRate, kOffset);

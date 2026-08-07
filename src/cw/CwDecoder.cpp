@@ -35,8 +35,9 @@ CwDecoder::CwDecoder(double inputRate, double offsetHz, QObject* parent)
     : QObject(parent), inputRate_(inputRate) {
     decim_ = static_cast<int>(inputRate / 2000.0);   // -> 2 ksps envelope
     tickMs_ = 1000.0 * decim_ / inputRate;
-    if (std::getenv("TTC_CWENGINE")) legacy_ = false;      // test hooks
-    if (std::getenv("TTC_CWLEGACY")) legacy_ = true;
+    if (std::getenv("TTC_CWENGINE")) brain_ = Brain::Engine; // test hooks
+    if (std::getenv("TTC_CWBAYES"))  brain_ = Brain::Bayes;
+    if (std::getenv("TTC_CWLEGACY")) brain_ = Brain::Legacy;
     if (std::getenv("TTC_CWDEEP"))
         deep_.store(true, std::memory_order_relaxed);
     retune(offsetHz);
@@ -92,6 +93,7 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         markHistN_ = 0;
         locked_ = false;
         eng_.reset();
+        bayes_.reset();
         engWpm_ = 0;
     }
     for (size_t i = 0; i < n; ++i) {
@@ -112,13 +114,16 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         // fc, cascaded for ~12 dB/oct skirts. The engine path takes the
         // dit from the fldigi tracker; DEEP narrows the clamp range for
         // weak-signal work (latency and soft edges traded for SNR).
-        const float ditEst = legacy_ ? float(gapMin_) : float(eng_.dotMs());
+        const bool legacy = brain_ == Brain::Legacy;
+        const bool bayes = brain_ == Brain::Bayes;
+        const float ditEst = legacy ? float(gapMin_)
+            : float(bayes ? bayes_.dotMs() : eng_.dotMs());
         const bool deep = deep_.load(std::memory_order_relaxed);
         const float fc = deep
             ? std::clamp(2400.0f / ditEst, 15.0f, 60.0f)
             : std::clamp(2400.0f / ditEst, 40.0f, 150.0f);
         std::complex<float> s;
-        if (legacy_) {
+        if (legacy) {
             const float a =
                 1.0f - std::exp(-2.0f * float(M_PI) * fc / 2000.0f);
             lp1_ += a * (z - lp1_);
@@ -164,7 +169,7 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         }
         // AFC: while the key is down the filtered sample is a carrier;
         // successive-sample phase advance IS the residual frequency error.
-        if (legacy_ ? key_ : eng_.inTone()) {
+        if (legacy ? key_ : (bayes ? bayes_.inTone() : eng_.inTone())) {
             const std::complex<float> d = s * std::conj(afcPrevZ_);
             if (std::abs(d) > 1e-9f) {
                 const double errHz =
@@ -189,7 +194,7 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
             }
         }
         afcPrevZ_ = s;
-        if (legacy_) {
+        if (legacy) {
             tick(std::abs(s));
         } else {
             // Receiver-AGC equivalent (the stage real fldigi gets for free
@@ -202,12 +207,14 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
             const float mag = std::abs(s);
             if (mag > agcPk_) agcPk_ += 0.5f * (mag - agcPk_);   // ~1 ms up
             else              agcPk_ += 0.0017f * (mag - agcPk_); // ~300 ms dn
+            const float norm = agcPk_ > 1e-6f ? mag / agcPk_ : 0.0f;
             const QString out =
-                eng_.process(agcPk_ > 1e-6f ? mag / agcPk_ : 0.0f);
+                bayes ? bayes_.process(norm) : eng_.process(norm);
             if (!out.isEmpty()) emit textDecoded(out);
-            const int wpm = eng_.wpm();
-            if (wpm != engWpm_ && wpm >= 5 && wpm <= 60
-                && eng_.metric() > 10.0) {
+            const int wpm = bayes ? bayes_.wpm() : eng_.wpm();
+            const double metric = bayes ? bayes_.metric() : eng_.metric();
+            if (wpm != engWpm_ && wpm >= 5 && wpm <= 60 && metric > 10.0
+                && (!bayes || bayes_.locked())) {
                 engWpm_ = wpm;
                 emit wpmEstimated(wpm);
             }

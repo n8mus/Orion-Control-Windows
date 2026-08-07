@@ -44,6 +44,11 @@ public:
     // replay of the old 500 ksps era). Before streaming starts only.
     void setInputRate(double rate);
 
+    // Flip every channel between the fldigi engine (the default brain)
+    // and the Bayesian one — the SKIM menu's experimental toggle, so the
+    // operator can A/B on the air without env vars.
+    void setBayes(bool on);
+
     // The band's practical CW window (RBN convention, stops below the FT8
     // hotspot); false when the dial isn't near one. Shared with the SKIM
     // view so both agree on what "the CW segment" means.

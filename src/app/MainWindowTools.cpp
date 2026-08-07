@@ -272,6 +272,20 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
                 "must repeat (or follow DE)\nbefore they're spotted.")
             .arg(skim_->channelCount()));
     skim_->setEnabled(skimEnable_->isChecked());
+    // Bayes brain A/B: matrix-verified, but defaults only flip after the
+    // operator's on-air verdict (house rule) — so it's a plain toggle.
+    auto* skimBayes = skimMenu->addAction("Bayes decoder (experimental)");
+    skimBayes->setCheckable(true);
+    skimBayes->setChecked(QSettings().value("skim/bayes", false).toBool());
+    skimBayes->setToolTip(
+        "Decode the skimmer channels with the Bayesian brain (soft keying\n"
+        "+ whole-character inference) instead of the fldigi engine. Try\n"
+        "it on the air and compare the finds.");
+    connect(skimBayes, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("skim/bayes", on);
+        skim_->setBayes(on);
+    });
+    if (skimBayes->isChecked()) skim_->setBayes(true);
     // Band map: the skimmer's finds as a frequency-sorted click-to-tune
     // list (separate window, so it can live on all session).
     auto* skimMap = skimMenu->addAction("Band map…");
