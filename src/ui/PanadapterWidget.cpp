@@ -144,10 +144,11 @@ QImage renderShipImage(int w, int h, const QImage& art, int brightPct) {
     return img;
 }
 
-// The map sun, KE9NS-sized: a rayed disc you can spot from across the
-// shack, not a pinhead. Like his, it reacts to the live GOES X-ray class —
+// The map sun, KE9NS-sized: a bold disc you can spot from across the
+// shack, not a pinhead (rays tried 2026-08-08, operator called them off —
+// clean disc only). Like his, it reacts to the live GOES X-ray class —
 // a C flare warms it, M swells it orange, X goes angry red — so the map
-// itself says "flare in progress". Returns the ray reach in pixels so
+// itself says "flare in progress". Returns the disc reach in pixels so
 // callers can keep captions (and the map seam) clear of it.
 double drawMapSun(QPainter& p, QPointF c, double core, const QString& xray) {
     double k = 1.0;                         // flare response: size multiplier
@@ -168,18 +169,6 @@ double drawMapSun(QPainter& p, QPointF c, double core, const QString& xray) {
     p.setPen(Qt::NoPen);
     p.setBrush(glow);
     p.drawEllipse(c, r * 3.2, r * 3.2);
-    QPainterPath rays;                      // 12 tapered rays, long/short
-    for (int i = 0; i < 12; ++i) {
-        const double a   = i * M_PI / 6.0 + M_PI / 12.0;
-        const double len = r * ((i & 1) ? 1.55 : 2.05);
-        const double s   = 0.16;            // half-width angle at the base
-        rays.moveTo(c.x() + std::cos(a - s) * r, c.y() + std::sin(a - s) * r);
-        rays.lineTo(c.x() + std::cos(a) * len, c.y() + std::sin(a) * len);
-        rays.lineTo(c.x() + std::cos(a + s) * r, c.y() + std::sin(a + s) * r);
-        rays.closeSubpath();
-    }
-    p.setBrush(QColor(hot.red(), hot.green(), hot.blue(), 215));
-    p.drawPath(rays);
     QRadialGradient disc(c, r);             // hot center, toasted limb
     disc.setColorAt(0.00, QColor(255, 238, 160));
     disc.setColorAt(0.55, hot);
@@ -188,7 +177,7 @@ double drawMapSun(QPainter& p, QPointF c, double core, const QString& xray) {
     p.setPen(QPen(rim, 1));
     p.drawEllipse(c, r, r);
     p.restore();
-    return r * 2.05;
+    return r * 1.15;
 }
 
 // World map with live grayline: an equirectangular NASA basemap, shaded
@@ -427,8 +416,8 @@ QImage renderGlobeBackdrop(int w, int h, double lat0d, double lon0d,
             const double sx = cx + R * std::cos(decl) * std::sin(subLon - lon0);
             const double sy = cy - R * (cosLat0 * std::sin(decl)
                 - sinLat0 * std::cos(decl) * std::cos(subLon - lon0));
-            // Clip a hair past the limb: hard rays poking into space would
-            // read as a bug, but glow bleeding into the atmosphere is glare.
+            // Clip a hair past the limb: a hard disc edge poking into space
+            // would read as a bug; glow bleeding into the atmosphere is glare.
             QPainterPath limb;
             limb.addEllipse(QPointF(cx, cy), R * 1.07, R * 1.07);
             p.save();
