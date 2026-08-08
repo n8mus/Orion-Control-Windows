@@ -1345,13 +1345,21 @@ inline QColor planColor(PMode m) {
     return QColor(120, 120, 120);
 }
 // US license-class privilege edges: the frequency where a class first gains
-// PHONE privileges on that band (from the ARRL chart's E/A/G/T markers).
-// Drawn as guide lines "in the map" so the operator sees who can work where.
+// privileges on that band — phone AND the CW/data side (ARRL chart E/A/G/T
+// markers; CW side added 2026-08-08, it only showed phone before). "E" at a
+// band bottom = Extra-exclusive floor until the next mark; "A/G/T" = those
+// classes' CW begins (Tech CW rides the old Novice segments on 80/40/15).
+// Bands with no interior class split (160/30/17/12, 60 m channels) get no
+// marks — the band-plan tint next door already says who's there.
 struct PrivEdge { qint64 hz; const char* cls; };
 constexpr PrivEdge kUsPriv[] = {
+    {3500000, "E"},  {3525000, "A/G/T"},                      // 80 m CW
     {3600000, "E"},  {3700000, "A"},  {3800000, "G"},         // 75 m phone
+    {7000000, "E"},  {7025000, "A/G/T"},                      // 40 m CW
     {7125000, "E/A"},{7175000, "G"},                          // 40 m phone
+    {14000000,"E"},  {14025000,"A/G"},                        // 20 m CW
     {14150000,"E"},  {14175000,"A"},  {14225000,"G"},         // 20 m phone
+    {21000000,"E"},  {21025000,"A/G/T"},                      // 15 m CW
     {21200000,"E"},  {21225000,"A"},  {21275000,"G"},         // 15 m phone
     {28300000,"G+"}, {28500000,"N/T"},                        // 10 m phone / N-T SSB top
     {50100000,"all"},                                         // 6 m phone
