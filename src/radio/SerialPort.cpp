@@ -29,7 +29,14 @@ static speed_t toSpeed(int baud) {
 
 bool SerialPort::open(const std::string& device, int baud, bool hwHandshake) {
     close();
-    fd_ = ::open(device.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+    // O_CLOEXEC: the console spawns audio helpers (parec/paplay for the
+    // SignaLink and DVR, pacat for RIP) and QProcess does NOT scrub inherited
+    // descriptors — measured live, a parec child held both the radio's CAT
+    // port and the wattmeter's. Harmless while all is well, but a helper that
+    // outlives an unclean console death keeps the TIOCEXCL below asserted on
+    // those ports, and the next launch cannot open its own radio. WinKeyer is
+    // already safe: QSerialPort opens through Qt's qt_safe_open.
+    fd_ = ::open(device.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
     if (fd_ < 0) {
         emit ioError(QStringLiteral("open %1: %2").arg(device.c_str(), std::strerror(errno)));
         return false;
