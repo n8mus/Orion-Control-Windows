@@ -148,6 +148,11 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     form->addRow(section("CW KEYER", this));
     keyerDev_ = new QComboBox(this);
     keyerDev_->setEditable(true);
+    // Nothing is preconfigured, so an unset field is blank — and a blank dark
+    // box does not look clickable. Say what it is and that leaving it alone
+    // is a valid choice (operator-reported: "I don't see drop downs").
+    keyerDev_->lineEdit()->setPlaceholderText(
+        "click to choose a port — leave empty if you have no WinKeyer");
     form->addRow("WinKeyer port", keyerDev_);
     auto* ktest = new QPushButton("Test", this);
     keyerTest_ = new QLabel(this);
@@ -217,6 +222,8 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
 
     lpDev_ = new QComboBox(this);
     lpDev_->setEditable(true);
+    lpDev_->lineEdit()->setPlaceholderText(
+        "click to choose a port — leave empty if you have no wattmeter");
     lpDev_->setToolTip(
         "Straight-through DB9 cable, NOT a null modem — a null modem\n"
         "reads as a dead port on either meter.");
@@ -433,7 +440,9 @@ void SetupDialog::applyConnMode(const QString& profile) {
                               "mode (default CMD port 49152). Same string on\n"
                               "the laptop, pointed at the radio's LAN address.");
         if (!devRemote_.isEmpty()) radioDev_->addItem(devRemote_);
-        radioDev_->setCurrentText(devRemote_);   // format is in the tooltip
+        radioDev_->lineEdit()->setPlaceholderText(
+            "udp:HOST[:PORT] — the radio's address in REMOTE mode");
+        radioDev_->setCurrentText(devRemote_);
     } else {
         const QString& cur = orion ? devOrion_ : devSerial_;
         if (devLabel_) devLabel_->setText("CAT serial port");
@@ -444,6 +453,9 @@ void SetupDialog::applyConnMode(const QString& profile) {
         const QStringList ports = serialPortCandidates();
         radioDev_->addItems(ports);
         if (!cur.isEmpty() && !ports.contains(cur)) radioDev_->addItem(cur);
+        radioDev_->lineEdit()->setPlaceholderText(
+            ports.isEmpty() ? "no serial ports found on this machine"
+                            : "click to choose this radio's CAT port");
         radioDev_->setCurrentText(cur);
     }
 }
