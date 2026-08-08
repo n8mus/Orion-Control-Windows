@@ -214,9 +214,13 @@ stay true even if the kernel renumbers later. PCIe ports are matched by
 PCI address, USB adapters by chip serial. Note `ax99100-intx.service`
 still hardcodes `0000:03:00.*` (it forces legacy INTx; only the original
 card ever needed it), so re-verify after any card change. **The DCU-3
-rotor works ONLY on its FT232R USB adapter** — probe-verified silent on
-all four PCIe ports at every baud, with cables that carry the Omni VII
-flawlessly, while answering 10/10 on USB; don't "tidy" it onto a card.
+rotor answers only over USB today because the controller has an internal
+3-pin jumper that selects RS-232 *or* USB, never both** (manual p11) —
+its RS-232 INPUT jack is therefore electrically dead, which is why it
+was silent on all four PCIe ports at every baud on cables that carry the
+Omni VII flawlessly. Nothing is wrong with the cards. Moving that jumper
+from `U` to `R` frees the rotor from USB, at the cost of the USB port
+(and `/dev/rotor` would then need repointing at the card port).
 The Omni VII therefore HAS a serial CAT path again (`radio/deviceSerial`,
 57600 8N1 **with RTS/CTS** — read back `?A` = 50.313 MHz live on
 2026-08-08); RTS/CTS is not optional, without it replies come back
