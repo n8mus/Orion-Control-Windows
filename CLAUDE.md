@@ -200,10 +200,30 @@ by-id path. **Orion CAT is the motherboard's native RS-232 `/dev/ttyS0`**
 setting > `/dev/orion` default). The FT4232H quad converter that used
 to carry both radios was condemned 2026-07-16 — it WAS the 40 m spike
 picket (RFI), proven by pull-test at LNA 1; its `/dev/orion` udev rule
-is dead, and the Omni VII (needs RTS/CTS) has no CAT path until a clean
-converter arrives. Two **external wattmeters** share one straight-through
-DB9 cable (never a null modem — it reflects DTR/RTS and reads dead) into
-the AX99100 PCIe card, selected by `meter/model` (`meter/{enabled,device}`,
+is dead. **Serial ports are two AX99100 PCIe cards (four ports) plus the
+motherboard, and everything now has a udev-stable name** — `/etc/udev/
+rules.d/99-ham-usb.rules`, written 2026-08-08 after a card install
+renumbered `ttyS4-7` and broke every hardcoded path (rotctld spent half
+an hour writing rotor commands into the Omni VII). **Always use the
+names, never a raw `ttyS*`:** `/dev/orion` (mobo ttyS0), `/dev/lpmeter`,
+`/dev/omni7`, `/dev/rotor`. The physical connectors are also named
+`/dev/portS0` and `/dev/portS4..S7`, deliberately matching the **stickers
+the operator put on the brackets** (he labelled them with that day's ttyS
+numbers) — the symlinks are pinned to PCI slot addresses, so those labels
+stay true even if the kernel renumbers later. PCIe ports are matched by
+PCI address, USB adapters by chip serial. Note `ax99100-intx.service`
+still hardcodes `0000:03:00.*` (it forces legacy INTx; only the original
+card ever needed it), so re-verify after any card change. **The DCU-3
+rotor works ONLY on its FT232R USB adapter** — probe-verified silent on
+all four PCIe ports at every baud, with cables that carry the Omni VII
+flawlessly, while answering 10/10 on USB; don't "tidy" it onto a card.
+The Omni VII therefore HAS a serial CAT path again (`radio/deviceSerial`,
+57600 8N1 **with RTS/CTS** — read back `?A` = 50.313 MHz live on
+2026-08-08); RTS/CTS is not optional, without it replies come back
+truncated or as the `Z` error. Two **external wattmeters** share one
+straight-through DB9 cable (never a null modem — it reflects DTR/RTS and
+reads dead) into an AX99100 PCIe card, selected by `meter/model`
+(`meter/{enabled,device}`,
 env `TTC_LPMETER_DEV`; old `lp100a/*` keys are read as defaults and
 mirrored on save): the **TelePost LP-100A** (vector; poll `;P?` at 115200
 8N1 → 43-byte `;`-led CSV of power/|Z|/phase/dBm/SWR, `src/radio/LpMeter`;
