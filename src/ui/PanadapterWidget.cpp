@@ -144,6 +144,53 @@ QImage renderShipImage(int w, int h, const QImage& art, int brightPct) {
     return img;
 }
 
+// The map sun, KE9NS-sized: a rayed disc you can spot from across the
+// shack, not a pinhead. Like his, it reacts to the live GOES X-ray class —
+// a C flare warms it, M swells it orange, X goes angry red — so the map
+// itself says "flare in progress". Returns the ray reach in pixels so
+// callers can keep captions (and the map seam) clear of it.
+double drawMapSun(QPainter& p, QPointF c, double core, const QString& xray) {
+    double k = 1.0;                         // flare response: size multiplier
+    QColor hot(255, 176, 32);               // quiet-sun disc
+    QColor rim(120, 70, 0);
+    const QChar cls = xray.isEmpty() ? QChar('A') : xray.at(0).toUpper();
+    if      (cls == 'C') { k = 1.12; hot = QColor(255, 152, 26); }
+    else if (cls == 'M') { k = 1.32; hot = QColor(255, 112, 22);
+                           rim = QColor(130, 40, 0); }
+    else if (cls == 'X') { k = 1.55; hot = QColor(255, 72, 26);
+                           rim = QColor(140, 20, 0); }
+    const double r = core * k;
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    QRadialGradient glow(c, r * 3.2);
+    glow.setColorAt(0.0, QColor(hot.red(), hot.green(), 40, 165));
+    glow.setColorAt(1.0, QColor(hot.red(), hot.green(), 40, 0));
+    p.setPen(Qt::NoPen);
+    p.setBrush(glow);
+    p.drawEllipse(c, r * 3.2, r * 3.2);
+    QPainterPath rays;                      // 12 tapered rays, long/short
+    for (int i = 0; i < 12; ++i) {
+        const double a   = i * M_PI / 6.0 + M_PI / 12.0;
+        const double len = r * ((i & 1) ? 1.55 : 2.05);
+        const double s   = 0.16;            // half-width angle at the base
+        rays.moveTo(c.x() + std::cos(a - s) * r, c.y() + std::sin(a - s) * r);
+        rays.lineTo(c.x() + std::cos(a) * len, c.y() + std::sin(a) * len);
+        rays.lineTo(c.x() + std::cos(a + s) * r, c.y() + std::sin(a + s) * r);
+        rays.closeSubpath();
+    }
+    p.setBrush(QColor(hot.red(), hot.green(), hot.blue(), 215));
+    p.drawPath(rays);
+    QRadialGradient disc(c, r);             // hot center, toasted limb
+    disc.setColorAt(0.00, QColor(255, 238, 160));
+    disc.setColorAt(0.55, hot);
+    disc.setColorAt(1.00, hot.darker(112));
+    p.setBrush(disc);
+    p.setPen(QPen(rim, 1));
+    p.drawEllipse(c, r, r);
+    p.restore();
+    return r * 2.05;
+}
+
 // World map with live grayline: an equirectangular NASA basemap, shaded
 // for use as a backdrop, with the night side darkened from the current UTC
 // subsolar point (soft twilight band = the grayline). KE9NS proportions:
@@ -151,7 +198,7 @@ QImage renderShipImage(int w, int h, const QImage& art, int brightPct) {
 // where the trace floor lives. dayPct/nightPct = user brightness (percent).
 QImage renderWorldMap(int w, int h, const QImage& earth,
                       int dayPct, int nightPct, bool drawSun,
-                      int sfi, int aIdx, double kIdx) {
+                      int sfi, int aIdx, double kIdx, const QString& xray) {
     if (earth.isNull()) return renderBlueRays(w, h);  // basemap missing
     const int mapH = std::max(1, static_cast<int>(h * 0.84));
     QImage img = earth.scaled(w, mapH, Qt::IgnoreAspectRatio,
@@ -212,16 +259,11 @@ QImage renderWorldMap(int w, int h, const QImage& earth,
         const double sx = (lonDeg + 180.0) / 360.0 * w;
         const double sy = (90.0 - latDeg) / 180.0 * mapH;
         QPainter sp(&img);
-        sp.setRenderHint(QPainter::Antialiasing);
-        QRadialGradient glow(QPointF(sx, sy), 24);
-        glow.setColorAt(0.0, QColor(255, 170, 40, 160));
-        glow.setColorAt(1.0, QColor(255, 170, 40, 0));
-        sp.setPen(Qt::NoPen);
-        sp.setBrush(glow);
-        sp.drawEllipse(QPointF(sx, sy), 24, 24);
-        sp.setBrush(QColor(255, 176, 32));
-        sp.setPen(QPen(QColor(120, 70, 0), 1));
-        sp.drawEllipse(QPointF(sx, sy), 5, 5);
+        const double reach = drawMapSun(sp, QPointF(sx, sy), 11.0, xray);
+        // Around 00 UTC the subsolar point rides the dateline = the map
+        // seam; draw the wrapped copy so the sun never shows up half-eaten.
+        if (sx < reach)     drawMapSun(sp, QPointF(sx + w, sy), 11.0, xray);
+        if (sx > w - reach) drawMapSun(sp, QPointF(sx - w, sy), 11.0, xray);
         if (sfi > 0) {
             QFont f = sp.font();
             f.setPixelSize(10);
@@ -231,8 +273,8 @@ QImage renderWorldMap(int w, int h, const QImage& earth,
             if (aIdx >= 0) cap += QString("  A %1").arg(aIdx);
             if (kIdx >= 0) cap += QString("  K %1").arg(kIdx, 0, 'f', 1);
             const int tw = sp.fontMetrics().horizontalAdvance(cap);
-            double tx = sx + 12;                    // flip side near the edge
-            if (tx + tw > w - 4) tx = sx - 12 - tw;
+            double tx = sx + reach + 4;             // flip side near the edge
+            if (tx + tw > w - 4) tx = sx - reach - 4 - tw;
             sp.setPen(QColor(0, 0, 0, 190));        // shadow for readability
             sp.drawText(QPointF(tx + 1, sy + 4 + 1), cap);
             sp.setPen(QColor(255, 214, 90));
@@ -267,7 +309,8 @@ void globeGeom(int w, int h, int& cx, int& cy, int& R) {
 // idea as the flat maps; a breath of atmosphere past the limb sells the
 // ball. Re-rendered once a minute by the bgMinute_ cache like the maps.
 QImage renderGlobeBackdrop(int w, int h, double lat0d, double lon0d,
-                           int dayPct, int nightPct, bool drawSun) {
+                           int dayPct, int nightPct, bool drawSun,
+                           const QString& xray) {
     static QImage day, night;
     if (day.isNull()) {
         day   = QImage(":/earth.jpg").convertToFormat(QImage::Format_RGB32);
@@ -384,14 +427,14 @@ QImage renderGlobeBackdrop(int w, int h, double lat0d, double lon0d,
             const double sx = cx + R * std::cos(decl) * std::sin(subLon - lon0);
             const double sy = cy - R * (cosLat0 * std::sin(decl)
                 - sinLat0 * std::cos(decl) * std::cos(subLon - lon0));
-            QRadialGradient glow(QPointF(sx, sy), 22);
-            glow.setColorAt(0.0, QColor(255, 170, 40, 150));
-            glow.setColorAt(1.0, QColor(255, 170, 40, 0));
-            p.setBrush(glow);
-            p.drawEllipse(QPointF(sx, sy), 22, 22);
-            p.setBrush(QColor(255, 176, 32));
-            p.setPen(QPen(QColor(120, 70, 0), 1));
-            p.drawEllipse(QPointF(sx, sy), 4.5, 4.5);
+            // Clip a hair past the limb: hard rays poking into space would
+            // read as a bug, but glow bleeding into the atmosphere is glare.
+            QPainterPath limb;
+            limb.addEllipse(QPointF(cx, cy), R * 1.07, R * 1.07);
+            p.save();
+            p.setClipPath(limb);
+            drawMapSun(p, QPointF(sx, sy), 9.5, xray);
+            p.restore();
         }
     }
 
@@ -433,7 +476,8 @@ const QImage& PanadapterWidget::backgroundImage(int w, int h) {
                 mapSrcKey_ = key;
             }
             bgCache_ = renderWorldMap(w, h, mapSrc_, ds_.mapDay, ds_.mapNight,
-                                      ds_.showSolar, solSfi_, solA_, solK_);
+                                      ds_.showSolar, solSfi_, solA_, solK_,
+                                      solXray_);
         } else if (isShip) {
             // Same decode-once cache as the maps; a new picker choice
             // changes the key and reloads live.
@@ -447,7 +491,7 @@ const QImage& PanadapterWidget::backgroundImage(int w, int h) {
         } else if (isGlobe) {
             bgCache_ = renderGlobeBackdrop(w, h, qthLat_, qthLon_,
                                            ds_.mapDay, ds_.mapNight,
-                                           ds_.showSolar);
+                                           ds_.showSolar, solXray_);
         } else {
             bgCache_ = renderBlueRays(w, h);
         }
