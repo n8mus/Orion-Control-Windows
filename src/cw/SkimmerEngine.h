@@ -112,15 +112,19 @@ private:
         QString show;                      // rolling display buffer (SOM)
         qint64  lastCharMs = 0;            // activity clock (ms epoch)
         qint64  assignedMs = 0;
-        // WPM spread across the current candidate's sightings. A real
-        // sender holds a near-constant clock; a call mined from keyer-
-        // test junk or spliced audio swings wildly (2026-08-07: phantom
-        // E3MT re-announced 42/60/58/42 WPM). 0 = unset.
-        int     candWpmLo = 0, candWpmHi = 0;
+        // WPM samples at the last few COUNTED sightings of the candidate.
+        // A real sender holds a near-constant clock across re-sends; junk
+        // swings (2026-08-07: phantom E3MT re-announced 42/60/58/42 WPM;
+        // SN1N replayed 28-48). A WINDOW of the newest three, not a
+        // lifetime min/max — the lifetime version latched on one decoder
+        // warm-up transient and then blocked a real unlisted station for
+        // as long as it kept transmitting (max-review find, 2026-08-08).
+        int     candWpm[3] = {0, 0, 0};    // newest first
+        quint8  candWpmN = 0;              // valid samples (saturates at 3)
     };
 
     void onText(int idx, const QString& t);
-    void extractCall(Chan& c);
+    void extractCall(Chan& c, bool wordDone);
     void freeChannel(Chan& c);
 
     std::atomic<bool> enabled_{false};

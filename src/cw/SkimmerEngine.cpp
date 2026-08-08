@@ -68,7 +68,17 @@ SkimmerEngine::SkimmerEngine(double inputRate, int channels, QObject* parent)
                 },
                 Qt::QueuedConnection);
         connect(ch_[i].dec, &CwDecoder::wpmEstimated, this,
-                [this, i](int wpm) { ch_[i].wpm = wpm; },
+                [this, i](int wpm) {
+                    Chan& c = ch_[i];
+                    if (!c.active) return;        // late queued delivery
+                    // Free+reclaim inside one spectrum pass re-arms active
+                    // before the OLD occupant's queued estimate lands; a
+                    // real estimate needs ~1 s of copy, so anything this
+                    // early belongs to the previous tenancy. Drop it.
+                    if (QDateTime::currentMSecsSinceEpoch() - c.assignedMs
+                        < 300) return;
+                    c.wpm = wpm;
+                },
                 Qt::QueuedConnection);
     }
 }
@@ -250,7 +260,8 @@ void SkimmerEngine::freeChannel(Chan& c) {
     c.call.clear();
     c.candidate.clear();
     c.candCount = 0;
-    c.candWpmLo = c.candWpmHi = 0;
+    c.candWpm[0] = c.candWpm[1] = c.candWpm[2] = 0;
+    c.candWpmN = 0;
     c.text.clear();
     c.show.clear();
     c.wpm = 0;
@@ -265,10 +276,10 @@ void SkimmerEngine::onText(int idx, const QString& t) {
     if (std::getenv("TTC_SKIMDBG"))
         fprintf(stderr, "[skim] %.1f kHz: %s\n", c.hz / 1000.0,
                 qPrintable(c.text.right(40)));
-    extractCall(c);
+    extractCall(c, t.contains(' '));
 }
 
-void SkimmerEngine::extractCall(Chan& c) {
+void SkimmerEngine::extractCall(Chan& c, bool wordDone) {
     // Mine the rolling buffer: a token is a call if it has callsign shape,
     // survives the cty.dat check, and either follows "DE " (CQ CQ DE X1YZ)
     // or shows up twice — one clean copy could still be a decode artifact.
@@ -277,6 +288,38 @@ void SkimmerEngine::extractCall(Chan& c) {
     // phantom, so it waits until its word gap arrives.
     QStringList toks = c.text.split(' ', Qt::SkipEmptyParts);
     if (!c.text.endsWith(' ') && !toks.isEmpty()) toks.removeLast();
+    // Two shape stats of the recent honest copy, computed once per scan
+    // (they depend only on the buffer; 2026-08-08 max review found them
+    // recomputed per token). junkFrac counts characters in E/T/I/'*'-ONLY
+    // tokens plus the inter-token gaps: dit/dah junk decodes to bare
+    // E/T/I runs and isolated letters, while a real WORD merely containing
+    // those letters stays clean — the old per-character count scored
+    // "CQ TEST K1TTT" at 0.65 on perfect copy and would have blocked a
+    // T-heavy contest runner the moment sighting counts became honest.
+    // The stronger signal stays single-char TOKENS: junk decodes to
+    // isolated letters where real copy is words (measured: K3KY 0.12 vs
+    // junk 0.46).
+    const QString recent = c.text.right(40);
+    double junkFrac = 0.0, singleFrac = 0.0;
+    if (recent.size() >= 16) {
+        int junk = 0, singles = 0, tokChars = 0;
+        const QStringList w = recent.split(' ', Qt::SkipEmptyParts);
+        for (const QString& tk : w) {
+            tokChars += tk.size();
+            int stars = 0;
+            bool junkTok = true;
+            for (const QChar ch : tk) {
+                if (ch == '*') { ++stars; continue; }   // unreadable marker:
+                if (ch != 'E' && ch != 'T' && ch != 'I')//  junk ANYWHERE, even
+                    junkTok = false;                    //  inside a real word
+            }
+            junk += junkTok ? tk.size() : stars;
+            if (tk.size() == 1) ++singles;
+        }
+        junk += int(recent.size()) - tokChars;         // the gaps themselves
+        junkFrac = double(junk) / recent.size();
+        if (w.size() >= 4) singleFrac = double(singles) / w.size();
+    }
     for (int i = toks.size() - 1; i >= 0; --i) {
         QString tok = toks[i];
         bool fullToken = true;                     // vs fished from a merge
@@ -302,27 +345,35 @@ void SkimmerEngine::extractCall(Chan& c) {
         if (tok.size() > 8) continue;
         if (validate_ && !validate_(tok)) continue;
         const bool afterDe = i > 0 && toks[i - 1] == QLatin1String("DE");
-        // Sighting bookkeeping: a sighting only counts when this token is
-        // the freshest completed word (otherwise the same buffered copy
-        // re-counts on every decoded character). Candidacy persists across
-        // buffer scroll — ragchewers ID once per over, minutes apart
-        // (ground truth: WB4IT copied cleanly once per 45 s window and
-        // never spotted before this). Only a clean full word of 4+ chars
-        // may OPEN a candidacy; fragments/merges only confirm.
-        const bool fresh = (i == toks.size() - 1);
+        // Sighting bookkeeping: a sighting counts only when this token is
+        // the freshest completed word AND this very event carried the word
+        // gap that completed it (wordDone). Freshness alone was not enough:
+        // the trailing partial is stripped each scan, so the candidate
+        // stayed "freshest" and re-counted on EVERY following character —
+        // one physical copy plus one keystroke of the next word met the
+        // listed threshold (max-review find 2026-08-08; it also explains
+        // how one-copy phantoms "passed the sighting count" on 08-07).
+        // Candidacy persists across buffer scroll — ragchewers ID once per
+        // over, minutes apart (ground truth: WB4IT copied cleanly once per
+        // 45 s window and never spotted before this). Only a clean full
+        // word of 4+ chars may OPEN a candidacy; fragments/merges confirm.
+        const bool fresh = (i == toks.size() - 1) && wordDone;
         if (tok == c.candidate) {
             if (fresh) {
                 ++c.candCount;
-                if (c.wpm > 0) {           // track the clock's spread
-                    if (c.candWpmLo == 0 || c.wpm < c.candWpmLo)
-                        c.candWpmLo = c.wpm;
-                    if (c.wpm > c.candWpmHi) c.candWpmHi = c.wpm;
+                if (c.wpm > 0) {           // window of the newest 3 clocks
+                    c.candWpm[2] = c.candWpm[1];
+                    c.candWpm[1] = c.candWpm[0];
+                    c.candWpm[0] = c.wpm;
+                    if (c.candWpmN < 3) ++c.candWpmN;
                 }
             }
         } else if (fresh && fullToken && tok.size() >= 4) {
             c.candidate = tok;
             c.candCount = 1;
-            c.candWpmLo = c.candWpmHi = c.wpm > 0 ? c.wpm : 0;
+            c.candWpm[0] = c.wpm > 0 ? c.wpm : 0;
+            c.candWpm[1] = c.candWpm[2] = 0;
+            c.candWpmN = c.wpm > 0 ? 1 : 0;
         }
         // Confidence: DE spots at once; MASTER.SCP calls need 2 distinct
         // sightings; unlisted calls need 3 (recurring garbage can shape
@@ -339,46 +390,23 @@ void SkimmerEngine::extractCall(Chan& c) {
         // station from junk with a call-shaped hole in it; DE-adjacency
         // is trusted evidence that clears them.
         {
-            static const double kJunkMax = [] {   // fresh-confirm ceiling
-                const char* v = std::getenv("TTC_SKIMJUNK");
-                return v ? atof(v) : 0.55;
-            }();
-            static const double kJunkHold = [] {  // re-announce ceiling
-                const char* v = std::getenv("TTC_SKIMHOLD");
-                return v ? atof(v) : 0.70;
-            }();
-            static const double kWpmSwing = [] {  // hi/lo ratio ceiling
-                const char* v = std::getenv("TTC_SKIMWPM");
-                return v ? atof(v) : 1.6;
-            }();
-            static const double kSingleMax = [] {  // single-char-token frac
-                const char* v = std::getenv("TTC_SKIMSGL");
-                return v ? atof(v) : 0.40;
-            }();
-            // Two shape stats of the recent honest copy. junkFrac is a
-            // weak discriminator on its own (real English prose is ~45%
-            // E/T/I/space), so it only flags the egregious. The stronger
-            // signal is single-char TOKENS: a keyer tester or dit-string
-            // junk decodes to isolated letters ("E T I E T"), where real
-            // copy is words (measured: K3KY 0.12 vs junk 0.46).
-            const QString recent = c.text.right(40);
-            double junkFrac = 0.0, singleFrac = 0.0;
-            if (recent.size() >= 16) {
-                int junk = 0;
-                for (const QChar ch : recent)
-                    if (ch == 'E' || ch == 'T' || ch == 'I' || ch == '*'
-                        || ch == ' ')
-                        ++junk;
-                junkFrac = double(junk) / recent.size();
-                const QStringList w =
-                    recent.split(' ', Qt::SkipEmptyParts);
-                if (w.size() >= 4) {
-                    int singles = 0;
-                    for (const QString& tk : w)
-                        if (tk.size() == 1) ++singles;
-                    singleFrac = double(singles) / w.size();
-                }
-            }
+            // Env-tunable ceilings, parsed locale-proof: after QApplication
+            // adopts the environment locale, atof("0.55") is 0.0 under a
+            // comma-decimal locale (proven on this Qt), and a 0.0 ceiling
+            // silently blocks EVERY non-DE spot. QByteArray::toDouble is
+            // locale-fixed; garbage or non-positive values keep the
+            // shipped default instead of poisoning the gate.
+            static const auto envD = [](const char* name, double def) {
+                const char* v = std::getenv(name);
+                if (!v || !*v) return def;
+                bool ok = false;
+                const double d = QByteArray(v).toDouble(&ok);
+                return ok && d > 0.0 ? d : def;
+            };
+            static const double kJunkMax  = envD("TTC_SKIMJUNK", 0.55);
+            static const double kJunkHold = envD("TTC_SKIMHOLD", 0.70);
+            static const double kWpmSwing = envD("TTC_SKIMWPM",  1.6);
+            static const double kSingleMax = envD("TTC_SKIMSGL", 0.40);
             const bool refresh = (tok == c.call);
             bool blocked = false;
             if (!afterDe) {
@@ -394,20 +422,26 @@ void SkimmerEngine::extractCall(Chan& c) {
                     if (junkFrac >= kJunkMax || singleFrac >= kSingleMax)
                         blocked = true;
                     // Clock stability: a real sender re-sighted 3+ times
-                    // holds its WPM; junk swings (a 2-sighting listed call
-                    // hasn't the samples to judge, so it's exempt).
-                    if (c.candWpmHi > 0 && c.candWpmLo > 0
-                        && c.candCount >= 3
-                        && c.candWpmHi > kWpmSwing * c.candWpmLo)
-                        blocked = true;
+                    // holds its WPM; junk swings (SN1N replayed 28-48).
+                    // Judged over the newest three sightings only, so a
+                    // warm-up transient ages out instead of latching (a
+                    // 2-sighting listed call hasn't the samples to judge,
+                    // so it's exempt).
+                    if (c.candWpmN >= 3) {
+                        const int lo = std::min({c.candWpm[0], c.candWpm[1],
+                                                 c.candWpm[2]});
+                        const int hi = std::max({c.candWpm[0], c.candWpm[1],
+                                                 c.candWpm[2]});
+                        if (lo > 0 && hi > kWpmSwing * lo) blocked = true;
+                    }
                 }
             }
             if (std::getenv("TTC_SKIMDBG"))
                 fprintf(stderr,
-                        "[gate] %-8s %s junk %.2f sgl %.2f wpm %d-%d n%d -> %s\n",
+                        "[gate] %-8s %s junk %.2f sgl %.2f wpm %d/%d/%d n%d -> %s\n",
                         qPrintable(tok), afterDe ? "DE" : refresh ? "rf" : "  ",
-                        junkFrac, singleFrac, c.candWpmLo, c.candWpmHi,
-                        c.candCount, blocked ? "BLOCK" : "pass");
+                        junkFrac, singleFrac, c.candWpm[0], c.candWpm[1],
+                        c.candWpm[2], c.candCount, blocked ? "BLOCK" : "pass");
             if (blocked) continue;
         }
         // Duplicate listener: a strong station's keying sidebands raise
