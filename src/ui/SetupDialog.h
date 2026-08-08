@@ -31,6 +31,10 @@ public:
 
 private:
     void refreshPorts();
+    // Enumerated serial ports, each offered under a stable
+    // /dev/serial/by-id name where the kernel provides one (raw path
+    // otherwise) — kernel names renumber when the hardware set changes.
+    static QStringList serialPortCandidates();
     void testRadio();
     void testKeyer();
     void testMeter();

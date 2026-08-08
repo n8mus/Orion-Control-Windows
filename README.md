@@ -85,6 +85,15 @@ radio test shows the Orion's firmware string, the keyer test runs the
 WinKeyer handshake. It lives in **SDR ▾ → Station setup…** afterwards.
 Radio model/port changes take effect on the next launch.
 
+Every port field lists the serial devices this machine actually has, so
+you pick rather than type. USB adapters are offered under their stable
+`/dev/serial/by-id/…` name — prefer it: plain `/dev/ttyUSB0` and `/dev/ttyS4`
+names get reassigned when you add or move hardware, which will silently
+point a setting at the wrong device. Nothing is preconfigured; an empty
+field simply means that feature is off. The **rotor is the exception** —
+the console never opens that port itself, it talks to `rotctld`
+(default `127.0.0.1:4533`), so the rotor's device is set in `rotctld`.
+
 Then:
 - **rigctld emulation is on TCP 4532.** Point WSJT-X / cqrlog / GridTracker
   there (any rigctld-compatible client works). Stop any real `rigctld` or

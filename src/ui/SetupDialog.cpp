@@ -4,8 +4,12 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHostAddress>
+#include <QMap>
 #include <QLabel>
 #include <QLineEdit>
 #include <QProcess>
@@ -97,24 +101,21 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     // radios or Omni serial<->remote never stomps another radio's device.
     // The Connection selector applies to the Omni only (the Orion is
     // serial-only).
-    const QString legacyDev =
-        s.value("radio/device",
-                model_->currentData() == "omni8" ? "/dev/omni7" : "/dev/orion")
-            .toString();
+    // Unset means "not configured yet" — the port combos list what this
+    // machine actually has. Defaults naming one developer's hardware only
+    // preselect a path that exists on a single station.
+    const QString legacyDev = s.value("radio/device").toString();
     const bool legacyRemote = legacyDev.startsWith("udp:");
     const bool legacyOrion =
         s.value("radio/model", "orion").toString().startsWith("orion");
     devSerial_ = s.value("radio/deviceSerial",
-                         legacyRemote || legacyOrion
-                             ? QStringLiteral("/dev/omni7") : legacyDev)
+                         legacyRemote || legacyOrion ? QString() : legacyDev)
                      .toString();
     devRemote_ = s.value("radio/deviceRemote",
-                         legacyRemote ? legacyDev
-                                      : QStringLiteral("udp:192.168.2.123:49152"))
+                         legacyRemote ? legacyDev : QString())
                      .toString();
     devOrion_ = s.value("radio/deviceOrion",
-                        legacyOrion && !legacyRemote
-                            ? legacyDev : QStringLiteral("/dev/orion"))
+                        legacyOrion && !legacyRemote ? legacyDev : QString())
                     .toString();
     connMode_ = s.value("radio/connection",
                         legacyRemote ? "remote" : "serial").toString();
@@ -331,32 +332,68 @@ void SetupDialog::testMeter() {
 }
 
 // Serial candidates: everything QSerialPortInfo can see (USB adapters AND
-// native COM ports), current settings kept even if not enumerated (device
-// may be unplugged right now). The radio device row is owned by
-// applyConnMode (it depends on the connection profile); here we handle only
-// the keyer.
+// native COM ports) — but offered under a STABLE name wherever one exists.
+// QSerialPortInfo reports kernel paths, and those renumber whenever the
+// hardware set changes: adding a second PCIe serial card renumbers ttyS4-7
+// and silently repoints every setting that named one (which once left a
+// rotor daemon writing into a transceiver's CAT port). A
+// /dev/serial/by-id/ symlink is tied to the adapter's own serial number
+// instead, so it survives replugging and re-enumeration. Native PCIe/COM
+// ports get no such symlink from the kernel and are listed as-is; a
+// station that wants stable names for those needs its own udev rule.
+// The combos are editable, so a hand-written path is always still possible.
+// The 8250 driver publishes ttyS0..ttyS31 whether or not there is silicon
+// behind them, so a station with two real ports would otherwise have to find
+// them among thirty phantoms. /sys/class/tty/<port>/type reads 0
+// (PORT_UNKNOWN) for a node with no UART; a real one reports its chip (4 =
+// 16550A). Ports with no type file at all — USB adapters, virtual pairs —
+// are genuine devices and are kept.
+static bool phantomSerialNode(const QString& portName) {
+    QFile f(QStringLiteral("/sys/class/tty/%1/type").arg(portName));
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+    return f.readAll().trimmed() == "0";
+}
+
+QStringList SetupDialog::serialPortCandidates() {
+    QMap<QString, QString> stable;                 // real path -> by-id path
+    const QDir byId(QStringLiteral("/dev/serial/by-id"));
+    const auto links = byId.entryInfoList(QDir::AllEntries | QDir::System
+                                          | QDir::NoDotAndDotDot);
+    for (const QFileInfo& fi : links) {
+        const QString real = fi.canonicalFilePath();
+        if (!real.isEmpty()) stable.insert(real, fi.absoluteFilePath());
+    }
+    QStringList out;
+    for (const QSerialPortInfo& p : QSerialPortInfo::availablePorts()) {
+        if (phantomSerialNode(p.portName())) continue;
+        const QString raw = p.systemLocation();
+        const QString real = QFileInfo(raw).canonicalFilePath();
+        out << stable.value(real.isEmpty() ? raw : real, raw);
+    }
+    out.sort();
+    out.removeDuplicates();
+    return out;
+}
+
+// Current settings are kept even if not enumerated (the device may be
+// unplugged right now, or be a station's own udev alias). The radio device
+// row is owned by applyConnMode (it depends on the connection profile);
+// here we handle the keyer and the wattmeter.
 void SetupDialog::refreshPorts() {
     QSettings s;
-    QStringList ports;
-    for (const QSerialPortInfo& p : QSerialPortInfo::availablePorts())
-        ports << p.systemLocation();
-    ports.sort();
-    const QString curKeyer =
-        s.value("cw/port",
-                "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A904QF5Z-if00-port0")
-            .toString();
-    keyerDev_->clear();
-    keyerDev_->addItems(ports);
-    if (!ports.contains(curKeyer)) keyerDev_->addItem(curKeyer);
-    keyerDev_->setCurrentText(curKeyer);
+    const QStringList ports = serialPortCandidates();
 
-    const QString curMeter =
-        s.value("meter/device", s.value("lp100a/device", "/dev/ttyS5"))
-            .toString();
-    lpDev_->clear();
-    lpDev_->addItems(ports);
-    if (!ports.contains(curMeter)) lpDev_->addItem(curMeter);
-    lpDev_->setCurrentText(curMeter);
+    // No default device: an unset port means "not configured", and the
+    // operator picks from the list. Seeding a developer's own hardware
+    // here just preselects a path that exists on exactly one station.
+    const auto fill = [&ports](QComboBox* box, const QString& cur) {
+        box->clear();
+        box->addItems(ports);
+        if (!cur.isEmpty() && !ports.contains(cur)) box->addItem(cur);
+        box->setCurrentText(cur);
+    };
+    fill(keyerDev_, s.value("cw/port").toString());
+    fill(lpDev_, s.value("meter/device", s.value("lp100a/device")).toString());
 }
 
 // Which stored device the field is editing: the Orion's serial port, the
@@ -395,10 +432,8 @@ void SetupDialog::applyConnMode(const QString& profile) {
         radioDev_->setToolTip("udp:HOST[:PORT] — the radio's IP in REMOTE\n"
                               "mode (default CMD port 49152). Same string on\n"
                               "the laptop, pointed at the radio's LAN address.");
-        QStringList sugg{devRemote_, "udp:192.168.2.123:49152"};
-        sugg.removeDuplicates();
-        radioDev_->addItems(sugg);
-        radioDev_->setCurrentText(devRemote_);
+        if (!devRemote_.isEmpty()) radioDev_->addItem(devRemote_);
+        radioDev_->setCurrentText(devRemote_);   // format is in the tooltip
     } else {
         const QString& cur = orion ? devOrion_ : devSerial_;
         if (devLabel_) devLabel_->setText("CAT serial port");
@@ -406,12 +441,9 @@ void SetupDialog::applyConnMode(const QString& profile) {
             ? "Serial device of the Orion (its only CAT path)."
             : "Serial device this console opens when operating the Omni VII\n"
               "at the desk (front panel / RADIO mode).");
-        QStringList ports;
-        for (const QSerialPortInfo& p : QSerialPortInfo::availablePorts())
-            ports << p.systemLocation();
-        ports.sort();
+        const QStringList ports = serialPortCandidates();
         radioDev_->addItems(ports);
-        if (!ports.contains(cur)) radioDev_->addItem(cur);
+        if (!cur.isEmpty() && !ports.contains(cur)) radioDev_->addItem(cur);
         radioDev_->setCurrentText(cur);
     }
 }

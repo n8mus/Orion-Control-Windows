@@ -1109,15 +1109,18 @@ MainWindow::MainWindow(QWidget* parent)
             const char* label; const char* model; const char* conn;
             const char* devKey; const char* devDefault;
         };
+        // devDefault is empty on purpose: an unconfigured radio must send the
+        // operator to Station setup (which lists this machine's real ports)
+        // rather than to a device path that exists on one developer's bench.
         static constexpr Ship kFleet[] = {
             {"Radio: USS Orion  (565)",    "orion",  nullptr,
-             "radio/deviceOrion", "/dev/orion"},
+             "radio/deviceOrion", ""},
             {"Radio: USS Orion II  (566)", "orion2", nullptr,
-             "radio/deviceOrion", "/dev/orion"},
+             "radio/deviceOrion", ""},
             {"Radio: USS Omni VII  588 — front panel (serial)", "omni8",
-             "serial", "radio/deviceSerial", "/dev/omni7"},
+             "serial", "radio/deviceSerial", ""},
             {"Radio: USS Omni VII  588 — remote (Ethernet)",    "omni8",
-             "remote", "radio/deviceRemote", "udp:192.168.2.123:49152"},
+             "remote", "radio/deviceRemote", ""},
         };
         const QString current = radioModelChoice();
         const QString curConn =
@@ -2990,15 +2993,12 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Open the radio so click-to-tune / drag-to-filter actually reach it, and
     // poll its VFO so the panadapter follows the physical dial. Device path:
-    // TTC_RADIO_DEV env > radio/device setting > per-radio default (both
-    // rigs live on the FT4232H quad adapter — Orion port 0, Omni port 3).
+    // TTC_RADIO_DEV env > radio/device setting. There is no built-in default —
+    // an unconfigured station gets Station setup, not a guess at its wiring.
     const char* devEnv = std::getenv("TTC_RADIO_DEV");
-    const std::string radioDev = devEnv ? devEnv
-        : QSettings().value("radio/device",
-              radio_->caps().dualReceiver
-                  ? "/dev/orion"
-                  : "/dev/serial/by-id/usb-FTDI_FT4232H_Device_FT73ZILE-if03-port0")
-              .toString().toStdString();
+    const std::string radioDev = devEnv
+        ? devEnv
+        : QSettings().value("radio/device").toString().toStdString();
     radioDevUsed_ = QString::fromStdString(radioDev);
     radioUp_ = radio_->open(radioDev);
     if (radioUp_) {
@@ -3235,7 +3235,7 @@ MainWindow::MainWindow(QWidget* parent)
     // chart) or "powermaster" (Array Solutions PowerMaster, fast scalar —
     // SWR curves only). The meter/* keys default from the older lp100a/*
     // keys so existing configs keep working untouched. Device precedence
-    // matches the radio's: env > setting > this station's default.
+    // matches the radio's: env > setting, with no built-in default.
     {
         QSettings s;
         const bool en =
@@ -3245,8 +3245,7 @@ MainWindow::MainWindow(QWidget* parent)
                 s.value("meter/model", "lp100a").toString();
             const char* mEnv = std::getenv("TTC_LPMETER_DEV");
             meterDevUsed_ = mEnv ? QString::fromLatin1(mEnv)
-                : s.value("meter/device",
-                          s.value("lp100a/device", "/dev/ttyS5")).toString();
+                : s.value("meter/device", s.value("lp100a/device")).toString();
             const QString name = model == "powermaster"
                 ? QStringLiteral("PowerMaster") : QStringLiteral("LP-100A");
             if (model == "powermaster")

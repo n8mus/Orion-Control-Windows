@@ -456,9 +456,12 @@ bool CwWindow::keyerOpen() const { return wk_->isOpen(); }
 void CwWindow::openKeyer() {
     if (wk_->isOpen()) return;
     QSettings s;
-    const QString dev = s.value("cw/port",
-        "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A904QF5Z-if00-port0")
-        .toString();
+    // Unset = no keyer configured; Station setup lists this machine's ports.
+    const QString dev = s.value("cw/port").toString();
+    if (dev.isEmpty()) {
+        updateStatus("no keyer port set (SDR ▸ Station setup…)");
+        return;
+    }
     if (wk_->open(dev)) {
         wk_->setPotRange(s.value("cw/potMin", 7).toInt(),
                          s.value("cw/potMax", 45).toInt());
