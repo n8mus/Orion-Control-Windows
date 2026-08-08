@@ -988,9 +988,9 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
     spotHits_.clear();
     if (spots_.isEmpty() || centerHz_ == 0 || hSpec < 60) return;
     QFont f = p.font();
-    f.setPixelSize(10);
-    f.setBold(true);
-    p.setFont(f);
+    f.setPixelSize(13);            // KE9NS-size calls (his labels measure ~9 px
+    f.setBold(true);               // cap height on the reference shot; 10 was
+    p.setFont(f);                  // squinting territory at operating distance)
     const QFontMetrics fm(f);
     const qint64 half = viewSpanHz_ / 2;
     struct Vis { int x; const SpotLabel* s; bool lsb; };
