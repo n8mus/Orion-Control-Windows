@@ -30,20 +30,25 @@ int FrequencyDisplay::dotW() const {
     return static_cast<int>(9 * scale_ + 0.5);
 }
 
-// x offset of digit cell i (0..7). MHz/kHz cells are cellW wide, the Hz
-// group narrower (hzCellW); a decimal separates MHz, a plain space (a
-// dotW gap, no glyph) sets off the Hz group — the KE9NS grouping.
+// Width of digit cell i: MHz/kHz cells are cellW wide, the Hz group
+// narrower — the one rule the offsets, painting, hit-testing and widget
+// width must all agree on, so it lives in exactly one place.
+int FrequencyDisplay::cellWAt(int i) const {
+    return i < 5 ? cellW() : hzCellW();
+}
+
+// x offset of digit cell i (0..7). A decimal separates MHz, a plain space
+// (a dotW gap, no glyph) sets off the Hz group — the KE9NS grouping.
 int FrequencyDisplay::cellX(int i) const {
-    int x = kMarginX;
-    for (int j = 0; j < i; ++j)
-        x += (j < 5 ? cellW() : hzCellW());
+    int x = kMarginX + std::min(i, 5) * cellW()
+            + std::max(i - 5, 0) * hzCellW();
     if (i >= 2) x += dotW();             // decimal point after MHz
     if (i >= 5) x += dotW();             // space before the Hz group
     return x;
 }
 
 void FrequencyDisplay::applyGeometry() {
-    setFixedSize(cellX(7) + hzCellW() + kMarginX,
+    setFixedSize(cellX(7) + cellWAt(7) + kMarginX,
                  digitTop_ + static_cast<int>(34 * scale_));
     edit_->setGeometry(QRect(2, digitTop_ + 2, width() - 4,
                              static_cast<int>(28 * scale_)));
@@ -88,6 +93,12 @@ void FrequencyDisplay::setLargeDigits(bool on) {
 void FrequencyDisplay::setAccent(const QColor& c) {
     if (c == accent_) return;
     accent_ = c;
+    update();
+}
+
+void FrequencyDisplay::setTxRole(bool tx) {
+    if (tx == isTx_) return;
+    isTx_ = tx;
     update();
 }
 
@@ -141,10 +152,9 @@ void FrequencyDisplay::paintEvent(QPaintEvent*) {
     QFont small = big;
     small.setPixelSize(static_cast<int>(16 * scale_));
 
-    // Red-dominant accent = the TX VFO (see MainWindow's vfoTxRed).
-    const bool isTx = accent_.red() > accent_.green() + 30
-                      && accent_.red() > accent_.blue() + 30;
-    const QColor bigCol = isTx ? QColor(238, 244, 250) : accent_;
+    // TX role is told to us by setTxRole — never inferred from the accent
+    // color, which is hand-tuned aesthetics and free to change.
+    const QColor bigCol = isTx_ ? QColor(238, 244, 250) : accent_;
 
     const QRect row(0, digitTop_, width(), height() - digitTop_ - 2);
     bool leading = true;
@@ -155,8 +165,7 @@ void FrequencyDisplay::paintEvent(QPaintEvent*) {
         const bool hz = i >= 5;
         p.setFont(hz ? small : big);
         p.setPen(hz ? accent_ : bigCol);            // Hz = accent (red TX/green RX)
-        p.drawText(QRect(cellX(i), row.y(), hz ? hzCellW() : cellW(),
-                         row.height()),
+        p.drawText(QRect(cellX(i), row.y(), cellWAt(i), row.height()),
                    Qt::AlignHCenter | Qt::AlignBottom, QString::number(d));
     }
     // One decimal after MHz; the kHz->Hz break is the cellX space, no glyph.
@@ -167,10 +176,8 @@ void FrequencyDisplay::paintEvent(QPaintEvent*) {
 }
 
 int FrequencyDisplay::digitAt(int x) const {
-    for (int i = 0; i < 8; ++i) {
-        const int w = i < 5 ? cellW() : hzCellW();
-        if (x >= cellX(i) && x < cellX(i) + w) return i;
-    }
+    for (int i = 0; i < 8; ++i)
+        if (x >= cellX(i) && x < cellX(i) + cellWAt(i)) return i;
     return -1;
 }
 

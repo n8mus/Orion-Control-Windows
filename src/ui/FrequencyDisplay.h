@@ -10,9 +10,9 @@ namespace ttc {
 
 // KE9NS-style frequency readout: bold ITALIC digits, big MHz/kHz + a
 // smaller Hz group set off by a space, not a dot ("14.230 000"); leading
-// zeros dropped. The TX VFO (red accent) reads white MHz/kHz with a red
-// Hz group so the live TX frequency pops; an RX VFO stays one accent
-// color throughout.
+// zeros dropped. The TX VFO (setTxRole) reads white MHz/kHz with an
+// accent-colored Hz group so the live TX frequency pops; an RX VFO stays
+// one accent color throughout.
 //   * wheel over a digit  -> step that decade (the whole dial is a tune knob)
 //   * click top/bottom half of a digit -> +/- that decade
 //   * double-click        -> inline type-in entry (MHz, kHz or Hz accepted)
@@ -28,7 +28,8 @@ public:
                               QWidget* parent = nullptr);
 
     void setFrequency(uint64_t hz);
-    void setAccent(const QColor& c);        // digit color (red = TX VFO)
+    void setAccent(const QColor& c);        // digit color
+    void setTxRole(bool tx);                // TX VFO = white/accent two-tone
     void setBandText(const QString& t);     // "40m", right end of caption row
     void setBadge(const QString& t);        // "SPLIT" chip; empty = none
     void setLargeDigits(bool on);           // Thetis-scale digits
@@ -45,6 +46,7 @@ protected:
 private:
     int  cellW() const;                     // per-glyph cell, MHz/kHz (scaled)
     int  hzCellW() const;                   // narrower Hz-group cell
+    int  cellWAt(int i) const;              // the one wide-vs-narrow rule
     int  dotW() const;
     int  cellX(int i) const;                // x of digit cell i (0..7)
     void applyGeometry();                   // size for the current scale
@@ -58,6 +60,7 @@ private:
     QString  bandText_;
     QString  badge_;
     QColor   accent_;                       // MHz/kHz digit color
+    bool     isTx_ = false;                 // set by setTxRole, never inferred
     double   scale_ = 1.0;                  // 1.25 when large digits are on
     int      digitTop_ = 0;                 // y offset of the digit row
     QLineEdit* edit_ = nullptr;

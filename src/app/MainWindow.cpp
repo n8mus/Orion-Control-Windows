@@ -130,11 +130,14 @@ MainWindow::MainWindow(QWidget* parent)
     const QColor vfoTxRed(230, 95, 95), vfoRxGreen(62, 190, 112);
     freqDisp_ = new FrequencyDisplay("VFO A", vfoTxRed, this);
     freqDisp_->setFrequency(centerHz_);            // TX starts on A
+    freqDisp_->setTxRole(true);
     freqDispB_ = new FrequencyDisplay("VFO B", vfoRxGreen, this);
     freqDispB_->setFrequency(7000000);             // real value polled at startup
     auto applyVfoColors = [this, vfoTxRed, vfoRxGreen] {
         freqDisp_->setAccent(txVfo_ == 'B' ? vfoRxGreen : vfoTxRed);
+        freqDisp_->setTxRole(txVfo_ != 'B');
         freqDispB_->setAccent(txVfo_ == 'B' ? vfoTxRed : vfoRxGreen);
+        freqDispB_->setTxRole(txVfo_ == 'B');
         // Split reads faster as a word than as a color swap mid-pileup.
         freqDispB_->setBadge(txVfo_ == 'B' ? QStringLiteral("SPLIT") : QString());
     };

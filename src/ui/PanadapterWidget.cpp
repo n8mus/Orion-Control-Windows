@@ -149,7 +149,11 @@ QImage renderShipImage(int w, int h, const QImage& art, int brightPct) {
 // clean disc only). Like his, it reacts to the live GOES X-ray class —
 // a C flare warms it, M swells it orange, X goes angry red — so the map
 // itself says "flare in progress". Returns the disc reach in pixels so
-// callers can keep captions (and the map seam) clear of it.
+// callers can keep captions clear of it; the glow halo extends further
+// (kSunGlow vs kSunReach of the disc radius) — seam-wrap tests must use
+// the halo, or the glow pops in at the dateline instead of leading in.
+constexpr double kSunGlow  = 3.2;           // halo radius, in disc radii
+constexpr double kSunReach = 1.15;          // caption clearance, ditto
 double drawMapSun(QPainter& p, QPointF c, double core, const QString& xray) {
     double k = 1.0;                         // flare response: size multiplier
     QColor hot(255, 176, 32);               // quiet-sun disc
@@ -163,12 +167,12 @@ double drawMapSun(QPainter& p, QPointF c, double core, const QString& xray) {
     const double r = core * k;
     p.save();
     p.setRenderHint(QPainter::Antialiasing);
-    QRadialGradient glow(c, r * 3.2);
+    QRadialGradient glow(c, r * kSunGlow);
     glow.setColorAt(0.0, QColor(hot.red(), hot.green(), 40, 165));
     glow.setColorAt(1.0, QColor(hot.red(), hot.green(), 40, 0));
     p.setPen(Qt::NoPen);
     p.setBrush(glow);
-    p.drawEllipse(c, r * 3.2, r * 3.2);
+    p.drawEllipse(c, r * kSunGlow, r * kSunGlow);
     QRadialGradient disc(c, r);             // hot center, toasted limb
     disc.setColorAt(0.00, QColor(255, 238, 160));
     disc.setColorAt(0.55, hot);
@@ -177,7 +181,7 @@ double drawMapSun(QPainter& p, QPointF c, double core, const QString& xray) {
     p.setPen(QPen(rim, 1));
     p.drawEllipse(c, r, r);
     p.restore();
-    return r * 1.15;
+    return r * kSunReach;
 }
 
 // World map with live grayline: an equirectangular NASA basemap, shaded
@@ -250,9 +254,12 @@ QImage renderWorldMap(int w, int h, const QImage& earth,
         QPainter sp(&img);
         const double reach = drawMapSun(sp, QPointF(sx, sy), 11.0, xray);
         // Around 00 UTC the subsolar point rides the dateline = the map
-        // seam; draw the wrapped copy so the sun never shows up half-eaten.
-        if (sx < reach)     drawMapSun(sp, QPointF(sx + w, sy), 11.0, xray);
-        if (sx > w - reach) drawMapSun(sp, QPointF(sx - w, sy), 11.0, xray);
+        // seam; draw the wrapped copy while ANY of the sun would clip —
+        // that's the halo (kSunGlow), not just the disc, or the glow ends
+        // in a hard vertical edge and pops across between minute renders.
+        const double halo = reach * (kSunGlow / kSunReach);
+        if (sx < halo)     drawMapSun(sp, QPointF(sx + w, sy), 11.0, xray);
+        if (sx > w - halo) drawMapSun(sp, QPointF(sx - w, sy), 11.0, xray);
         if (sfi > 0) {
             QFont f = sp.font();
             f.setPixelSize(10);
@@ -1963,7 +1970,13 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
                    "panadapter — no IQ source (build with -DBUILD_SDRPLAY=ON)");
     }
 
-    // Span readout (the scale band draws its own separators).
+    // Span readout (the scale band draws its own separators). Sets its own
+    // font like every other overlay: it used to inherit whichever size the
+    // last helper that ran happened to leave on the shared painter.
+    QFont spanFont = p.font();
+    spanFont.setPixelSize(10);
+    spanFont.setBold(true);
+    p.setFont(spanFont);
     p.setPen(QColor(200, 200, 200, 160));
     p.drawText(6, 14, QString("span %1 kHz   wheel: tune (shift fine)  drag: tune  "
                               "edge: bw  shift+edge: cut  ctrl+body: pbt  rclick: VFO B")
