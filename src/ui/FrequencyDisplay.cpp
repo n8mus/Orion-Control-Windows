@@ -22,20 +22,28 @@ int FrequencyDisplay::cellW() const {
     return static_cast<int>(19 * scale_ + 0.5);
 }
 
+int FrequencyDisplay::hzCellW() const {
+    return static_cast<int>(12 * scale_ + 0.5);
+}
+
 int FrequencyDisplay::dotW() const {
     return static_cast<int>(9 * scale_ + 0.5);
 }
 
-// x offset of digit cell i (0..7), accounting for the two dot separators.
+// x offset of digit cell i (0..7). MHz/kHz cells are cellW wide, the Hz
+// group narrower (hzCellW); a decimal separates MHz, a plain space (a
+// dotW gap, no glyph) sets off the Hz group — the KE9NS grouping.
 int FrequencyDisplay::cellX(int i) const {
-    int x = kMarginX + i * cellW();
-    if (i >= 2) x += dotW();             // dot after MHz
-    if (i >= 5) x += dotW();             // dot after kHz
+    int x = kMarginX;
+    for (int j = 0; j < i; ++j)
+        x += (j < 5 ? cellW() : hzCellW());
+    if (i >= 2) x += dotW();             // decimal point after MHz
+    if (i >= 5) x += dotW();             // space before the Hz group
     return x;
 }
 
 void FrequencyDisplay::applyGeometry() {
-    setFixedSize(cellX(7) + cellW() + kMarginX,
+    setFixedSize(cellX(7) + hzCellW() + kMarginX,
                  digitTop_ + static_cast<int>(34 * scale_));
     edit_->setGeometry(QRect(2, digitTop_ + 2, width() - 4,
                              static_cast<int>(28 * scale_)));
@@ -121,37 +129,48 @@ void FrequencyDisplay::paintEvent(QPaintEvent*) {
         }
     }
 
-    // KE9NS look: MHz + kHz digits big in the VFO's accent color, the Hz
-    // group smaller and near-white, leading zeros not drawn at all (their
-    // cells stay live as click/wheel targets).
+    // KE9NS look: bold ITALIC digits, MHz+kHz big, the Hz group smaller
+    // and set off by a space (not a dot). The TX VFO (red accent) reads
+    // white MHz/kHz with a red Hz group so the live TX frequency pops;
+    // an RX VFO stays one calm accent color throughout. Leading zeros
+    // aren't drawn (their cells stay live as click/wheel targets).
     QFont big("DejaVu Sans");
     big.setPixelSize(static_cast<int>(27 * scale_));
     big.setBold(true);
+    big.setItalic(true);
     QFont small = big;
-    small.setPixelSize(static_cast<int>(19 * scale_));
+    small.setPixelSize(static_cast<int>(16 * scale_));
 
-    const QRect row(0, digitTop_, width(), height() - digitTop_);
+    // Red-dominant accent = the TX VFO (see MainWindow's vfoTxRed).
+    const bool isTx = accent_.red() > accent_.green() + 30
+                      && accent_.red() > accent_.blue() + 30;
+    const QColor bigCol = isTx ? QColor(238, 244, 250) : accent_;
+
+    const QRect row(0, digitTop_, width(), height() - digitTop_ - 2);
     bool leading = true;
     for (int i = 0; i < 8; ++i) {
         const int d = static_cast<int>((hz_ / kPlace[i]) % 10);
         if (d != 0 || i >= 1) leading = false;      // only the 10 MHz digit hides
         if (leading) continue;
-        p.setFont(i < 5 ? big : small);
-        p.setPen(i < 5 ? accent_ : QColor(222, 230, 238));
-        p.drawText(QRect(cellX(i), row.y(), cellW(), row.height()), Qt::AlignCenter,
-                   QString::number(d));
+        const bool hz = i >= 5;
+        p.setFont(hz ? small : big);
+        p.setPen(hz ? accent_ : bigCol);            // Hz = accent (red TX/green RX)
+        p.drawText(QRect(cellX(i), row.y(), hz ? hzCellW() : cellW(),
+                         row.height()),
+                   Qt::AlignHCenter | Qt::AlignBottom, QString::number(d));
     }
+    // One decimal after MHz; the kHz->Hz break is the cellX space, no glyph.
     p.setFont(big);
-    p.setPen(QColor(accent_.red(), accent_.green(), accent_.blue(), 150));
+    p.setPen(QColor(bigCol.red(), bigCol.green(), bigCol.blue(), 160));
     p.drawText(QRect(cellX(1) + cellW(), row.y(), dotW(), row.height()),
-               Qt::AlignCenter, ".");
-    p.drawText(QRect(cellX(4) + cellW(), row.y(), dotW(), row.height()),
-               Qt::AlignCenter, ".");
+               Qt::AlignHCenter | Qt::AlignBottom, ".");
 }
 
 int FrequencyDisplay::digitAt(int x) const {
-    for (int i = 0; i < 8; ++i)
-        if (x >= cellX(i) && x < cellX(i) + cellW()) return i;
+    for (int i = 0; i < 8; ++i) {
+        const int w = i < 5 ? cellW() : hzCellW();
+        if (x >= cellX(i) && x < cellX(i) + w) return i;
+    }
     return -1;
 }
 

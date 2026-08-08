@@ -8,8 +8,11 @@ class QLineEdit;
 
 namespace ttc {
 
-// KE9NS-style frequency readout: big accent-colored MHz/kHz digits, the Hz
-// group smaller and white, leading zeros dropped ("14.237.000", "3.831.500").
+// KE9NS-style frequency readout: bold ITALIC digits, big MHz/kHz + a
+// smaller Hz group set off by a space, not a dot ("14.230 000"); leading
+// zeros dropped. The TX VFO (red accent) reads white MHz/kHz with a red
+// Hz group so the live TX frequency pops; an RX VFO stays one accent
+// color throughout.
 //   * wheel over a digit  -> step that decade (the whole dial is a tune knob)
 //   * click top/bottom half of a digit -> +/- that decade
 //   * double-click        -> inline type-in entry (MHz, kHz or Hz accepted)
@@ -40,7 +43,8 @@ protected:
     void wheelEvent(QWheelEvent*) override;
 
 private:
-    int  cellW() const;                     // per-glyph cell (scaled)
+    int  cellW() const;                     // per-glyph cell, MHz/kHz (scaled)
+    int  hzCellW() const;                   // narrower Hz-group cell
     int  dotW() const;
     int  cellX(int i) const;                // x of digit cell i (0..7)
     void applyGeometry();                   // size for the current scale
