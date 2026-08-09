@@ -1,4 +1,4 @@
-# USS Orion NCC-565
+# Orion Control
 
 *(An independent project, not affiliated with or endorsed by Ten-Tec — or
 Starfleet. The hull numbers are the radios' real Ten-Tec model numbers:
@@ -31,7 +31,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/orion3-sdr-console/mas
 ```
 
 Log out and back in once after the first run (for serial access), then
-launch **Ten-Tec SDR Console** from your menu. Re-run any time to update.
+launch **Orion Control** from your menu. Re-run any time to update.
 Prefer to build from source? See [Build and run](#build-and-run) below.
 
 ## What you need
