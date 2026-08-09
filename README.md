@@ -1,7 +1,6 @@
 # Orion Control
 
-*(An independent project, not affiliated with or endorsed by Ten-Tec — or
-Starfleet. The hull numbers are the radios' real Ten-Tec model numbers:
+*(An independent project, not affiliated with or endorsed by Ten-Tec — Ten-Tec model numbers:
 Orion = 565, Orion II = 566, Omni VII = 588.)*
 
 A Flex/SmartSDR-style console for the **Ten-Tec Orion (565/566)**: full
