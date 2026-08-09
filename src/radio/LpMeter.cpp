@@ -4,6 +4,7 @@
 #include "radio/SerialPort.h"
 
 #include <QDateTime>
+#include <QSignalBlocker>
 #include <QTimer>
 
 #include <cmath>
@@ -32,7 +33,17 @@ constexpr int kMaxPresses = 5;
 
 LpMeter::LpMeter(QObject* parent) : TxMeter(parent) {}
 
-LpMeter::~LpMeter() { stop(); }
+// Silence our own signals before tearing down: stop() ends in
+// setAlive(false), and a destructor is the one place that transition is not
+// news to anyone. Emitted from here it lands in MainWindow's aliveChanged
+// slot while MainWindow is ITSELF mid-destruction — the meter is one of its
+// children, deleted from ~QWidget — and statusBar() on a half-torn-down
+// window segfaults. Live crash on every clean exit, reproduced 2026-08-08;
+// same shape as the ~RotorClient fix. Runtime stop() still signals normally.
+LpMeter::~LpMeter() {
+    QSignalBlocker silenceOurSignals(this);
+    stop();
+}
 
 bool LpMeter::start(const QString& device, int pollMs) {
     stop();

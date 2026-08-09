@@ -4,6 +4,7 @@
 #include "radio/SerialPort.h"
 
 #include <QDateTime>
+#include <QSignalBlocker>
 #include <QTimer>
 
 namespace ttc {
@@ -22,7 +23,12 @@ constexpr double kValidFloorW = 0.5;
 
 PmMeter::PmMeter(QObject* parent) : TxMeter(parent) {}
 
-PmMeter::~PmMeter() { stop(); }
+// Same rule as LpMeter: stop() ends in setAlive(false), and emitting that
+// from a destructor reaches consumers that may themselves be mid-teardown.
+PmMeter::~PmMeter() {
+    QSignalBlocker silenceOurSignals(this);
+    stop();
+}
 
 quint8 PmMeter::crc8(const QByteArray& payload) {
     // CRC-8 poly 0xB1, init 0x00, unreflected, final XOR 0xFF — the unique
