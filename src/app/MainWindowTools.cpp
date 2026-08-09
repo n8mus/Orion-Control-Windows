@@ -522,9 +522,7 @@ void MainWindow::setupRotorUi() {
                      .arg(qRound(lastRoseBearing_));
         rotState->setText(s);
     };
-    rotor_.setEndpoint(
-        QSettings().value("rotor/host", "127.0.0.1").toString(),
-        quint16(QSettings().value("rotor/port", 4533).toUInt()));
+    rotor_.configure();
     rotOn->setChecked(QSettings().value("rotor/enabled", false).toBool());
     rotFollow->setChecked(QSettings().value("rotor/track", false).toBool());
     rotor_.setActive(rotOn->isChecked());
@@ -536,15 +534,17 @@ void MainWindow::setupRotorUi() {
     connect(rotFollow, &QAction::toggled, this, [](bool on) {
         QSettings().setValue("rotor/track", on);
     });
-    connect(&rotor_, &RotorClient::azimuthChanged, this,
+    connect(&rotor_, &RotorLink::azimuthChanged, this,
             [this, rotRefresh](double az) {
                 pan_->setRotorAz(az);
                 rotRefresh();
             });
-    connect(&rotor_, &RotorClient::connectedChanged, this,
+    connect(&rotor_, &RotorLink::connectedChanged, this,
             [this, rotRefresh](bool on) {
                 statusBar()->showMessage(
-                    on ? "rotor: rotctld connected" : "rotor: link lost",
+                    on ? (rotor_.direct() ? "rotor: DCU-3 answering"
+                                          : "rotor: rotctld connected")
+                       : "rotor: link lost",
                     4000);
                 rotRefresh();
             });

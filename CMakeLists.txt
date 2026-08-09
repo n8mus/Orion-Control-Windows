@@ -50,6 +50,7 @@ add_executable(tentec-console
   src/radio/TxMeter.h
   src/radio/LpMeter.cpp         src/radio/LpMeter.h
   src/radio/PmMeter.cpp         src/radio/PmMeter.h
+  src/radio/DcuRotor.cpp        src/radio/DcuRotor.h
   src/radio/TenTecOrion.cpp     src/radio/TenTecOrion.h
   src/radio/TenTecOmni7.cpp     src/radio/TenTecOmni7.h
   src/radio/RipAudio.cpp        src/radio/RipAudio.h
@@ -60,6 +61,8 @@ add_executable(tentec-console
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h
   src/net/RotorClient.cpp       src/net/RotorClient.h
+  src/net/RotorServer.cpp       src/net/RotorServer.h
+  src/net/RotorLink.cpp         src/net/RotorLink.h
   src/ui/DigiWindow.cpp         src/ui/DigiWindow.h
   src/util/CtyLookup.cpp        src/util/CtyLookup.h
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
@@ -118,6 +121,16 @@ add_executable(rotortest EXCLUDE_FROM_ALL
   src/net/RotorClient.cpp)
 target_include_directories(rotortest PRIVATE src)
 target_link_libraries(rotortest PRIVATE Qt6::Core Qt6::Network)
+
+# DCU-3 rotor: frame parser against the bench captures of a controller
+# streaming while it turns, plus the rotctld server we put in front of it.
+# Pure logic — needs no rotor.
+add_executable(dcutest EXCLUDE_FROM_ALL
+  tests/dcutest.cpp
+  src/radio/DcuRotor.cpp src/radio/SerialPort.cpp
+  src/net/RotorServer.cpp)
+target_include_directories(dcutest PRIVATE src)
+target_link_libraries(dcutest PRIVATE Qt6::Core Qt6::Network)
 
 # LP-100A wattmeter frame decode. Pure parser test — needs no hardware.
 add_executable(lptest EXCLUDE_FROM_ALL

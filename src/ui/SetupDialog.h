@@ -58,6 +58,8 @@ private:
     QSpinBox*  spotPort_ = nullptr;
     QLineEdit* spotLogin_ = nullptr;
     QCheckBox* rotorOn_ = nullptr;
+    QComboBox* rotorMode_ = nullptr;     // direct | rotctld
+    QComboBox* rotorDev_ = nullptr;      // DCU-3 serial port (direct mode)
     QSpinBox*  rotorPort_ = nullptr;
     QCheckBox* lpOn_    = nullptr;       // external wattmeter present at all
     QComboBox* lpModel_ = nullptr;       // lp100a | powermaster

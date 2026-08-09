@@ -187,13 +187,45 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     form->addRow("Login", spotLogin_);
 
     form->addRow(section("ROTOR", this));
-    rotorOn_ = new QCheckBox("rotctld rotor control", this);
+    rotorOn_ = new QCheckBox("Rotor control", this);
     rotorOn_->setChecked(s.value("rotor/enabled", false).toBool());
     form->addRow("", rotorOn_);
+
+    rotorMode_ = new QComboBox(this);
+    rotorMode_->addItem("DCU-3 on a serial port (console drives it)", "direct");
+    rotorMode_->addItem("rotctld daemon (console is a client)", "rotctld");
+    rotorMode_->setCurrentIndex(
+        s.value("rotor/mode", "direct").toString() == "rotctld" ? 1 : 0);
+    rotorMode_->setToolTip(
+        "Driving the DCU-3 ourselves is the accurate option: the\n"
+        "controller streams its heading while the antenna turns, which\n"
+        "hamlib's fixed-length reader cannot keep up with — its\n"
+        "position readback freezes on an old frame after the first turn\n"
+        "while aiming still works. Pick rotctld for any other rotator.");
+    form->addRow("Rotor is on", rotorMode_);
+
+    rotorDev_ = new QComboBox(this);
+    rotorDev_->setEditable(true);
+    rotorDev_->lineEdit()->setPlaceholderText(
+        "click to choose a port — the DCU-3's RS-232 jack");
+    rotorDev_->setToolTip(
+        "4800 8N1, straight-through cable. The DCU-3's internal jumper\n"
+        "selects RS-232 or USB, never both — on 'U' this jack is dead.");
+    form->addRow("Rotor serial port", rotorDev_);
+
     rotorPort_ = new QSpinBox(this);
     rotorPort_->setRange(1, 65535);
     rotorPort_->setValue(s.value("rotor/port", 4533).toInt());
+    rotorPort_->setToolTip(
+        "Serving on this port in DCU-3 mode (cqrlog and Not1MM keep\n"
+        "pointing at it), or the daemon's port in rotctld mode.");
     form->addRow("rotctld port", rotorPort_);
+    const auto rotorModeChanged = [this] {
+        const bool direct = rotorMode_->currentData().toString() == "direct";
+        rotorDev_->setEnabled(direct);
+    };
+    connect(rotorMode_, &QComboBox::currentIndexChanged, this, rotorModeChanged);
+    rotorModeChanged();
 
     // RF wattmeter. Off by default: a station without an LP-100A must get
     // exactly the behaviour it had before this section existed, which means
@@ -417,6 +449,7 @@ void SetupDialog::refreshPorts() {
     };
     fill(keyerDev_, s.value("cw/port").toString());
     fill(lpDev_, s.value("meter/device", s.value("lp100a/device")).toString());
+    fill(rotorDev_, s.value("rotor/device").toString());
 }
 
 // Which stored device the field is editing: the Orion's serial port, the
@@ -610,6 +643,8 @@ void SetupDialog::accept() {
     s.setValue("spots/port", spotPort_->value());
     s.setValue("spots/login", spotLogin_->text().trimmed().toUpper());
     s.setValue("rotor/enabled", rotorOn_->isChecked());
+    s.setValue("rotor/mode", rotorMode_->currentData().toString());
+    s.setValue("rotor/device", rotorDev_->currentText().trimmed());
     s.setValue("rotor/port", rotorPort_->value());
     s.setValue("meter/enabled", lpOn_->isChecked());
     s.setValue("meter/model", lpModel_->currentData().toString());

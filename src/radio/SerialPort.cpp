@@ -18,6 +18,7 @@ SerialPort::~SerialPort() { close(); }
 
 static speed_t toSpeed(int baud) {
     switch (baud) {
+        case 4800:  return B4800;   // DCU-3 rotor
         case 9600:  return B9600;
         case 19200: return B19200;
         case 38400: return B38400;

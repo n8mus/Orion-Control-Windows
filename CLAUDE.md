@@ -75,7 +75,8 @@ senders and weak-signal cases are the hard set.
 | `skimtest` | 10-station synthetic segment through the skimmer | — |
 | `skimsrvtest` | RBN telnet protocol/format/throttle | — |
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
-| `rotortest` | rotctld client | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
+| `rotortest` | rotctld client (the `rotor/mode=rotctld` fallback) | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
+| `dcutest` | DCU-3 frame parser (streams-while-turning captures) + the rotctld server we put in front of it | — |
 | `watchtest` | DX-watch pattern matching | — |
 | `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
 | `pmtest` | PowerMaster wattmeter frame decode + CRC (pure parser, no hardware) | — |
@@ -214,8 +215,20 @@ stay true even if the kernel renumbers later. PCIe ports are matched by
 PCI address, USB adapters by chip serial. Note `ax99100-intx.service`
 still hardcodes `0000:03:00.*` (it forces legacy INTx; only the original
 card ever needed it), so re-verify after any card change. **The DCU-3
-rotor is on RS-232 at `/dev/portS4`** (rotctld `-m 406` at 4800; answers
-`NNN;` in ~271 ms). It was silent on every PCIe port for most of
+rotor is on RS-232 at `/dev/portS4`** (4800 8N1; answers `NNN;` in
+~271 ms). **The console now drives it directly and re-serves the rotctld
+protocol on `:4533` itself** (`rotor/mode=direct`, `rotor/device`;
+`DcuRotor` + `RotorServer` + `RotorLink`, `dcutest`) — same single-master
+pattern as the rig on `:4532`, so cqrlog/Not1MM point at `:4533`
+unchanged. Reason: hamlib's DCU backend reads a fixed 4 bytes per query,
+but the DCU-3 *streams* its heading while turning, so a backlog builds
+and the readback freezes on an old frame forever while aiming still
+works ("rose stuck north, DCU-3 reads correct", 21 h). Port-independent,
+so USB would freeze the same way. **The `rotctld.service` + watchdog are
+retired 2026-08-09** — do NOT re-enable them (they fight the console for
+`/dev/portS4`); set `rotor/mode=rotctld` in Setup to fall back to a
+daemon (a different rotor, remote, or the DCU-3 back on USB). It was
+silent on every PCIe port for most of
 2026-08-08 because the controller has an internal 3-pin jumper selecting
 RS-232 *or* USB, never both (manual p11) — it sat on `U`, so the RS-232
 INPUT jack was electrically dead. Nothing was ever wrong with the cards

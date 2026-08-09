@@ -24,7 +24,7 @@ class QHBoxLayout;
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
 #include "app/Voacap.h"
-#include "net/RotorClient.h"
+#include "net/RotorLink.h"
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
 #include "util/WatchList.h"
@@ -380,7 +380,7 @@ private:
     SkimViewWindow* skimView_ = nullptr;       // CW-Skimmer waterfall (lazy)
     FldigiClient* fldigi_ = nullptr;           // XML-RPC link (lazy)
     DigiWindow*   digiWin_ = nullptr;          // fldigi companion (lazy)
-    RotorClient rotor_;                        // rotctld link (:4533)
+    RotorLink   rotor_;                        // DCU-3 direct, or rotctld
     double  lastRoseBearing_ = -1.0;           // rose target for TURN
     QString lastRoseLabel_;
     WatchList watch_;                          // DX-watch alert patterns
