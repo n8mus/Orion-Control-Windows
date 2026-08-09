@@ -86,13 +86,18 @@ WinKeyer handshake. It lives in **SDR ▾ → Station setup…** afterwards.
 Radio model/port changes take effect on the next launch.
 
 Every port field lists the serial devices this machine actually has, so
-you pick rather than type. USB adapters are offered under their stable
-`/dev/serial/by-id/…` name — prefer it: plain `/dev/ttyUSB0` and `/dev/ttyS4`
-names get reassigned when you add or move hardware, which will silently
-point a setting at the wrong device. Nothing is preconfigured; an empty
-field simply means that feature is off. The **rotor is the exception** —
-the console never opens that port itself, it talks to `rotctld`
-(default `127.0.0.1:4533`), so the rotor's device is set in `rotctld`.
+you pick rather than type, and each is offered under a **stable** name
+where one exists: the kernel's `/dev/serial/by-id/…` for USB adapters,
+plus any symlink your own udev rules put in `/dev`. Prefer those — plain
+`/dev/ttyUSB0` and `/dev/ttyS4` names get reassigned when you add or move
+hardware, which silently points a setting at the wrong device (adding one
+PCIe serial card here renumbered four ports and aimed a rotor daemon at a
+transceiver). Native PCIe/COM ports get no stable name from the kernel, so
+a udev rule is the only way to pin one; write it and the console will
+offer it. Nothing is preconfigured — an empty field means that feature is
+off. The **rotor is the exception**: the console never opens that port
+itself, it talks to `rotctld` (default `127.0.0.1:4533`), so the rotor's
+device is configured in `rotctld`, not here.
 
 Then:
 - **rigctld emulation is on TCP 4532.** Point WSJT-X / cqrlog / GridTracker

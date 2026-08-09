@@ -9,7 +9,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHostAddress>
-#include <QMap>
+#include <QMultiMap>
 #include <QLabel>
 #include <QLineEdit>
 #include <QProcess>
@@ -343,11 +343,13 @@ void SetupDialog::testMeter() {
 // QSerialPortInfo reports kernel paths, and those renumber whenever the
 // hardware set changes: adding a second PCIe serial card renumbers ttyS4-7
 // and silently repoints every setting that named one (which once left a
-// rotor daemon writing into a transceiver's CAT port). A
-// /dev/serial/by-id/ symlink is tied to the adapter's own serial number
-// instead, so it survives replugging and re-enumeration. Native PCIe/COM
-// ports get no such symlink from the kernel and are listed as-is; a
-// station that wants stable names for those needs its own udev rule.
+// rotor daemon writing into a transceiver's CAT port). Two kinds of stable
+// name are offered instead, and the kernel path is dropped when either
+// exists: /dev/serial/by-id/ (the adapter's own serial number, so it
+// survives replugging) and any symlink the station's own udev rules put in
+// /dev — native PCIe/COM ports get nothing from the kernel, so a rule like
+// SYMLINK+="portS4" is the only way to pin those, and if the operator has
+// written one we should offer it rather than the number beneath it.
 // The combos are editable, so a hand-written path is always still possible.
 // The 8250 driver publishes ttyS0..ttyS31 whether or not there is silicon
 // behind them, so a station with two real ports would otherwise have to find
@@ -362,20 +364,34 @@ static bool phantomSerialNode(const QString& portName) {
 }
 
 QStringList SetupDialog::serialPortCandidates() {
-    QMap<QString, QString> stable;                 // real path -> by-id path
-    const QDir byId(QStringLiteral("/dev/serial/by-id"));
-    const auto links = byId.entryInfoList(QDir::AllEntries | QDir::System
-                                          | QDir::NoDotAndDotDot);
-    for (const QFileInfo& fi : links) {
-        const QString real = fi.canonicalFilePath();
-        if (!real.isEmpty()) stable.insert(real, fi.absoluteFilePath());
-    }
-    QStringList out;
+    QStringList real;                              // kernel paths, phantoms cut
     for (const QSerialPortInfo& p : QSerialPortInfo::availablePorts()) {
         if (phantomSerialNode(p.portName())) continue;
-        const QString raw = p.systemLocation();
-        const QString real = QFileInfo(raw).canonicalFilePath();
-        out << stable.value(real.isEmpty() ? raw : real, raw);
+        const QString c = QFileInfo(p.systemLocation()).canonicalFilePath();
+        real << (c.isEmpty() ? p.systemLocation() : c);
+    }
+    // Stable aliases for those ports: the kernel's own /dev/serial/by-id
+    // names (adapter serial number), plus any symlink the operator's udev
+    // rules put straight in /dev — a station that has named its ports
+    // should be offered ITS names, not the kernel numbers underneath.
+    QMultiMap<QString, QString> alias;
+    const auto scan = [&](const QString& dir) {
+        const auto entries = QDir(dir).entryInfoList(
+            QDir::AllEntries | QDir::System | QDir::NoDotAndDotDot);
+        for (const QFileInfo& fi : entries) {
+            if (!fi.isSymLink()) continue;
+            const QString target = fi.canonicalFilePath();
+            if (real.contains(target)) alias.insert(target, fi.absoluteFilePath());
+        }
+    };
+    scan(QStringLiteral("/dev/serial/by-id"));
+    scan(QStringLiteral("/dev"));
+
+    QStringList out;
+    for (const QString& r : real) {
+        const QStringList names = alias.values(r);
+        if (names.isEmpty()) out << r;             // no alias: kernel path
+        else out << names;                         // every stable name it has
     }
     out.sort();
     out.removeDuplicates();
