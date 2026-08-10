@@ -44,13 +44,25 @@ static const char* modeToHamlib(Mode m) {
     return "USB";
 }
 
-static Mode hamlibToMode(const QByteArray& s) {
-    if (s == "LSB") return Mode::LSB;
-    if (s == "CW")  return Mode::CWU;
-    if (s == "CWR") return Mode::CWL;
-    if (s == "AM")  return Mode::AM;
-    if (s == "FM")  return Mode::FM;
-    return Mode::USB;
+// The modes we actually accept, in hamlib spelling. "M <vfo> ?" asks for
+// exactly this list.
+static const char* const kModeList = "USB LSB CW CWR AM FM";
+
+// Returns false for anything we do not recognise, so the caller can reject the
+// command instead of acting on a guess. This used to fall through to
+// Mode::USB, which turned every unrecognised argument into "set upper
+// sideband" -- including the "?" of the mode-LIST query, so a client merely
+// ASKING which modes exist yanked the radio to USB and its last USB filter.
+// (Found via Not1MM, whose Radio init sends "M VFOA ?" once at startup.)
+// Never guess a mode.
+static bool hamlibToMode(const QByteArray& s, Mode& out) {
+    if (s == "USB") { out = Mode::USB; return true; }
+    if (s == "LSB") { out = Mode::LSB; return true; }
+    if (s == "CW")  { out = Mode::CWU; return true; }
+    if (s == "CWR") { out = Mode::CWL; return true; }
+    if (s == "AM")  { out = Mode::AM;  return true; }
+    if (s == "FM")  { out = Mode::FM;  return true; }
+    return false;
 }
 
 void RigctldServer::onReadyRead() {
@@ -161,11 +173,18 @@ QByteArray RigctldServer::handleExtended(const QByteArray& cmd,
         }
     } else if (name == "set_mode") {
         if (!a.isEmpty()) {
-            mode_ = hamlibToMode(a[0]);
-            if (radio_) radio_->setMode(Rx::Main, mode_);
-            if (a.size() >= 2 && a[1].toInt() > 0) {
-                bwHz_ = a[1].toInt();
-                if (radio_) radio_->setBandwidthHz(Rx::Main, bwHz_);
+            if (a[0] == "?") {                      // mode-LIST query, not a set
+                r += QByteArray(kModeList) + "\n";  // unlabelled line = the list
+            } else {
+                Mode m;
+                if (!hamlibToMode(a[0], m))
+                    return r + "RPRT -1\n";         // unknown mode: touch nothing
+                mode_ = m;
+                if (radio_) radio_->setMode(Rx::Main, mode_);
+                if (a.size() >= 2 && a[1].toInt() > 0) {
+                    bwHz_ = a[1].toInt();
+                    if (radio_) radio_->setBandwidthHz(Rx::Main, bwHz_);
+                }
             }
         }
     } else if (name == "set_ptt") {
@@ -234,9 +253,14 @@ QByteArray RigctldServer::handleLine(const QByteArray& line) {
             return "RPRT 0\n";
         case 'm':                                   // get mode + passband
             return QByteArray(modeToHamlib(mode_)) + "\n" + QByteArray::number(bwHz_) + "\n";
-        case 'M':                                   // set mode [passband]
+        case 'M':                                   // set mode [passband], or "?" = list
             if (!tok.isEmpty()) {
-                mode_ = hamlibToMode(tok[0]);
+                if (tok[0] == "?")                  // query: report, never set
+                    return QByteArray(kModeList) + "\n";
+                Mode m;
+                if (!hamlibToMode(tok[0], m))
+                    return "RPRT -1\n";             // unknown mode: touch nothing
+                mode_ = m;
                 if (radio_) radio_->setMode(Rx::Main, mode_);
                 if (tok.size() >= 2 && tok[1].toInt() > 0) {
                     bwHz_ = tok[1].toInt();
