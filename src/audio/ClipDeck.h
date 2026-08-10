@@ -33,9 +33,13 @@ public:
     static QString findSourceExcluding(const QString& avoid);
     // Peak-normalize a 16-bit PCM WAV in place so quiet takes (radio line
     // out, timid mic) still drive the rig. Gain is capped so a near-silent
-    // file can't be turned into pure noise.
+    // file can't be turned into pure noise. The cap is 50x (~34 dB): the
+    // SignaLink RX feed sits deliberately low (~-37 dBFS peak, calibrated for
+    // WSJT-X's noise floor — do NOT raise the RX knob), so off-air retransmit
+    // takes need more than the old 26 dB to reach full drive; a mic keyer take
+    // is far hotter and hits targetPeak long before the cap.
     static bool normalizeWav(const QString& wavPath, double targetPeak = 0.7,
-                             double maxGain = 20.0);
+                             double maxGain = 50.0);
 
 signals:
     void finished();                  // deck is idle again (ended or stopped)
