@@ -1304,7 +1304,19 @@ MainWindow::MainWindow(QWidget* parent)
         "    LNA 2  -11 dB      LNA 7   0 dB\n"
         "Above state 2 the RSP2 does not switch the filter in at all, no\n"
         "matter who asks. To use the notch, drop the LNA to 0-2 and take\n"
-        "the level back with IF gain reduction.");
+        "the level back with IF gain reduction — or just use Notch mode\n"
+        "below, which parks the gain there for you.");
+    auto* notchMode = sdrMenu->addAction("Notch mode  (LNA 1 / IF -59 dB)");
+    notchMode->setCheckable(true);
+    notchMode->setToolTip(
+        "Switches the broadcast notch in AND parks the gain at the only\n"
+        "setting where the RSP2 actually puts it in circuit: LNA 1 with\n"
+        "the IF gain reduction at maximum. Measured on 80 m, this takes\n"
+        "24 dB off the broadcast ghosts; LNA 7 takes off nothing, and a\n"
+        "low LNA with light IF reduction just saturates the front end.\n"
+        "\n"
+        "Switching it off hands your own gain back. Moving the IF or LNA\n"
+        "control by hand drops out of notch mode, like Auto LNA does.");
     sdrMenu->addSeparator();
     // Band recorder: raw capture to disk so the whole pipeline (skimmer
     // included) can be re-run on a real recording. Park on the band first
@@ -1425,12 +1437,20 @@ MainWindow::MainWindow(QWidget* parent)
 
     {   // restore persisted RSP2 state before start() applies it
         QSettings s;
-        const bool useB = s.value("sdr/antennaB", false).toBool();
-        const bool bcn  = s.value("sdr/broadcastNotch", false).toBool();
-        const int  gr   = std::clamp(s.value("sdr/gRdB", 40).toInt(), 20, 59);
-        const int  ls   = std::clamp(s.value("sdr/lna", 6).toInt(), 0, 8);
+        const bool useB  = s.value("sdr/antennaB", false).toBool();
+        const bool nMode = s.value("sdr/notchMode", false).toBool();
+        const bool bcn   = nMode || s.value("sdr/broadcastNotch", false).toBool();
+        // Notch mode owns the gain while it is on, but sdr/gRdB and sdr/lna
+        // keep holding the OPERATOR's gain the whole time — that is what
+        // switching notch mode off hands back, so it must never be written
+        // over with the parked values.
+        const int  gr = nMode ? SdrPlaySource::kNotchModeGRdB
+                              : std::clamp(s.value("sdr/gRdB", 40).toInt(), 20, 59);
+        const int  ls = nMode ? SdrPlaySource::kNotchModeLna
+                              : std::clamp(s.value("sdr/lna", 6).toInt(), 0, 8);
         (useB ? antB : antA)->setChecked(true);
         bcNotch->setChecked(bcn);
+        notchMode->setChecked(nMode);
         sdr_.setAntennaB(useB);
         sdr_.setBroadcastNotch(bcn);
         sdr_.setGain(gr, ls);
@@ -1439,13 +1459,21 @@ MainWindow::MainWindow(QWidget* parent)
         lna->setCurrentIndex(ls);
         ifVal->setText(QString("-%1 dB").arg(gr));
     }
-    auto applySdrGain = [this, ifGain, ifVal, lna] {
+    auto applySdrGain = [this, ifGain, ifVal, lna, notchMode] {
         const int gr = ifGain->value(), ls = lna->currentIndex();
         ifVal->setText(QString("-%1 dB").arg(gr));
         sdr_.setGainLive(gr, ls);
         QSettings s;
         s.setValue("sdr/gRdB", gr);
         s.setValue("sdr/lna", ls);
+        // Hand-set gain wins over notch mode, exactly as it does over Auto
+        // LNA. Notch mode's own gain moves come through with the widgets
+        // blocked, so they never land here.
+        if (notchMode->isChecked()) {
+            const QSignalBlocker b(notchMode);
+            notchMode->setChecked(false);
+            s.setValue("sdr/notchMode", false);
+        }
         // Raising the LNA past state 2 takes the broadcast notch out of
         // circuit (see SdrPlaySource::kNotchDeadAboveLna) — silently, in the
         // hardware. If the operator is relying on the notch, say so here
@@ -1702,6 +1730,47 @@ MainWindow::MainWindow(QWidget* parent)
                 on ? "RSP2 broadcast notch IN — 0.5-1.7 MHz killed at the "
                      "antenna, ahead of the tuner"
                    : "RSP2 broadcast notch out", 6000);
+    });
+    // Notch mode: the notch plus the only gain the RSP2 will hold it at.
+    // Everything here moves the widgets with their signals blocked, so
+    // applySdrGain never runs and the operator's own gain stays in
+    // sdr/gRdB + sdr/lna, waiting to be handed back.
+    connect(notchMode, &QAction::toggled, this,
+            [this, bcNotch, ifGain, ifVal, lna, autoLnaBox](bool on) {
+        QSettings s;
+        s.setValue("sdr/notchMode", on);
+        int gr, ls;
+        if (on) {
+            gr = SdrPlaySource::kNotchModeGRdB;
+            ls = SdrPlaySource::kNotchModeLna;
+            // Auto LNA would walk the LNA straight back out of the notch's
+            // reach within a tick or two, silently — it cannot share the
+            // wheel with notch mode.
+            if (autoLnaBox->isChecked()) {
+                const QSignalBlocker b(autoLnaBox);
+                autoLnaBox->setChecked(false);
+                s.setValue("sdr/autoLna", false);
+            }
+        } else {
+            gr = std::clamp(s.value("sdr/gRdB", 40).toInt(), 20, 59);
+            ls = std::clamp(s.value("sdr/lna", 6).toInt(), 0, 8);
+        }
+        {
+            const QSignalBlocker b1(ifGain), b2(lna);
+            ifGain->setValue(gr);
+            lna->setCurrentIndex(ls);
+            ifVal->setText(QString("-%1 dB").arg(gr));
+        }
+        sdr_.setGainLive(gr, ls);          // gain FIRST — the filter only goes
+        bcNotch->setChecked(on);           // in once the LNA is down here
+        if (on) sdr_.setBroadcastNotch(true);   // re-assert after the gain move
+        statusBar()->showMessage(
+            on ? QString("Notch mode ON — LNA %1 / IF -%2 dB, the only gain "
+                         "where the RSP2 holds the broadcast filter in "
+                         "(-24 dB on the ghosts, measured)").arg(ls).arg(gr)
+               : QString("Notch mode off — your gain back: LNA %1 / IF -%2 dB")
+                     .arg(ls).arg(gr),
+            9000);
     });
 #endif
     left->addWidget(topStrip);

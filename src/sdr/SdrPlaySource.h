@@ -46,6 +46,22 @@ public:
     static constexpr int kNotchDeadAboveLna = 2;
     bool notchCanWork() const { return lnaState_ <= kNotchDeadAboveLna; }
 
+    // The one gain setting where the notch is BOTH in circuit and the front
+    // end is not already saturated — "notch mode" parks here. Ghost height
+    // above the noise floor at the 80 m LO, notch out -> in:
+    //
+    //   LNA 0 / IF -40   21.5 -> 25.5 dB   front end saturated (floor +34.6),
+    //   LNA 0 / IF -59   27.5 -> 35.7 dB   the notch cannot win from there
+    //   LNA 1 / IF -59   53.2 -> 28.8 dB   -24.5 dB  <-- here
+    //   LNA 2 / IF -59   49.0 -> 37.9 dB   -11.2 dB
+    //
+    // LNA 1 beat both its neighbours in two independent runs. Low LNA alone is
+    // NOT the answer — pairing it with light IF reduction (which is what the
+    // other RSP2 program does) just saturates the front end and the notch buys
+    // nothing, which is why "turn the LNA down" looked like bad advice.
+    static constexpr int kNotchModeLna  = 1;
+    static constexpr int kNotchModeGRdB = 59;
+
     // RSP2 built-in MW/broadcast-band RF notch filter, ahead of the tuner.
     // Applies live if streaming, otherwise start() programs it before Init.
     // Measured on this receiver 2026-08-18: ~15-30 dB out of 0.5-1.7 MHz, and
