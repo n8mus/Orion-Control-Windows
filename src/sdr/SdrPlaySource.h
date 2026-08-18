@@ -28,6 +28,24 @@ public:
     // panadapter input without a restart. Default Antenna A.
     void setAntennaB(bool b);
 
+    // Highest LNA state at which the RSP2's MW notch actually does anything.
+    // Measured on this receiver 2026-08-18 at the 80 m LO, three notch cycles
+    // per setting so fading could not fake it — mean change over the ten
+    // strongest peaks in the window:
+    //
+    //   LNA 0  -10.3 dB    LNA 3  -1.3 dB
+    //   LNA 1  -30.9 dB    LNA 5  -0.9 dB
+    //   LNA 2  -10.7 dB    LNA 7  +0.5 dB   (and +0.2 dB at gRdB 57)
+    //
+    // Above state 2 the filter is simply not in circuit, whoever asks for it:
+    // a bare API client making the same call fails there too, and re-asserting
+    // the notch after a gain write does not bring it back, so it is the RSP2's
+    // own front-end path switching, not a lost update. This cost an operator
+    // morning — the console ran LNA 7 for the hot shared feed while SDRconnect
+    // ran LNA 0, so the same notch looked broken here and perfect there.
+    static constexpr int kNotchDeadAboveLna = 2;
+    bool notchCanWork() const { return lnaState_ <= kNotchDeadAboveLna; }
+
     // RSP2 built-in MW/broadcast-band RF notch filter, ahead of the tuner.
     // Applies live if streaming, otherwise start() programs it before Init.
     // Measured on this receiver 2026-08-18: ~15-30 dB out of 0.5-1.7 MHz, and

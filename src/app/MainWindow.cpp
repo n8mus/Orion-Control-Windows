@@ -1293,16 +1293,18 @@ MainWindow::MainWindow(QWidget* parent)
     bcNotch->setCheckable(true);
     bcNotch->setToolTip(
         "RSP2 hardware band-stop across the AM broadcast band, ahead of\n"
-        "the tuner. It removes 0.5-1.7 MHz energy at the antenna, so on\n"
-        "the higher bands it changes no real signal — what it removes\n"
-        "there is the JUNK strong AM stations make inside the RSP2 when\n"
-        "the front end is driven hard (measured on 80 m: -11 dB on such\n"
-        "products at LNA 0, -13 dB on others at LNA 7).\n"
+        "the tuner. On the higher bands it changes no real signal — what\n"
+        "it removes there is the junk strong AM stations make inside the\n"
+        "RSP2 when the front end is driven hard.\n"
         "\n"
-        "If a suspect signal does not move when this is switched in, the\n"
-        "RSP2 is not the thing making it: it is either genuinely on the\n"
-        "air or it arrives already formed from upstream (the radio's own\n"
-        "front end or the shared feed), and no filter here can help.");
+        "ONLY WORKS AT LNA 0-2. Measured on this receiver at 80 m, mean\n"
+        "change over the ten strongest signals in the window:\n"
+        "    LNA 0  -10 dB      LNA 3  -1 dB\n"
+        "    LNA 1  -31 dB      LNA 5   0 dB\n"
+        "    LNA 2  -11 dB      LNA 7   0 dB\n"
+        "Above state 2 the RSP2 does not switch the filter in at all, no\n"
+        "matter who asks. To use the notch, drop the LNA to 0-2 and take\n"
+        "the level back with IF gain reduction.");
     sdrMenu->addSeparator();
     // Band recorder: raw capture to disk so the whole pipeline (skimmer
     // included) can be re-run on a real recording. Park on the band first
@@ -1444,7 +1446,17 @@ MainWindow::MainWindow(QWidget* parent)
         QSettings s;
         s.setValue("sdr/gRdB", gr);
         s.setValue("sdr/lna", ls);
-        statusBar()->showMessage(QString("SDR gain: IF -%1 dB  LNA state %2").arg(gr).arg(ls));
+        // Raising the LNA past state 2 takes the broadcast notch out of
+        // circuit (see SdrPlaySource::kNotchDeadAboveLna) — silently, in the
+        // hardware. If the operator is relying on the notch, say so here
+        // rather than let him hunt the ghosts it stops removing.
+        const bool notchInert =
+            sdr_.broadcastNotch() && !sdr_.notchCanWork();
+        statusBar()->showMessage(
+            QString("SDR gain: IF -%1 dB  LNA state %2%3").arg(gr).arg(ls)
+                .arg(notchInert ? "  —  broadcast notch is INERT above LNA 2"
+                                : ""),
+            notchInert ? 10000 : 0);
     };
     connect(ifGain, &QSlider::valueChanged, this, applySdrGain);
     connect(lna, &QComboBox::currentIndexChanged, this, applySdrGain);
@@ -1679,10 +1691,17 @@ MainWindow::MainWindow(QWidget* parent)
             return;
         }
         QSettings().setValue("sdr/broadcastNotch", on);
-        statusBar()->showMessage(
-            on ? "RSP2 broadcast notch IN — 0.5-1.7 MHz killed at the "
-                 "antenna; a signal that does not move is not RSP2 overload"
-               : "RSP2 broadcast notch out", 6000);
+        if (on && !sdr_.notchCanWork())
+            statusBar()->showMessage(
+                QString("RSP2 broadcast notch ON but INERT at LNA %1 — this "
+                        "receiver only switches it in at LNA 0-2. Drop the LNA "
+                        "(add IF gain reduction to hold the level) to use it.")
+                    .arg(sdr_.lnaState()), 12000);
+        else
+            statusBar()->showMessage(
+                on ? "RSP2 broadcast notch IN — 0.5-1.7 MHz killed at the "
+                     "antenna, ahead of the tuner"
+                   : "RSP2 broadcast notch out", 6000);
     });
 #endif
     left->addWidget(topStrip);
