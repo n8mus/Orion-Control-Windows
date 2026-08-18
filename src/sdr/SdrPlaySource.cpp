@@ -95,8 +95,11 @@ bool SdrPlaySource::start(double centerHz, double sampleRate) {
         return fail("Init", e);
     }
     streaming_ = true;
-    std::printf("[sdrplay] RSP2 streaming: %.0f Hz @ %.0f Ssps, antenna %c\n",
-                centerHz, sampleRate, antennaB_ ? 'B' : 'A');
+    std::printf("[sdrplay] RSP2 streaming: %.0f Hz @ %.0f Ssps, antenna %c, "
+                "MW notch %s (struct=%d)\n",
+                centerHz, sampleRate, antennaB_ ? 'B' : 'A',
+                notch_ ? "ON" : "off",
+                rx->rsp2TunerParams.rfNotchEnable);
     return true;
 }
 
@@ -137,13 +140,28 @@ void SdrPlaySource::setAntennaB(bool b) {
                        sdrplay_api_Update_Ext1_None);
 }
 
-void SdrPlaySource::setBroadcastNotch(bool on) {
+bool SdrPlaySource::setBroadcastNotch(bool on) {
+    const bool was = notch_;
     notch_ = on;
-    if (!streaming_ || !params_) return;
+    // Not streaming yet (or start() failed): remember it — start() writes the
+    // flag into rsp2TunerParams before Init, which programs the filter just as
+    // well as a live update (both bench-verified 2026-08-18, -15 dB on MW).
+    if (!streaming_ || !params_) return true;
     params_->rxChannelA->rsp2TunerParams.rfNotchEnable = on ? 1 : 0;
-    sdrplay_api_Update(device_.dev, sdrplay_api_Tuner_A,
-                       sdrplay_api_Update_Rsp2_RfNotchControl,
-                       sdrplay_api_Update_Ext1_None);
+    const sdrplay_api_ErrT e =
+        sdrplay_api_Update(device_.dev, sdrplay_api_Tuner_A,
+                           sdrplay_api_Update_Rsp2_RfNotchControl,
+                           sdrplay_api_Update_Ext1_None);
+    // The return code used to be dropped on the floor, so a refused update
+    // left the menu box checked over a filter that was still out — the box
+    // lied and there was no way to tell from the console. Roll the flag back
+    // so broadcastNotch() keeps matching the hardware.
+    if (e != sdrplay_api_Success) {
+        params_->rxChannelA->rsp2TunerParams.rfNotchEnable = was ? 1 : 0;
+        notch_ = was;
+        return fail("Update RfNotch", e);
+    }
+    return true;
 }
 
 void SdrPlaySource::streamCb(short* xi, short* xq, sdrplay_api_StreamCbParamsT*,

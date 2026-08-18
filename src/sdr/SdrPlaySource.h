@@ -28,9 +28,18 @@ public:
     // panadapter input without a restart. Default Antenna A.
     void setAntennaB(bool b);
 
-    // RSP2 built-in MW/broadcast-band RF notch filter (helps on a shared HF
-    // feed near strong AM broadcasters). Applies live if streaming.
-    void setBroadcastNotch(bool on);
+    // RSP2 built-in MW/broadcast-band RF notch filter, ahead of the tuner.
+    // Applies live if streaming, otherwise start() programs it before Init.
+    // Measured on this receiver 2026-08-18: ~15-30 dB out of 0.5-1.7 MHz, and
+    // on the HIGHER bands it moves no real signal — what it removes there is
+    // the intermod strong AM stations make inside the RSP2 (on 80 m: -11 dB on
+    // such a product at LNA 0, -13 dB on another at LNA 7). The corollary is
+    // the useful one: a suspect carrier that does NOT move when this goes in
+    // is not RSP2 overload — it is real, or it arrives already formed from the
+    // radio's front end / the shared feed, and no filter here can touch it.
+    // Returns false if the API refused it (lastError() says why) — the caller
+    // must not claim the notch is in.
+    bool setBroadcastNotch(bool on);
     bool antennaB() const { return antennaB_; }
     bool broadcastNotch() const { return notch_; }
 

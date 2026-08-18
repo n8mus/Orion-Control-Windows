@@ -1089,6 +1089,7 @@ MainWindow::MainWindow(QWidget* parent)
         "QToolButton::menu-indicator { image: none; }");
     auto* sdrMenu = new QMenu(sdrBtn);
     styleMenu(sdrMenu);
+    sdrMenu->setToolTipsVisible(true);   // hardware entries carry their limits
     // Radio picker: which driver the console runs. Takes effect on the next
     // launch (the driver, serial framing, and rigctld identity are built at
     // startup). TTC_RADIO env still overrides for testing.
@@ -1290,6 +1291,18 @@ MainWindow::MainWindow(QWidget* parent)
     sdrMenu->addSeparator();
     auto* bcNotch = sdrMenu->addAction("Broadcast (MW) notch");
     bcNotch->setCheckable(true);
+    bcNotch->setToolTip(
+        "RSP2 hardware band-stop across the AM broadcast band, ahead of\n"
+        "the tuner. It removes 0.5-1.7 MHz energy at the antenna, so on\n"
+        "the higher bands it changes no real signal — what it removes\n"
+        "there is the JUNK strong AM stations make inside the RSP2 when\n"
+        "the front end is driven hard (measured on 80 m: -11 dB on such\n"
+        "products at LNA 0, -13 dB on others at LNA 7).\n"
+        "\n"
+        "If a suspect signal does not move when this is switched in, the\n"
+        "RSP2 is not the thing making it: it is either genuinely on the\n"
+        "air or it arrives already formed from upstream (the radio's own\n"
+        "front end or the shared feed), and no filter here can help.");
     sdrMenu->addSeparator();
     // Band recorder: raw capture to disk so the whole pipeline (skimmer
     // included) can be re-run on a real recording. Park on the band first
@@ -1651,9 +1664,25 @@ MainWindow::MainWindow(QWidget* parent)
         QSettings().setValue("sdr/antennaB", true);
         statusBar()->showMessage("RSP2 antenna B (Omni VII)");
     });
-    connect(bcNotch, &QAction::toggled, this, [this](bool on) {
-        sdr_.setBroadcastNotch(on);
+    // The antenna entries above have always confirmed themselves in the status
+    // bar; the notch never said anything, and since it can only bite inside the
+    // AM broadcast band there is nothing to see on the panadapter above 160 m
+    // either — checking it on 40 m looks exactly like a dead control. Say what
+    // happened, and say it truthfully if the API refused.
+    connect(bcNotch, &QAction::toggled, this, [this, bcNotch](bool on) {
+        if (!sdr_.setBroadcastNotch(on)) {
+            const QSignalBlocker b(bcNotch);
+            bcNotch->setChecked(sdr_.broadcastNotch());   // never lie about it
+            statusBar()->showMessage(
+                QString("RSP2 broadcast notch refused by the API: %1")
+                    .arg(QString::fromStdString(sdr_.lastError())), 8000);
+            return;
+        }
         QSettings().setValue("sdr/broadcastNotch", on);
+        statusBar()->showMessage(
+            on ? "RSP2 broadcast notch IN — 0.5-1.7 MHz killed at the "
+                 "antenna; a signal that does not move is not RSP2 overload"
+               : "RSP2 broadcast notch out", 6000);
     });
 #endif
     left->addWidget(topStrip);
