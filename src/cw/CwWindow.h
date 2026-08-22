@@ -37,7 +37,9 @@ public:
     explicit CwWindow(QWidget* parent = nullptr);
 
     void setMyCall(const QString& call)  { myCall_ = call; }
-    void setHisCall(const QString& call) { hisCall_ = call; }
+    // Arms the %c macro AND shows the call in the DX box, so every click
+    // path (spot, decode pane, skimmer) is visible and correctable.
+    void setHisCall(const QString& call);
     void openKeyer();                    // connect + handshake (idempotent)
     bool keyerOpen() const;              // holds the serial port right now?
 
@@ -60,6 +62,10 @@ signals:
     // Double-click on a callsign-shaped token in the decode pane: the
     // fldigi move — copy says who they are, one gesture logs them.
     void callDoubleClicked(const QString& call);
+    // Enter in the DX box: a call typed by hand rides the same rails as a
+    // clicked one (cqrlog New QSO prefill). Not per-keystroke — the
+    // operator says when the call is finished.
+    void hisCallEntered(const QString& call);
     // Decode-engine adjustments changed (engine, som, deep, attack, decay).
     void rxDecodeConfigChanged(bool eng, bool som, bool deep, int atk,
                                int dcy);
@@ -78,12 +84,14 @@ private:
     void sendText(const QString& t);
     void editMemory(int i);
     void updateStatus(const QString& s = QString());
+    void tintDxCall();                   // amber until it looks like a call
 
     WinKeyer* wk_ = nullptr;
     QUdpSocket* daemon_ = nullptr;       // cwdaemon-protocol server
     QUdpSocket* feed_ = nullptr;         // decode-text feed (localhost UDP)
     quint16 feedPort_ = 2336;            // cw/feedPort — Not1MM dock listens
     QLineEdit* line_ = nullptr;
+    QLineEdit* dxCall_ = nullptr;        // the station being worked (%c)
     QLabel* status_ = nullptr;
     QLabel* sentView_ = nullptr;         // what's queued/sent this over
     QSpinBox* wpm_ = nullptr;

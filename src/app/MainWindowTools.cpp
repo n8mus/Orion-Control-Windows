@@ -139,6 +139,16 @@ void MainWindow::setupCwUi() {
                             QString("cqrlog ← %1 (from CW copy)")
                                 .arg(call), 5000);
                     });
+            // Same rails for a call typed by hand in the DX box: the
+            // console is the master of the callsign, cqrlog follows.
+            // (There is no path the other way — cqrlog's bridge is
+            // receive-only, so typing it THERE reaches nothing here.)
+            connect(cwWin_, &CwWindow::hisCallEntered, this,
+                    [this](const QString& call) {
+                        sendCqrLookup(call);
+                        statusBar()->showMessage(
+                            QString("cqrlog ← %1 (typed)").arg(call), 5000);
+                    });
             if (cwDec_) {                  // SDR-fed CW reader plumbing
                 connect(cwDec_, &CwDecoder::textDecoded,
                         cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);

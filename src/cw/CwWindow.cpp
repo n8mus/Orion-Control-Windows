@@ -35,6 +35,17 @@ const char* kMemDefault[4] = {
     "5NN MI",
     "TU 73 E E",
 };
+
+// Callsign shape incl. portable forms (K2J/4, F/N8EM). Needs the
+// digit-in-the-middle structure, so CQ/TU/73/5NN never match. Shared by
+// the decode-pane double-click and the DX box's "looks like a call" tint.
+const QRegularExpression& callRe() {
+    static const QRegularExpression re(QStringLiteral(
+        "^(?:[A-Z0-9]{1,3}/)?"
+        "(?:[A-Z]{1,2}|[0-9][A-Z]|[A-Z][0-9])[0-9]{1,2}[A-Z]{1,4}"
+        "(?:/[A-Z0-9]{1,4})?$"));
+    return re;
+}
 } // namespace
 
 CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
@@ -101,7 +112,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     line_->setToolTip("Buffered send: type, Enter transmits the line.\n"
                       "Live keys: every keystroke goes straight to the "
                       "keyer\n(Backspace unsends a not-yet-sent character).\n"
-                      "%mc = your call, %c = the LOG panel callsign.\n"
+                      "%mc = your call, %c = the DX box callsign.\n"
                       "Esc or the paddle stops everything instantly.");
     line_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     g->addWidget(line_, 1, 0, 1, 5);
@@ -130,14 +141,34 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     if (live_->isChecked() && word_->isChecked())  // stale settings guard
         word_->setChecked(false);
 
-    // Row 3: memories
+    // Row 3: the DX call, then the memories that spend it. %c used to be
+    // settable ONLY by clicking (spot, decode pane, skimmer band map or
+    // waterfall) and was invisible everywhere — so when the decoder prints
+    // "K8 ABC" with a gap there is nothing click-shaped to grab, and no
+    // way to see what the macros are about to send. This box is that
+    // missing half: every click path writes it, and it takes typing.
+    auto* memRow = new QWidget(this);
+    auto* memLay = new QHBoxLayout(memRow);
+    memLay->setContentsMargins(0, 0, 0, 0);
+    memLay->setSpacing(8);
+    memLay->addWidget(new QLabel("DX", memRow));
+    dxCall_ = new QLineEdit(memRow);
+    dxCall_->setPlaceholderText("call");
+    dxCall_->setMaximumWidth(160);
+    dxCall_->setToolTip(
+        "The station you're working — what %c sends.\n"
+        "Filled by clicking a spot, a skimmer call, or double-clicking\n"
+        "a call in the decode pane; type here when the copy is broken\n"
+        "up or there's nothing to click. Enter also hands it to cqrlog's\n"
+        "New QSO. Amber = doesn't look like a callsign yet (sends anyway).");
+    memLay->addWidget(dxCall_);
     for (int i = 0; i < 4; ++i) {
         mem_[i] = new QPushButton(QString("CW%1").arg(i + 1), this);
         const QString t = QSettings()
             .value(QString("cw/mem%1").arg(i + 1), kMemDefault[i]).toString();
         mem_[i]->setToolTip(t + "\n\nclick: send    right-click: edit");
         mem_[i]->setContextMenuPolicy(Qt::CustomContextMenu);
-        g->addWidget(mem_[i], 3, i);
+        memLay->addWidget(mem_[i], 1);
         connect(mem_[i], &QPushButton::clicked, this, [this, i] {
             sendText(QSettings()
                 .value(QString("cw/mem%1").arg(i + 1), kMemDefault[i])
@@ -146,6 +177,26 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         connect(mem_[i], &QWidget::customContextMenuRequested, this,
                 [this, i] { editMemory(i); });
     }
+    g->addWidget(memRow, 3, 0, 1, 4);
+    connect(dxCall_, &QLineEdit::textEdited, this, [this](const QString& t) {
+        // Uppercase as it lands, and drop whitespace outright: no call has
+        // a space in it, so pasting the decoder's own broken "K8 ABC"
+        // yields K8ABC instead of a call the macro would key with a hole.
+        QString up = t.toUpper();
+        up.remove(QLatin1Char(' '));
+        if (up != t) {
+            const int pos = dxCall_->cursorPosition();
+            dxCall_->setText(up);
+            dxCall_->setCursorPosition(std::min(pos, int(up.size())));
+        }
+        hisCall_ = up;
+        tintDxCall();
+    });
+    connect(dxCall_, &QLineEdit::returnPressed, this, [this] {
+        if (hisCall_.isEmpty()) return;
+        emit hisCallEntered(hisCall_);
+        line_->setFocus();               // keyboard back where CW is typed
+    });
 
     // Rows 4-5: CW reader — decoded text from the SDR passband (no audio
     // cable; the decoder listens exactly where CW zap parks the carrier).
@@ -289,7 +340,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
                        "3px; font-family: monospace; font-size: 16px; }");
     g->addWidget(rx_, 6, 0, 1, 5);
     rx_->setToolTip("Decoded CW. Double-click a callsign to put it in the "
-                    "LOG panel\n(and the %c macro); right-click to erase.");
+                    "DX box\n(the %c macro); right-click to erase.");
     rx_->viewport()->installEventFilter(this);   // double-click call capture
     connect(rxClear, &QPushButton::clicked, rx_, &QPlainTextEdit::clear);
     // Erase where the mouse already is: right-click the decode text
@@ -544,7 +595,7 @@ void CwWindow::updateRxInfo() {
 // The entry line grows with the window — and its FONT grows with it, so
 // a big window means CW you can read from across the shack.
 // The fldigi gesture: double-click a decoded token; if it's shaped like a
-// callsign it goes to the owner (LOG panel + %c macro). Token = the
+// callsign it goes to the owner (DX box + %c macro). Token = the
 // whitespace-delimited run around the click — Qt's own word selection
 // would split "W1AW/4" at the slash and "N8EM" survives only by luck of
 // the word-character table, so we cut the token ourselves.
@@ -561,13 +612,7 @@ bool CwWindow::eventFilter(QObject* obj, QEvent* ev) {
         while (b < int(line.size()) && !line[b].isSpace()) ++b;
         QString tok = line.mid(a, b - a).toUpper();
         tok.remove(QRegularExpression(QStringLiteral("[^A-Z0-9/]")));
-        // Callsign shape incl. portable forms (K2J/4, F/N8EM). Needs the
-        // digit-in-the-middle structure, so CQ/TU/73/5NN never match.
-        static const QRegularExpression callRe(QStringLiteral(
-            "^(?:[A-Z0-9]{1,3}/)?"
-            "(?:[A-Z]{1,2}|[0-9][A-Z]|[A-Z][0-9])[0-9]{1,2}[A-Z]{1,4}"
-            "(?:/[A-Z0-9]{1,4})?$"));
-        if (callRe.match(tok).hasMatch()) {
+        if (callRe().match(tok).hasMatch()) {
             QTextCursor sel = c;               // show what was grabbed
             sel.setPosition(c.block().position() + a);
             sel.setPosition(c.block().position() + b, QTextCursor::KeepAnchor);
@@ -599,6 +644,21 @@ void CwWindow::keyPressEvent(QKeyEvent* e) {
     QDialog::keyPressEvent(e);
 }
 
+void CwWindow::setHisCall(const QString& call) {
+    hisCall_ = call.trimmed().toUpper();
+    if (!dxCall_) return;
+    dxCall_->setText(hisCall_);          // textEdited only fires on typing
+    tintDxCall();
+}
+
+void CwWindow::tintDxCall() {
+    // Amber while it isn't call-shaped — a hint, never a block: the
+    // operator gets to send whatever he means to send.
+    const bool ok = hisCall_.isEmpty() || callRe().match(hisCall_).hasMatch();
+    dxCall_->setStyleSheet(ok ? QString()   // fall back to the dialog sheet
+                              : QStringLiteral("color: #e0b45d;"));
+}
+
 QString CwWindow::substitute(QString t) const {
     t.replace("%MC", myCall_, Qt::CaseInsensitive);
     t.replace("%C", hisCall_, Qt::CaseInsensitive);
@@ -606,6 +666,15 @@ QString CwWindow::substitute(QString t) const {
 }
 
 void CwWindow::sendText(const QString& t) {
+    // %c with nothing armed used to key the exchange with a hole in it
+    // (CW2 became " DE N8EM"). Refuse and say so — the DX box is right
+    // there and now shows exactly what's missing.
+    if (hisCall_.isEmpty() && t.contains(QStringLiteral("%C"),
+                                         Qt::CaseInsensitive)) {
+        updateStatus("no DX call — fill the DX box");
+        dxCall_->setFocus();
+        return;
+    }
     emit txImminent();
     openKeyer();
     const QString out = substitute(t).simplified();
