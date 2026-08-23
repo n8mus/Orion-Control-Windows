@@ -132,12 +132,25 @@ void WinKeyer::send(const QString& text) {
     QByteArray out;
     for (QChar qc : text.toUpper()) {
         const char c = qc.toLatin1();
-        // WK sends A-Z 0-9 and common prosign-able punctuation; pass space
-        // and the characters the keyer's table knows, drop the rest.
+        // Exactly the keyer's own ASCII table (WK3 datasheet p17 "ASCII
+        // Code Assignments, Prosign Mapping"), restricted to what WK2 also
+        // has — a WinKeyer USB may be either, and we never read back the
+        // firmware revision to tell.
+        //
+        // This list used to be hand-written and disagreed with the
+        // datasheet both ways: it BLOCKED '<' (AR), '>' (SK), '$' (SX) and
+        // '|' (the half-dit pad), and it PASSED '!' which the keyer maps
+        // to null and silently drops. The operator went looking for '<'
+        // and '>' as the AR/SK keys — which is exactly what they are —
+        // and the console was eating them.
+        //
+        // Omitted deliberately: ! # % & * map to null on the keyer, and
+        // '[' (AS) '\\' (DN) ']' (KN) are WK3-only.
         if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' '
-            || c == '?' || c == '/' || c == '.' || c == ',' || c == '='
-            || c == '+' || c == '-' || c == ';' || c == ':' || c == '\''
-            || c == '(' || c == ')' || c == '"' || c == '@' || c == '!')
+            || c == '.' || c == ',' || c == '?' || c == '/' || c == ':'
+            || c == ';' || c == '<' || c == '=' || c == '>' || c == '('
+            || c == ')' || c == '+' || c == '-' || c == '\'' || c == '"'
+            || c == '@' || c == '$' || c == '|')
             out.append(c);
     }
     if (out.isEmpty()) return;

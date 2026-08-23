@@ -40,7 +40,9 @@ public:
     // Everything the hardware owns outright: element timing, the paddle,
     // and the speed knob. This is the reference the other backends are
     // measured against.
-    static constexpr Caps kCaps{"WinKeyer", true, true, true, true, 5, 99};
+    static constexpr Caps kCaps{"WinKeyer", true, true, true, true, 5, 99,
+                               "< AR   > SK   = BT   ( KN   ; AA   ) KK"
+                               "   | half-space"};
 
 private:
     void onReadyRead();

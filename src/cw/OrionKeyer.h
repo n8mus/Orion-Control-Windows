@@ -81,7 +81,9 @@ public:
     // unsend that usually cannot fire is worse than not offering it —
     // and live keystroke-at-a-time keying is meaningless behind a
     // multi-second buffer anyway.
-    static constexpr Caps kCaps{"Orion keyer", false, false, false, true, 10, 60};
+    static constexpr Caps kCaps{"Orion keyer", false, false, false, true,
+                               10, 60,
+                               "+ AR   $ SK   = BT   ^ KN   * AA"};
 
     // How long a character occupies the air at wpm, inter-character gap
     // included. Public so the timing can be tested without a radio.

@@ -30,6 +30,11 @@ public:
         bool tune        = false;    // steady key-down for tuning
         int  wpmMin      = 5;
         int  wpmMax      = 99;
+        // What the operator types for prosigns on THIS keyer. The two
+        // backends disagree (the WinKeyer's own ASCII table vs the
+        // Orion's), so the window shows the live one rather than a
+        // list that is half wrong.
+        const char* prosigns = "";
     };
 
     explicit CwKeyer(QObject* parent = nullptr) : QObject(parent) {}
@@ -76,7 +81,8 @@ public:
     void tune(bool) override {}
     void backspace() override {}
 
-    static constexpr Caps kCaps{"no keyer", false, false, false, false, 5, 99};
+    static constexpr Caps kCaps{"no keyer", false, false, false, false,
+                               5, 99, ""};
 };
 
 } // namespace ttc

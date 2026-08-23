@@ -119,7 +119,6 @@ CwWindow::CwWindow(RadioController* radio, QWidget* parent)
                       "Live keys: every keystroke goes straight to the "
                       "keyer\n(Backspace unsends a not-yet-sent character).\n"
                       "%mc = your call, %c = the DX box callsign.\n"
-                      "Prosigns: * AA, + AR, $ SK, ^ KN.\n"
                       "Esc or the paddle stops everything instantly.");
     line_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     g->addWidget(line_, 1, 0, 1, 5);
@@ -890,6 +889,21 @@ void CwWindow::applyKeyerCaps() {
     live_->setEnabled(haveKeyer && c.backspace);
     if (!live_->isEnabled()) live_->setChecked(false);
     tuneBtn_->setEnabled(c.tune);
+    // Prosign keys differ between keyers, so show the LIVE one's — a list
+    // that is half wrong is worse than none (the operator went hunting for
+    // '<' and '>' as AR/SK, which is right on the WinKeyer and wrong on
+    // the radio).
+    line_->setToolTip(
+        QString("Buffered send: type, Enter transmits the line.\n"
+                "Live keys: every keystroke goes straight to the keyer\n"
+                "(Backspace unsends a not-yet-sent character).\n"
+                "%mc = your call, %c = the DX box callsign.\n"
+                "%1"
+                "Esc or the paddle stops everything instantly.")
+            .arg(*c.prosigns
+                     ? QString("Prosigns (%1):  %2\n").arg(c.name)
+                           .arg(QString::fromLatin1(c.prosigns))
+                     : QString()));
     for (QPushButton* m : mem_) m->setEnabled(c.name != NullKeyer::kCaps.name);
     updateRigKeyerLine();
     updateStatus();
@@ -956,8 +970,11 @@ void CwWindow::editMemory(int i) {
         QSettings().value(key, kMemDefault[i]).toString();
     const QString t = QInputDialog::getText(
         this, QString("Edit CW%1").arg(i + 1),
-        "Macro text.  %mc = my call, %c = his call.\n"
-        "Prosigns:  * AA    + AR    $ SK    ^ KN",
+        QString("Macro text.  %mc = my call, %c = his call.%1")
+            .arg(*keyer_->caps().prosigns
+                     ? QString("\nProsigns (%1):  %2").arg(keyer_->caps().name)
+                           .arg(QString::fromLatin1(keyer_->caps().prosigns))
+                     : QString()),
         QLineEdit::Normal, cur, &ok);
     if (!ok) return;
     QSettings().setValue(key, t);
