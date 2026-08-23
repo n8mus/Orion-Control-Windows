@@ -172,6 +172,15 @@ int main(int argc, char** argv) {
         k2.send("~~~");
         pump(60);
         check(r2.chars.empty(), "unsendable characters are dropped, not keyed");
+        // The rig's own table (prg guide p34): * AA, + AR, $ SK, ^ KN.
+        for (char ps : {'*', '+', '$', '^'})
+            check(OrionKeyer::charMs(QChar(ps), 20) > 0,
+                  ps == '*' ? "prosign * (AA) is sendable"
+                  : ps == '+' ? "prosign + (AR) is sendable"
+                  : ps == '$' ? "prosign $ (SK) is sendable"
+                              : "prosign ^ (KN) is sendable");
+        check(OrionKeyer::charMs('$', 20) > OrionKeyer::charMs('+', 20),
+              "SK (6 elements) outlasts AR (5)");
         k2.close();
         check(!r2.keyerOn, "close() puts the internal keyer back off");
     }

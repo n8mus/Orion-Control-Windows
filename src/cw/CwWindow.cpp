@@ -119,6 +119,7 @@ CwWindow::CwWindow(RadioController* radio, QWidget* parent)
                       "Live keys: every keystroke goes straight to the "
                       "keyer\n(Backspace unsends a not-yet-sent character).\n"
                       "%mc = your call, %c = the DX box callsign.\n"
+                      "Prosigns: * AA, + AR, $ SK, ^ KN.\n"
                       "Esc or the paddle stops everything instantly.");
     line_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     g->addWidget(line_, 1, 0, 1, 5);
@@ -955,7 +956,8 @@ void CwWindow::editMemory(int i) {
         QSettings().value(key, kMemDefault[i]).toString();
     const QString t = QInputDialog::getText(
         this, QString("Edit CW%1").arg(i + 1),
-        "Macro text (%mc = my call, %c = his call):",
+        "Macro text.  %mc = my call, %c = his call.\n"
+        "Prosigns:  * AA    + AR    $ SK    ^ KN",
         QLineEdit::Normal, cur, &ok);
     if (!ok) return;
     QSettings().setValue(key, t);

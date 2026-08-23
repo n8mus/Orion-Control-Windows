@@ -9,9 +9,15 @@
 namespace ttc {
 
 namespace {
-// Char -> pattern, the inverse of the decoder's table. Only what the
-// Orion's own CW table can send (prg guide p34 lists the procedural
-// symbols it maps); anything else is dropped rather than keyed as noise.
+// Char -> pattern. Deliberately EXACTLY the set the Orion's own CW table
+// can send: the alphabet, the digits, and the eleven symbols listed on
+// p34 of the programmer's reference. Anything else is dropped here rather
+// than sent and silently ignored by the rig — which would also throw the
+// timing model off, since we would have budgeted air time for a character
+// that never keyed.
+//
+// The four prosigns are the reason this list is not just punctuation:
+//   *  AA   +  AR   $  SK   ^  KN
 const QHash<QChar, QString>& patterns() {
     static const QHash<QChar, QString> t = {
         {'A', ".-"},   {'B', "-..."}, {'C', "-.-."}, {'D', "-.."},
@@ -25,8 +31,9 @@ const QHash<QChar, QString>& patterns() {
         {'4', "....-"}, {'5', "....."}, {'6', "-...."}, {'7', "--..."},
         {'8', "---.."}, {'9', "----."},
         {'.', ".-.-.-"}, {',', "--..--"}, {'?', "..--.."}, {'/', "-..-."},
-        {'=', "-...-"},  {'+', ".-.-."},  {'-', "-....-"}, {':', "---..."},
-        {';', "-.-.-."}, {'"', ".-..-."}, {'(', "-.--."},  {')', "-.--.-"},
+        {'=', "-...-"},  {':', "---..."},  {';', "-.-.-."},
+        // prosigns, per the rig's own table
+        {'*', ".-.-"},   {'+', ".-.-."},  {'$', "...-.-"}, {'^', "-.--."},
     };
     return t;
 }
