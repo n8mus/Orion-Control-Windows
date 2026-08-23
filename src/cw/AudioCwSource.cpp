@@ -95,6 +95,17 @@ void AudioCwSource::stop() {
 // ~60 s. One notch slot — one parked carrier at a time is the realistic
 // case; hum sits below the 200 Hz search floor anyway. Display-only:
 // nothing in the decode chain reads the tracker.
+void AudioCwSource::setTargetPitch(int hz) {
+    targetHz_ = hz;
+    // Moving the target onto an existing conviction must free it now, not
+    // 60 s from now — the readout would be blind there in the meantime.
+    if (notchHz_ > 0.0 && hz > 0
+        && std::abs(notchHz_ - double(hz)) <= 30.0) {
+        notchHz_ = -1.0;
+        notchGoneN_ = 0;
+    }
+}
+
 void AudioCwSource::measurePitch() {
     constexpr int kN = 8192;
     constexpr double kTrackHz = 12.0;   // same-tone frequency wobble
@@ -150,7 +161,14 @@ void AudioCwSource::measurePitch() {
             steadyN_ = 1;
         steadyHz_ = hzAll;
         steadyDb_ = dbAll;
-        if (steadyN_ >= kSteadyWin) notchHz_ = hzAll;
+        // ... but never at the sidetone pitch. SPOT is indistinguishable
+        // from a birdie, and convicting the target frequency is
+        // self-defeating AND self-sustaining: the readout then skips the
+        // very station being zero-beat, whose own energy keeps the
+        // conviction "alive" below.
+        const bool protectedHz = targetHz_ > 0
+            && std::abs(hzAll - double(targetHz_)) <= kNotchHz;
+        if (steadyN_ >= kSteadyWin && !protectedHz) notchHz_ = hzAll;
     } else {
         steadyN_ = 0;
         steadyHz_ = -1.0;

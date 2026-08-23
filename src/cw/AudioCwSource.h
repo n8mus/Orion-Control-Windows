@@ -38,6 +38,15 @@ public:
     // protects a tonal carrier beautifully. ~10 ms latency.
     void setNr(bool on);
 
+    // The operator's sidetone pitch, so the parked-carrier notch never
+    // convicts it. Holding the radio's SPOT looks EXACTLY like a birdie —
+    // rock-steady tone, steady level — so three SPOT readings taught the
+    // tracker to exclude the one frequency this meter exists to measure,
+    // and copying a station there kept the conviction alive forever
+    // (live-found 2026-08-23: "bouncing orange numbers", cured by a
+    // restart because the conviction isn't persisted).
+    void setTargetPitch(int hz);
+
 signals:
     void statusChanged(const QString& text);
     // Strongest audio tone 200-1200 Hz, ~4x/s, parabolic-interpolated
@@ -69,6 +78,7 @@ private:
     int    steadyN_ = 0;                   // consecutive steady windows
     double notchHz_ = -1.0;                // convicted carrier (<0 = none)
     int    notchGoneN_ = 0;                // windows since it vanished
+    int    targetHz_ = 0;                  // sidetone pitch, never notched
 };
 
 } // namespace ttc

@@ -167,6 +167,7 @@ void MainWindow::setupCwUi() {
                     QSettings().value("cw/pitchHz", 550).toInt();
                 audioDec_ = new CwDecoder(48000.0, double(pitch), this);
                 audioSrc_ = new AudioCwSource(audioDec_, this);
+                audioSrc_->setTargetPitch(pitch);   // never notch the target
                 connect(audioDec_, &CwDecoder::textDecoded,
                         cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
                 connect(audioDec_, &CwDecoder::wpmEstimated,
@@ -304,6 +305,7 @@ void MainWindow::applyCwPitch(int hz) {
     // skimmer hops its own channels, so neither cares. Zero-beat and the
     // Hz readout re-read the setting every time they run.
     if (audioDec_) audioDec_->retune(double(hz));
+    if (audioSrc_) audioSrc_->setTargetPitch(hz);   // move the notch guard
     statusBar()->showMessage(
         QString("CW sidetone %1 Hz — reader and 0-beat follow").arg(hz), 4000);
 }
