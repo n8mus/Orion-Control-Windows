@@ -192,14 +192,33 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     keyerSel_ = new QComboBox(this);
     keyerSel_->addItem("Auto — WinKeyer if set up, else the radio", "auto");
     keyerSel_->addItem("WinKeyer (USB)", "winkeyer");
-    keyerSel_->addItem("Radio's internal keyer (over CAT)", "radio");
+    keyerSel_->addItem("Radio's internal keyer (over CAT) — see note", "radio");
     keyerSel_->addItem("None", "none");
     keyerSel_->setToolTip(
-        "The radio's internal keyer needs NOTHING plugged in, but it also\n"
-        "claims the KEY jack as a paddle input — unplug a WinKeyer from\n"
-        "there before selecting it. It cannot follow a speed knob and\n"
-        "cannot tell the console when you touch the paddle.");
+        "The radio's internal keyer needs NOTHING plugged in — good if you\n"
+        "have no WinKeyer — but it claims the KEY jack as a paddle input,\n"
+        "so unplug a WinKeyer from there before selecting it. It cannot\n"
+        "follow a speed knob and cannot tell the console when you touch\n"
+        "the paddle.\n\n"
+        "Two limits of keying over CAT, both in the radio:\n"
+        "  • letter spacing runs about 1.5x wide (measured: 4.2 dit units\n"
+        "    between characters where 3 is correct, plus ~39 ms per\n"
+        "    character). Word spacing is right. It reads fine but sounds\n"
+        "    a little spaced out.\n"
+        "  • it sometimes DROPS part of a long macro. The radio gives no\n"
+        "    handshake and no way to ask how full its buffer is, so a lost\n"
+        "    character cannot be detected or resent.\n"
+        "A WinKeyer has neither problem.");
     form->addRow("Keyer", keyerSel_);
+    // The tooltip carries the detail; this line makes sure nobody selects
+    // the radio keyer and files its spacing as a console bug.
+    auto* keyerNote = new QLabel(
+        "Radio keyer: letter spacing ~1.5x wide and can drop part of a "
+        "long macro — both are limits of\nkeying over CAT, not of the "
+        "console. A WinKeyer has neither.", this);
+    keyerNote->setWordWrap(true);
+    keyerNote->setStyleSheet("color: #7f93a8; font-size: 12px;");
+    form->addRow("", keyerNote);
     keyerDev_ = new QComboBox(this);
     keyerDev_->setEditable(true);
     // Nothing is preconfigured, so an unset field is blank — and a blank dark
