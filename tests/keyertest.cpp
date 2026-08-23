@@ -10,6 +10,7 @@
 #include <QElapsedTimer>
 #include <QTimer>
 #include <cstdio>
+#include <algorithm>
 #include <vector>
 
 using namespace ttc;
@@ -68,22 +69,34 @@ int main(int argc, char** argv) {
     check(OrionKeyer::charMs('#', 20) == 0,   "unsendable character is 0 ms");
 
     {
-        std::printf("\nqueue: one character per command, paced\n");
+        std::printf("\nqueue primes the rig's buffer, then paces\n");
         StubRadio r; OrionKeyer k(&r);
         check(k.open(), "open() succeeds on a CAT-keying radio");
         check(r.keyerOn, "open() enables the radio's internal keyer");
         k.setSpeed(20);
         r.clock.start();
-        k.send("EE");
-        pump(60);
-        check(r.chars.size() == 1, "first character goes out immediately");
-        pump(400);
-        check(r.chars.size() == 2, "second waits for the first to play");
-        const qint64 gap = r.atMs[1] - r.atMs[0];
-        check(gap >= 150 && gap <= 260,
-              "spacing is a character time minus the lead");
-        std::printf("      (measured gap %lld ms, E=240 lead=60)\n",
-                    static_cast<long long>(gap));
+        k.send("PARIS PARIS PARIS");
+        pump(80);
+        check(r.chars.size() < 17,
+              "does NOT dump the whole macro (abort survives)");
+        std::printf("      (%zu of 17 characters out at 80 ms)\n",
+                    r.chars.size());
+        pump(4000);
+        // THE property, and the one the operator heard break: with
+        // break-in the rig drops to receive the instant its buffer
+        // empties, and the next character then has to switch it back —
+        // audible as a space between every letter. So every character
+        // must be handed over BEFORE the audio already buffered runs out.
+        qint64 air = 0;
+        int starved = 0;
+        for (size_t i = 0; i < r.chars.size(); ++i) {
+            if (r.atMs[i] > air + 5) ++starved;
+            air = std::max(air, r.atMs[i])
+                  + OrionKeyer::charMs(QChar(r.chars[i]), 20);
+        }
+        check(starved == 0, "the rig's buffer never runs dry mid-macro");
+        std::printf("      (%zu characters, %d starved hand-offs)\n",
+                    r.chars.size(), starved);
     }
     {
         std::printf("\nstop() is the abort the radio itself cannot do\n");
@@ -96,19 +109,22 @@ int main(int argc, char** argv) {
         pump(1200);
         check(r.chars.size() == sent,
               "nothing further is committed after stop()");
-        check(sent <= 2, "at most a character was already in flight");
-        std::printf("      (%zu of 10 characters had left)\n", sent);
+        // The abort budget is the buffer depth: whatever the radio already
+        // holds still goes out, because *TU cannot flush it.
+        check(sent <= 4, "only the buffered cushion had left, not the macro");
+        std::printf("      (%zu of 10 characters had left; depth %d ms)\n",
+                    sent, OrionKeyer::kDepthMs);
     }
     {
         std::printf("\nbackspace edits the queue before commitment\n");
         StubRadio r; OrionKeyer k(&r);
         k.open(); k.setSpeed(20);
-        k.send("EEX");
+        k.send("PARISE");
         pump(30);
-        k.backspace();               // drop the X, still queued
-        pump(900);
+        k.backspace();               // drop the trailing E, still queued
+        pump(2500);
         std::string got(r.chars.begin(), r.chars.end());
-        check(got == "EE", "backspaced character never went out");
+        check(got == "PARIS", "backspaced character never went out");
         std::printf("      (sent \"%s\")\n", got.c_str());
     }
     {

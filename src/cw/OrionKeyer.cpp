@@ -91,6 +91,7 @@ void OrionKeyer::send(const QString& text) {
     for (QChar c : text.toUpper())
         if (c == ' ' || patterns().contains(c)) pending_.enqueue(c);
     if (pending_.isEmpty()) return;
+    if (!clock_.isValid()) clock_.start();
     if (!busy_) { busy_ = true; emit busyChanged(true); }
     if (!timer_->isActive()) releaseNext();      // start immediately
 }
@@ -100,18 +101,22 @@ void OrionKeyer::releaseNext() {
         if (busy_) { busy_ = false; emit busyChanged(false); }
         return;
     }
+    const qint64 now = clock_.elapsed();
+    if (airFreeAt_ < now) airFreeAt_ = now;      // rig had gone idle
     const QChar c = pending_.dequeue();
-    const int ms = charMs(c, wpm_);
     if (c != ' ' && radio_) radio_->sendCwChar(c.toLatin1());
-    // Early by kLeadMs so the radio's buffer is never empty mid-word and
-    // ITS keyer owns the gap; floor keeps a fast character from
-    // free-running the queue.
-    timer_->start(std::max(ms - kLeadMs, 20));
+    airFreeAt_ += charMs(c, wpm_);
+    // Stay kDepthMs ahead of the air. Negative means the buffer is
+    // shallower than that, so the next character goes at once — which is
+    // what primes it at the start of a macro.
+    const qint64 wait = airFreeAt_ - kDepthMs - now;
+    timer_->start(int(std::clamp<qint64>(wait, 0, 5000)));
 }
 
 void OrionKeyer::stop() {
     pending_.clear();
     timer_->stop();
+    airFreeAt_ = 0;
     // Whatever the radio already holds still goes out — *TU will not stop
     // it (measured). Pacing keeps that to about one character.
     if (busy_) { busy_ = false; emit busyChanged(false); }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#include <QElapsedTimer>
 #include <QQueue>
 #include <QString>
 #include "cw/CwKeyer.h"
@@ -29,12 +30,19 @@ class RadioController;
 // thing standing between the operator and a macro he cannot interrupt —
 // STOP, Esc and the paddle all depend on it.
 //
-// The release is deliberately a little EARLY (kLeadMs before the
-// character should have finished). Early is self-correcting: the radio
-// buffers the next character and its own keyer emits the inter-character
-// gap exactly, so the timing stays the rig's rather than ours. Late would
-// stretch every gap and sound like bad Farnsworth. The cost of the lead
-// is that at most one extra character is committed when STOP lands.
+// The queue runs AHEAD of the air, keeping about kDepthMs of CW sitting
+// in the radio's buffer. That depth is the whole trick: with break-in the
+// rig drops back to receive the moment its buffer empties, so a character
+// arriving just-in-time has to switch it back to transmit and lands a gap
+// on top of the inter-character spacing its keyer already adds. Operator
+// copy of the first attempt, which released each character only 60 ms
+// early: "cw four sends n 8 e m space between each letter". Keeping the
+// buffer non-empty is what makes it a word instead of four letters.
+//
+// The depth is the abort budget, in the only unit that matters: STOP can
+// only lose what the radio has already been handed, so kDepthMs of audio
+// is the most that can still go out. Deeper sounds better and stops
+// worse.
 class OrionKeyer : public CwKeyer {
     Q_OBJECT
 public:
@@ -61,13 +69,15 @@ public:
     // How long a character occupies the air at wpm, inter-character gap
     // included. Public so the timing can be tested without a radio.
     static int charMs(QChar c, int wpm);
-    static constexpr int kLeadMs = 60;   // release this early; see above
+    static constexpr int kDepthMs = 400; // CW kept buffered; see above
 
 private:
     void releaseNext();
 
     RadioController* radio_ = nullptr;
     QQueue<QChar> pending_;
+    QElapsedTimer clock_;
+    qint64 airFreeAt_ = 0;               // when the rig's buffer runs dry
     QTimer* timer_ = nullptr;
     bool open_ = false;
     bool busy_ = false;
