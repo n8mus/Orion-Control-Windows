@@ -70,35 +70,27 @@ int main(int argc, char** argv) {
     check(OrionKeyer::charMs('#', 20) == 0,   "unsendable character is 0 ms");
 
     {
-        std::printf("\nqueue primes the rig's buffer, then paces\n");
+        std::printf("\na whole word is handed over as one burst\n");
         StubRadio r; OrionKeyer k(&r);
         check(k.open(), "open() succeeds on a CAT-keying radio");
         check(r.keyerOn, "open() enables the radio's internal keyer");
         k.setSpeed(20);
         r.clock.start();
-        k.send("PARISPARISPARIS");   // no spaces: a word gap is a
-                                     // DELIBERATE drain, tested below
-        pump(80);
-        check(r.chars.size() < 15,
-              "does NOT dump the whole macro (abort survives)");
-        std::printf("      (%zu of 15 characters out at 80 ms)\n",
-                    r.chars.size());
-        pump(4000);
-        // THE property, and the one the operator heard break: with
-        // break-in the rig drops to receive the instant its buffer
-        // empties, and the next character then has to switch it back —
-        // audible as a space between every letter. So every character
-        // must be handed over BEFORE the audio already buffered runs out.
-        qint64 air = 0;
-        int starved = 0;
-        for (size_t i = 0; i < r.chars.size(); ++i) {
-            if (r.atMs[i] > air + 5) ++starved;
-            air = std::max(air, r.atMs[i])
-                  + OrionKeyer::charMs(QChar(r.chars[i]), 20);
-        }
-        check(starved == 0, "the rig's buffer never runs dry mid-WORD");
-        std::printf("      (%zu characters, %d starved hand-offs)\n",
-                    r.chars.size(), starved);
+        k.send("PARIS IS A WORD");
+        pump(60);
+        // THE invariant. Metering letter-by-letter let the rig's queue run
+        // dry between characters and it restarted each time — heard as
+        // "5 n n m i". A word must arrive complete so the rig's own keyer
+        // owns the spacing inside it.
+        std::string first(r.chars.begin(), r.chars.end());
+        check(first == "PARIS", "the first WHOLE word goes out immediately");
+        std::printf("      (rig received \"%s\" within 60 ms)\n",
+                    first.c_str());
+        check(r.atMs.size() >= 5 && r.atMs[4] - r.atMs[0] < 40,
+              "and as one burst, not spread over the air time");
+        pump(1200);
+        check(std::string(r.chars.begin(), r.chars.end()) == "PARIS",
+              "the NEXT word waits — it is not dumped too");
     }
     {
         std::printf("\na word gap is real time, not just bookkeeping\n");
@@ -118,7 +110,7 @@ int main(int argc, char** argv) {
         std::printf("\nstop() is the abort the radio itself cannot do\n");
         StubRadio r; OrionKeyer k(&r);
         k.open(); k.setSpeed(20);
-        k.send("PARISPARIS");
+        k.send("PARIS PARIS");
         pump(50);
         k.stop();
         const size_t sent = r.chars.size();
@@ -127,19 +119,19 @@ int main(int argc, char** argv) {
               "nothing further is committed after stop()");
         // The abort budget is the buffer depth: whatever the radio already
         // holds still goes out, because *TU cannot flush it.
-        check(sent <= 6, "only the buffered cushion had left, not the macro");
+        check(sent <= 5, "only the word already handed over had left");
         std::printf("      (%zu of 10 characters had left)\n", sent);
     }
     {
         std::printf("\nbackspace edits the queue, but is not promised\n");
         check(!OrionKeyer::kCaps.backspace,
-              "caps do NOT claim backspace (the cushion outruns it)");
+              "caps do NOT claim backspace (the burst outruns it)");
         StubRadio r; OrionKeyer k(&r);
         k.open(); k.setSpeed(20);
         // Long enough that the tail is still queued behind the cushion.
         k.send("PARIS PARIS PARIS PARIS X");
         pump(30);
-        k.backspace();               // drop the trailing X
+        k.backspace();               // drop the trailing X, still queued
         pump(9000);
         std::string got(r.chars.begin(), r.chars.end());
         check(got.find('X') == std::string::npos,

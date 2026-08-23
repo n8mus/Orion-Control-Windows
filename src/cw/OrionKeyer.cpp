@@ -3,7 +3,6 @@
 #include "radio/RadioController.h"
 
 #include <QHash>
-#include <QSettings>
 #include <QTimer>
 #include <algorithm>
 
@@ -50,14 +49,6 @@ int OrionKeyer::charMs(QChar c, int wpm) {
     return int(units * unitMs);
 }
 
-// The cushion, in ms at the current speed. Floor keeps a very fast
-// setting from collapsing it back to just-in-time.
-int OrionKeyer::depthMs() const {
-    const int units = QSettings()
-        .value("cw/orionDepthUnits", kDepthUnits).toInt();
-    return std::max(400, int(std::clamp(units, 4, 200) * 1200.0 / wpm_));
-}
-
 OrionKeyer::OrionKeyer(RadioController* radio, QObject* parent)
     : CwKeyer(parent), radio_(radio) {
     timer_ = new QTimer(this);
@@ -100,7 +91,6 @@ void OrionKeyer::send(const QString& text) {
     for (QChar c : text.toUpper())
         if (c == ' ' || patterns().contains(c)) pending_.enqueue(c);
     if (pending_.isEmpty()) return;
-    if (!clock_.isValid()) clock_.start();
     if (!busy_) { busy_ = true; emit busyChanged(true); }
     if (!timer_->isActive()) releaseNext();      // start immediately
 }
@@ -110,33 +100,34 @@ void OrionKeyer::releaseNext() {
         if (busy_) { busy_ = false; emit busyChanged(false); }
         return;
     }
-    const qint64 now = clock_.elapsed();
-    if (airFreeAt_ < now) airFreeAt_ = now;      // rig had gone idle
-    const QChar c = pending_.dequeue();
-    const bool isSpace = (c == QLatin1Char(' '));
-    if (!isSpace && radio_) radio_->sendCwChar(c.toLatin1());
-    airFreeAt_ += charMs(c, wpm_);
-    // Stay depthMs() ahead of the air. Negative means the buffer is
-    // shallower than that, so the next character goes at once — which is
-    // what primes it at the start of a macro.
-    //
-    // EXCEPT across a word gap, which has to be real elapsed time rather
-    // than bookkeeping. The rig is never sent a space (its table has
-    // none), so if the cushion applied here it would simply receive the
-    // next word's first character immediately and run the words together
-    // — "5NN MI" arrived as 5NNMI. Wait for the buffer to drain and the
-    // gap to pass before feeding again.
-    const qint64 wait = isSpace ? (airFreeAt_ - now)
-                                : (airFreeAt_ - depthMs() - now);
-    timer_->start(int(std::clamp<qint64>(wait, 0, 5000)));
+    // One WORD, handed over as a burst. Inside a word the rig's own keyer
+    // owns every gap, which is the whole point — our model never gets to
+    // stretch the spacing between letters.
+    int airMs = 0, sent = 0;
+    while (!pending_.isEmpty() && sent < kMaxBurst
+           && pending_.head() != QLatin1Char(' ')) {
+        const QChar c = pending_.dequeue();
+        if (radio_) radio_->sendCwChar(c.toLatin1());
+        airMs += charMs(c, wpm_);
+        ++sent;
+    }
+    // A space is never sent (the rig's character table has none) — it is
+    // real elapsed silence between bursts instead.
+    while (!pending_.isEmpty() && pending_.head() == QLatin1Char(' ')) {
+        pending_.dequeue();
+        airMs += charMs(QLatin1Char(' '), wpm_);
+    }
+    // Come back a little before the burst has finished playing, so the
+    // queue is topped up rather than restarted.
+    const int wait = int(airMs * (1.0 - kFeedEarly));
+    timer_->start(std::max(wait, 10));
 }
 
 void OrionKeyer::stop() {
     pending_.clear();
     timer_->stop();
-    airFreeAt_ = 0;
     // Whatever the radio already holds still goes out — *TU will not stop
-    // it (measured). Pacing keeps that to about one character.
+    // it (measured). Bursting by word keeps that to one word.
     if (busy_) { busy_ = false; emit busyChanged(false); }
 }
 

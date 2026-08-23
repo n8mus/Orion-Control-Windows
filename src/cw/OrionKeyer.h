@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
-#include <QElapsedTimer>
 #include <QQueue>
 #include <QString>
 #include "cw/CwKeyer.h"
@@ -30,19 +29,30 @@ class RadioController;
 // thing standing between the operator and a macro he cannot interrupt —
 // STOP, Esc and the paddle all depend on it.
 //
-// The queue runs AHEAD of the air, keeping about kDepthMs of CW sitting
-// in the radio's buffer. That depth is the whole trick: with break-in the
-// rig drops back to receive the moment its buffer empties, so a character
-// arriving just-in-time has to switch it back to transmit and lands a gap
-// on top of the inter-character spacing its keyer already adds. Operator
-// copy of the first attempt, which released each character only 60 ms
-// early: "cw four sends n 8 e m space between each letter". Keeping the
-// buffer non-empty is what makes it a word instead of four letters.
+// Characters go out a WHOLE WORD AT A TIME, in a burst.
 //
-// The depth is the abort budget, in the only unit that matters: STOP can
-// only lose what the radio has already been handed, so kDepthMs of audio
-// is the most that can still go out. Deeper sounds better and stops
-// worse.
+// That is the documented cure, not a guess. The rig queues ~20 characters
+// (hamlib's tt565_send_morse, empirically derived) and its own keyer
+// spaces them perfectly once it has them; hamlib fires "/c" as fast as
+// the port accepts and never reports a spacing problem. The one Windows
+// program that uses this command as its primary CW path documents the
+// same two cures in its release notes: buffer until a full word is
+// typed "so words are transmitted smoothly", and run the local CW clock
+// slightly fast so the queue never underruns.
+//
+// Metering character-by-character — which this class did first, with a
+// cushion of one character and then five — gives the queue a chance to
+// run dry between every letter, and the rig then has to restart. The
+// operator heard exactly that: "5nn mi" as "5 n n m i", "running it all
+// t o g e t h e r", identical at 20/30/50 wpm and unchanged by cushion
+// depth, while his paddle through the same keyer sounded perfect.
+//
+// So: burst the word, then wait out its modelled duration before the
+// next. Within a word the timing is entirely the rig's and our model
+// cannot hurt it; the model only has to be good enough to decide when
+// the NEXT word may go. STOP loses at most the word already handed over,
+// which the operator ruled acceptable ("few letters before stopping
+// would be no issue, correct timing is a big issue").
 class OrionKeyer : public CwKeyer {
     Q_OBJECT
 public:
@@ -65,9 +75,9 @@ public:
     // display can lag reality after a paddle interrupt.
     //
     // backspace is declared FALSE, which grays out Live keys. It does edit
-    // the queue and works on the tail of a long macro, but the cushion
-    // that fixes the timing is several characters deep, so anything just
-    // typed has almost always been handed over already. Promising an
+    // the queue and works on words not yet burst, but the word being sent
+    // has already gone in full, so anything just typed is usually already
+    // committed. Promising an
     // unsend that usually cannot fire is worse than not offering it —
     // and live keystroke-at-a-time keying is meaningless behind a
     // multi-second buffer anyway.
@@ -76,29 +86,18 @@ public:
     // How long a character occupies the air at wpm, inter-character gap
     // included. Public so the timing can be tested without a radio.
     static int charMs(QChar c, int wpm);
-    // Cushion in DIT UNITS, so it scales with speed. An average character
-    // runs ~10 units, so this is about five of them.
-    //
-    // Set by the operator's ruling once it was keying: "stop is not an
-    // issue and few letters before stopping would be no issue, correct
-    // timing is a big issue". Timing wins, so buffer deep. That also makes
-    // this robust rather than clever — several characters ahead, small
-    // errors in charMs()'s model of the rig's per-character air time can
-    // no longer starve it.
-    //
-    // Tunable without a rebuild via cw/orionDepthUnits: raise it if the
-    // spacing is still wide, lower it if STOP overruns further than the
-    // operator likes.
-    int depthMs() const;
-    static constexpr int kDepthUnits = 50;
+    // The rig's queue depth, from hamlib's Orion backend: "Orion can queue
+    // up to about 20 characters". A longer word is split across bursts.
+    static constexpr int kMaxBurst = 20;
+    // Feed the next word this fraction early, so the queue is refilled
+    // before it drains — the "run the CW clock slightly fast" trick.
+    static constexpr double kFeedEarly = 0.06;
 
 private:
     void releaseNext();
 
     RadioController* radio_ = nullptr;
     QQueue<QChar> pending_;
-    QElapsedTimer clock_;
-    qint64 airFreeAt_ = 0;               // when the rig's buffer runs dry
     QTimer* timer_ = nullptr;
     bool open_ = false;
     bool busy_ = false;
