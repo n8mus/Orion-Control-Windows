@@ -880,10 +880,14 @@ void CwWindow::applyKeyerCaps() {
                          "follows.")
         : QString("Keying speed (%1-%2 on this keyer).")
               .arg(c.wpmMin).arg(c.wpmMax));
-    for (QCheckBox* b : {word_, live_}) {
-        b->setEnabled(c.backspace);
-        if (!c.backspace) b->setChecked(false);
-    }
+    // Word keys only needs the console's own line editing, so it rides
+    // on any real keyer. Live keys is the one that depends on unsending a
+    // character already handed to the keyer.
+    const bool haveKeyer = c.name != NullKeyer::kCaps.name;
+    word_->setEnabled(haveKeyer);
+    if (!haveKeyer) word_->setChecked(false);
+    live_->setEnabled(haveKeyer && c.backspace);
+    if (!live_->isEnabled()) live_->setChecked(false);
     tuneBtn_->setEnabled(c.tune);
     for (QPushButton* m : mem_) m->setEnabled(c.name != NullKeyer::kCaps.name);
     updateRigKeyerLine();

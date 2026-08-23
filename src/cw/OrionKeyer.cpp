@@ -3,6 +3,7 @@
 #include "radio/RadioController.h"
 
 #include <QHash>
+#include <QSettings>
 #include <QTimer>
 #include <algorithm>
 
@@ -47,6 +48,14 @@ int OrionKeyer::charMs(QChar c, int wpm) {
     units += p.size() - 1;                       // gaps between elements
     units += 3;                                  // gap after the character
     return int(units * unitMs);
+}
+
+// The cushion, in ms at the current speed. Floor keeps a very fast
+// setting from collapsing it back to just-in-time.
+int OrionKeyer::depthMs() const {
+    const int units = QSettings()
+        .value("cw/orionDepthUnits", kDepthUnits).toInt();
+    return std::max(400, int(std::clamp(units, 4, 200) * 1200.0 / wpm_));
 }
 
 OrionKeyer::OrionKeyer(RadioController* radio, QObject* parent)
@@ -109,7 +118,7 @@ void OrionKeyer::releaseNext() {
     // Stay kDepthMs ahead of the air. Negative means the buffer is
     // shallower than that, so the next character goes at once — which is
     // what primes it at the start of a macro.
-    const qint64 wait = airFreeAt_ - kDepthMs - now;
+    const qint64 wait = airFreeAt_ - depthMs() - now;
     timer_->start(int(std::clamp<qint64>(wait, 0, 5000)));
 }
 

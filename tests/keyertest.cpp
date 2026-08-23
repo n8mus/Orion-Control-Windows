@@ -11,6 +11,7 @@
 #include <QTimer>
 #include <cstdio>
 #include <algorithm>
+#include <string>
 #include <vector>
 
 using namespace ttc;
@@ -111,20 +112,23 @@ int main(int argc, char** argv) {
               "nothing further is committed after stop()");
         // The abort budget is the buffer depth: whatever the radio already
         // holds still goes out, because *TU cannot flush it.
-        check(sent <= 4, "only the buffered cushion had left, not the macro");
-        std::printf("      (%zu of 10 characters had left; depth %d ms)\n",
-                    sent, OrionKeyer::kDepthMs);
+        check(sent <= 6, "only the buffered cushion had left, not the macro");
+        std::printf("      (%zu of 10 characters had left)\n", sent);
     }
     {
-        std::printf("\nbackspace edits the queue before commitment\n");
+        std::printf("\nbackspace edits the queue, but is not promised\n");
+        check(!OrionKeyer::kCaps.backspace,
+              "caps do NOT claim backspace (the cushion outruns it)");
         StubRadio r; OrionKeyer k(&r);
         k.open(); k.setSpeed(20);
-        k.send("PARISE");
+        // Long enough that the tail is still queued behind the cushion.
+        k.send("PARIS PARIS PARIS PARIS X");
         pump(30);
-        k.backspace();               // drop the trailing E, still queued
-        pump(2500);
+        k.backspace();               // drop the trailing X
+        pump(9000);
         std::string got(r.chars.begin(), r.chars.end());
-        check(got == "PARIS", "backspaced character never went out");
+        check(got.find('X') == std::string::npos,
+              "a character still queued is dropped by backspace");
         std::printf("      (sent \"%s\")\n", got.c_str());
     }
     {

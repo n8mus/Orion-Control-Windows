@@ -62,14 +62,35 @@ public:
 
     // No speed pot (no such hardware) and no break-in report: the paddle
     // still wins AT THE RADIO, we simply never hear about it, so the sent
-    // display can lag reality after a paddle interrupt. Backspace is real
-    // — it edits our own queue, before the character is committed.
-    static constexpr Caps kCaps{"Orion keyer", true, false, false, true, 10, 60};
+    // display can lag reality after a paddle interrupt.
+    //
+    // backspace is declared FALSE, which grays out Live keys. It does edit
+    // the queue and works on the tail of a long macro, but the cushion
+    // that fixes the timing is several characters deep, so anything just
+    // typed has almost always been handed over already. Promising an
+    // unsend that usually cannot fire is worse than not offering it —
+    // and live keystroke-at-a-time keying is meaningless behind a
+    // multi-second buffer anyway.
+    static constexpr Caps kCaps{"Orion keyer", false, false, false, true, 10, 60};
 
     // How long a character occupies the air at wpm, inter-character gap
     // included. Public so the timing can be tested without a radio.
     static int charMs(QChar c, int wpm);
-    static constexpr int kDepthMs = 400; // CW kept buffered; see above
+    // Cushion in DIT UNITS, so it scales with speed. An average character
+    // runs ~10 units, so this is about five of them.
+    //
+    // Set by the operator's ruling once it was keying: "stop is not an
+    // issue and few letters before stopping would be no issue, correct
+    // timing is a big issue". Timing wins, so buffer deep. That also makes
+    // this robust rather than clever — several characters ahead, small
+    // errors in charMs()'s model of the rig's per-character air time can
+    // no longer starve it.
+    //
+    // Tunable without a rebuild via cw/orionDepthUnits: raise it if the
+    // spacing is still wide, lower it if STOP overruns further than the
+    // operator likes.
+    int depthMs() const;
+    static constexpr int kDepthUnits = 50;
 
 private:
     void releaseNext();
