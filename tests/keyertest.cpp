@@ -59,15 +59,32 @@ void pump(int ms) {
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
 
-    std::printf("character timing (PARIS units at 20 wpm, 60 ms/unit)\n");
-    // E = 1 dit + 3 gap = 4 units = 240 ms;  O = --- = 3*3+2+3 = 14 = 840
-    check(OrionKeyer::charMs('E', 20) == 240, "E at 20 wpm is 240 ms");
-    check(OrionKeyer::charMs('O', 20) == 840, "O at 20 wpm is 840 ms");
+    // The model is the RADIO'S MEASURED behaviour, not textbook Morse:
+    // char gap kCharGapUnits (~4.2) instead of 3, plus kCmdOverheadMs.
+    // Modelling the textbook 3 units is what silently dropped macro text.
+    const double U = 60.0;                       // 20 wpm: 60 ms per unit
+    const double G = OrionKeyer::kCharGapUnits;
+    const int    O = OrionKeyer::kCmdOverheadMs;
+    std::printf("character timing at 20 wpm (60 ms/unit, gap %.1f units,"
+                " +%d ms)\n", G, O);
+    check(OrionKeyer::charMs('E', 20) == int((1 + G) * U) + O,
+          "E is one dit plus the rig's real gap and overhead");
+    check(OrionKeyer::charMs('O', 20) == int((11 + G) * U) + O,
+          "O is three dahs, two in-char gaps, then the same");
     check(OrionKeyer::charMs('e', 20) == OrionKeyer::charMs('E', 20),
           "lowercase times the same as upper");
-    check(OrionKeyer::charMs('E', 40) == 120, "doubling wpm halves the time");
-    check(OrionKeyer::charMs(' ', 20) == 240, "space is the extra word gap");
+    check(OrionKeyer::charMs('E', 40) == int((1 + G) * U / 2) + O,
+          "halving the unit does NOT halve it — the overhead is fixed");
+    // The rig already emits its gap after the word's last letter, so a
+    // space only makes up the rest of a 7-unit word gap.
+    check(OrionKeyer::charMs(' ', 20) == int((7.0 - G) * U),
+          "a space adds only the REMAINDER of the word gap");
+    check(OrionKeyer::charMs(' ', 20) < int(4 * U),
+          "which is less than a full word gap (that made words sound long)");
     check(OrionKeyer::charMs('#', 20) == 0,   "unsendable character is 0 ms");
+    std::printf("      (E %d ms, O %d ms, space %d ms)\n",
+                OrionKeyer::charMs('E', 20), OrionKeyer::charMs('O', 20),
+                OrionKeyer::charMs(' ', 20));
 
     {
         std::printf("\na whole word is handed over as one burst\n");
@@ -101,10 +118,11 @@ int main(int argc, char** argv) {
         pump(2000);
         check(r.chars.size() == 2, "the space itself is never sent to the rig");
         const qint64 gap = r.atMs.size() > 1 ? r.atMs[1] - r.atMs[0] : 0;
-        // E is 240 ms incl. its own gap, the word gap adds 4 units = 240.
-        check(gap >= 400, "the second word waits for a real word gap");
-        std::printf("      (gap %lld ms; E=240 + word gap 240)\n",
-                    static_cast<long long>(gap));
+        check(gap >= OrionKeyer::charMs('E', 20),
+              "the second word waits for a real word gap");
+        std::printf("      (gap %lld ms; E %d + word-gap remainder %d)\n",
+                    static_cast<long long>(gap), OrionKeyer::charMs('E', 20),
+                    OrionKeyer::charMs(' ', 20));
     }
     {
         std::printf("\nstop() is the abort the radio itself cannot do\n");

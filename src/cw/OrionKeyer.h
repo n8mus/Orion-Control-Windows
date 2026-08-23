@@ -89,9 +89,25 @@ public:
     // The rig's queue depth, from hamlib's Orion backend: "Orion can queue
     // up to about 20 characters". A longer word is split across bursts.
     static constexpr int kMaxBurst = 20;
-    // Feed the next word this fraction early, so the queue is refilled
-    // before it drains — the "run the CW clock slightly fast" trick.
-    static constexpr double kFeedEarly = 0.06;
+
+    // What the radio ACTUALLY spends per character, measured off its own
+    // sidetone at 15/20/30/40 wpm: a character gap of ~4.2 dit units
+    // (where correct Morse is 3) plus ~39 ms of per-command overhead.
+    //
+    // Modelling the textbook 3 units was what dropped text. Believing the
+    // rig finished sooner than it had, the queue was fed early on EVERY
+    // character; across a 17-character macro that compounds to seconds of
+    // over-feed, the ~20-character queue overflows, and with no handshake
+    // and no buffer-depth query the excess is silently lost. Only long
+    // macros, only sometimes, always the tail — exactly as reported.
+    static constexpr double kCharGapUnits  = 4.2;
+    static constexpr int    kCmdOverheadMs = 39;
+
+    // Feed the next word this much early — a FIXED few tens of ms to cover
+    // serial and scheduler latency, deliberately not a percentage. A
+    // proportional lead is a systematic error that compounds word after
+    // word, which is the same trap as the wrong gap above.
+    static constexpr int kFeedEarlyMs = 40;
 
 private:
     void releaseNext();

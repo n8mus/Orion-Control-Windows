@@ -32,21 +32,27 @@ const QHash<QChar, QString>& patterns() {
 }
 } // namespace
 
-// PARIS timing: dit 1 unit, dah 3, 1 unit between elements, 3 between
-// characters. A space is not sent to the radio at all (its table has no
-// space) — it is only a longer wait, 7 units total for the word gap,
-// which is 4 more than the inter-character gap already counted.
+// How long the RADIO occupies the air with one character — measured
+// behaviour, not textbook Morse. dit 1 unit, dah 3, 1 unit between
+// elements, then kCharGapUnits (not 3) and the per-command overhead.
+//
+// A space is never sent (the rig's table has none) and is pure elapsed
+// silence. The rig has ALREADY emitted kCharGapUnits after the last
+// letter of the word, so a space only has to make up the difference to a
+// 7-unit word gap — adding a full gap on top is what made word spacing
+// sound long.
 int OrionKeyer::charMs(QChar c, int wpm) {
     const double unitMs = 1200.0 / std::clamp(wpm, 5, 99);
     const QChar u = c.toUpper();
-    if (u == ' ') return int(4 * unitMs);
+    if (u == QLatin1Char(' '))
+        return int(std::max(0.0, 7.0 - kCharGapUnits) * unitMs);
     const QString p = patterns().value(u);
     if (p.isEmpty()) return 0;
-    int units = 0;
+    double units = 0;
     for (QChar e : p) units += (e == '-') ? 3 : 1;
     units += p.size() - 1;                       // gaps between elements
-    units += 3;                                  // gap after the character
-    return int(units * unitMs);
+    units += kCharGapUnits;                      // the rig's own char gap
+    return int(units * unitMs) + kCmdOverheadMs;
 }
 
 OrionKeyer::OrionKeyer(RadioController* radio, QObject* parent)
@@ -119,8 +125,7 @@ void OrionKeyer::releaseNext() {
     }
     // Come back a little before the burst has finished playing, so the
     // queue is topped up rather than restarted.
-    const int wait = int(airMs * (1.0 - kFeedEarly));
-    timer_->start(std::max(wait, 10));
+    timer_->start(std::max(airMs - kFeedEarlyMs, 10));
 }
 
 void OrionKeyer::stop() {
