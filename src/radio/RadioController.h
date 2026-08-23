@@ -108,6 +108,11 @@ public:
     virtual void setCwQskDelay(int /*0-100*/) {}
     virtual void setCwAttackDecay(int /*3-10 ms*/) {}
     virtual void queryCw() {}
+    // Sidetone pitch alone. It is the one value in the group that steers
+    // the CONSOLE (reader mixer, zero-beat target, notch guard) rather
+    // than just filling a slider, so it is worth polling far more often
+    // than the rest — one cheap query instead of seven.
+    virtual void queryCwPitch() {}
 
     // Audio outputs.
     virtual void setAfVolume(Rx, int /*pct*/) {}

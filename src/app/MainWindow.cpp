@@ -3175,6 +3175,14 @@ MainWindow::MainWindow(QWidget* parent)
                 sinceDialMove_.isValid() && sinceDialMove_.elapsed() < 800;
             if ((phase == 1 || phase == 3) && !burst) {
                 if (pollTick_ % 25 == 3) {
+                    // Sidetone pitch rides OUTSIDE the wheel: it steers the
+                    // reader's mixer, the zero-beat target and the pitch
+                    // meter's notch guard, so a front-panel change has to
+                    // land in seconds, not the ~70 s a full 14-slot lap
+                    // takes. One query — the other six stay on the wheel,
+                    // because this link also carries the S-meter and dial.
+                    const bool cwOpen = cwWin_ && cwWin_->isVisible();
+                    if (cwOpen) radio_->queryCwPitch();
                     switch ((pollTick_ / 25) % 14) {
                         case 0:  radio_->queryAgc(Rx::Main);
                                  radio_->queryAgcThreshold(Rx::Main); break;
@@ -3198,8 +3206,8 @@ MainWindow::MainWindow(QWidget* parent)
                         case 11: radio_->queryVfoLock('A');         // front-panel lock
                                  radio_->queryVfoLock('B');         // button presses
                                  break;
-                        case 12: if (cwWin_) radio_->queryCw();     // sidetone/QSK;
-                                 break;                             // only when open
+                        case 12: if (cwOpen) radio_->queryCw();     // the rest of
+                                 break;                             // the CW panel
                         default: radio_->queryNotch(Rx::Main);      break;
                     }
                 } else {

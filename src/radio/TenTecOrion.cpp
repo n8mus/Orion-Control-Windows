@@ -190,6 +190,8 @@ void TenTecOrion::setCwSidetoneVol(int pct) { send("*CV" + QByteArray::number(cl
 void TenTecOrion::setCwSidetonePitch(int hz){ send("*CT" + QByteArray::number(clampi(hz, 300, 1200))); }
 void TenTecOrion::setCwQskDelay(int val)    { send("*CQ" + QByteArray::number(clampi(val, 0, 100))); }
 void TenTecOrion::setCwAttackDecay(int ms)  { send("*CD" + QByteArray::number(clampi(ms, 3, 10))); }
+void TenTecOrion::queryCwPitch()         { send("?CT"); }
+
 void TenTecOrion::queryCw() {
     send("?CV");
     send("?CT");

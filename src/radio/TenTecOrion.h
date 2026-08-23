@@ -87,6 +87,7 @@ public:
     void setCwQskDelay(int val);                  // *CQ<0-100>
     void setCwAttackDecay(int ms);                // *CD<3-10> ms
     void queryCw();                               // ?CV/?CT/?CQ/?CD + ?CS/?CW/?CK
+    void queryCwPitch();                          // ?CT alone (polled often)
 
     // VFO assignment: which VFO drives the main RX / sub RX / transmitter.
     // Letters 'A'/'B' ('N' = unassigned for sub/tx). RX on A with TX on B is
