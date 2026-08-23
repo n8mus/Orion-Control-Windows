@@ -51,6 +51,7 @@ private:
     QComboBox* radioDev_ = nullptr;
     QLabel*    devLabel_ = nullptr;      // the device row's label, relabeled per mode
     QLabel*    radioTest_ = nullptr;
+    QComboBox* keyerSel_ = nullptr;   // which keying engine
     QComboBox* keyerDev_ = nullptr;
     QLabel*    keyerTest_ = nullptr;
     QComboBox* audioDev_ = nullptr;

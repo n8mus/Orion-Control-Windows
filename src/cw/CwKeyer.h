@@ -55,4 +55,28 @@ signals:
     void errorOccurred(const QString& msg);
 };
 
+// "No keyer": what a station with neither a WinKeyer nor a CAT-keying
+// radio gets. Exists so the CW window always has something to talk to —
+// twenty call sites guarded by null checks would be twenty chances to
+// key by accident.
+class NullKeyer : public CwKeyer {
+    Q_OBJECT
+public:
+    explicit NullKeyer(QObject* parent = nullptr) : CwKeyer(parent) {}
+    const Caps& caps() const override { return kCaps; }
+    bool open() override { return false; }
+    void close() override {}
+    bool isOpen() const override { return false; }
+    QString lastError() const override {
+        return "no keyer selected (SDR ▸ Station setup…)";
+    }
+    void setSpeed(int) override {}
+    void send(const QString&) override {}
+    void stop() override {}
+    void tune(bool) override {}
+    void backspace() override {}
+
+    static constexpr Caps kCaps{"no keyer", false, false, false, false, 5, 99};
+};
+
 } // namespace ttc

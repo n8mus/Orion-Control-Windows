@@ -146,6 +146,23 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     connect(rtest, &QPushButton::clicked, this, &SetupDialog::testRadio);
 
     form->addRow(section("CW KEYER", this));
+    // Which engine makes the CW. "Auto" is what a public-build user gets:
+    // a WinKeyer if one is configured below, otherwise the radio's own
+    // keyer if it can key over CAT, otherwise nothing. Auto never picks
+    // the radio while a WinKeyer port is set — enabling the internal
+    // keyer turns the KEY jack into a paddle input, and a WinKeyer still
+    // plugged in there reads as a held dit.
+    keyerSel_ = new QComboBox(this);
+    keyerSel_->addItem("Auto — WinKeyer if set up, else the radio", "auto");
+    keyerSel_->addItem("WinKeyer (USB)", "winkeyer");
+    keyerSel_->addItem("Radio's internal keyer (over CAT)", "radio");
+    keyerSel_->addItem("None", "none");
+    keyerSel_->setToolTip(
+        "The radio's internal keyer needs NOTHING plugged in, but it also\n"
+        "claims the KEY jack as a paddle input — unplug a WinKeyer from\n"
+        "there before selecting it. It cannot follow a speed knob and\n"
+        "cannot tell the console when you touch the paddle.");
+    form->addRow("Keyer", keyerSel_);
     keyerDev_ = new QComboBox(this);
     keyerDev_->setEditable(true);
     // Nothing is preconfigured, so an unset field is blank — and a blank dark
@@ -448,6 +465,9 @@ void SetupDialog::refreshPorts() {
         box->setCurrentText(cur);
     };
     fill(keyerDev_, s.value("cw/port").toString());
+    {   const int i = keyerSel_->findData(
+            s.value("cw/keyer", "auto").toString());
+        keyerSel_->setCurrentIndex(i < 0 ? 0 : i); }
     fill(lpDev_, s.value("meter/device", s.value("lp100a/device")).toString());
     fill(rotorDev_, s.value("rotor/device").toString());
 }
@@ -638,6 +658,7 @@ void SetupDialog::accept() {
                prof == "orion" ? devOrion_
                : connMode_ == "remote" ? devRemote_ : devSerial_);
     s.setValue("cw/port", keyerDev_->currentText().trimmed());
+    s.setValue("cw/keyer", keyerSel_->currentData().toString());
     s.setValue("cw/audioDev", audioDev_->currentText().trimmed());
     s.setValue("spots/host", spotHost_->text().trimmed());
     s.setValue("spots/port", spotPort_->value());

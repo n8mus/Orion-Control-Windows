@@ -129,7 +129,7 @@ void MainWindow::setupCwUi() {
     topLay2_->addWidget(cwBtn);
     connect(cwBtn, &QToolButton::clicked, this, [this] {
         if (!cwWin_) {
-            cwWin_ = new CwWindow(this);
+            cwWin_ = new CwWindow(radio_, this);
             cwWin_->setMyCall(QSettings()
                 .value("station/callsign", "N8EM").toString());
             cwWin_->setHisCall(QString());

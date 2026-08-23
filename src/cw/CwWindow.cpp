@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cw/CwWindow.h"
 #include "cw/CwKeyer.h"
+#include "cw/OrionKeyer.h"
 #include "cw/WinKeyer.h"
+#include "radio/RadioController.h"
 
 #include <QCheckBox>
 #include <algorithm>
@@ -24,6 +26,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QMessageBox>
 #include <QSpinBox>
 #include <QTimer>
 #include <QUdpSocket>
@@ -51,7 +54,8 @@ const QRegularExpression& callRe() {
 }
 } // namespace
 
-CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
+CwWindow::CwWindow(RadioController* radio, QWidget* parent)
+    : QDialog(parent), radio_(radio) {
     setModal(false);
     // Every control sets an explicit text color: widgets with a styled
     // background otherwise keep the SYSTEM palette's text — dark-on-dark
@@ -75,8 +79,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         "QPushButton:checked { background: #8a2727; border-color: #e05d5d;"
         " color: #ffe8e8; }");
 
-    keyer_ = new WinKeyer(this);
-    setWindowTitle(QString("CW — %1").arg(keyer_->caps().name));
+    keyer_ = new NullKeyer(this);   // replaced by applyKeyerChoice()
     auto* g = new QGridLayout(this);
     g->setContentsMargins(12, 10, 12, 10);
     g->setHorizontalSpacing(8);
@@ -547,23 +550,6 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         }
         prevLen_ = t.length();
     });
-    connect(keyer_, &CwKeyer::potChanged, this, [this](int wpm) {
-        const QSignalBlocker b(wpm_);
-        wpm_->setValue(wpm);                 // follow the physical pot
-        keyer_->setSpeed(wpm);
-        QSettings().setValue("cw/wpm", wpm);
-        updateStatus(QString("pot -> %1 WPM").arg(wpm));
-    });
-    connect(keyer_, &CwKeyer::breakIn, this, [this] {
-        sentView_->clear();
-        prevLen_ = 0;
-        line_->clear();
-        updateStatus("paddle break-in");
-    });
-    connect(keyer_, &CwKeyer::busyChanged, this,
-            [this](bool) { updateStatus(); });
-    connect(keyer_, &CwKeyer::errorOccurred, this,
-            [this](const QString& e) { updateStatus(e); });
 
     // Decode-text feed: every decoded chunk is also datagrammed to
     // localhost so a contest logger (Not1MM's CW-decode dock) can mirror
@@ -602,6 +588,8 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         });
     }
 
+    applyKeyerChoice();          // now that the widgets exist
+
     // QDialog makes push buttons auto-default, so Enter in the type-ahead
     // line ALSO "clicked" the dialog's default button — the typed text
     // went out with a macro right behind it (live-found on the air).
@@ -625,6 +613,7 @@ void CwWindow::openKeyer() {
 
 void CwWindow::showEvent(QShowEvent* e) {
     QDialog::showEvent(e);
+    applyKeyerChoice();          // pick up a Station-setup change
     openKeyer();
     line_->setFocus();
     updateStatus();
@@ -776,13 +765,124 @@ void CwWindow::updateRigKeyerLine() {
     // ON while a WinKeyer is wired into the key jack is worth flagging:
     // the radio then reads that jack as a paddle, so a key-down looks
     // like a held dit.
-    if (rigKeyerOn_ > 0 && keyer_->isOpen())
+    // Only a hazard when the WinKeyer is the live backend: on the radio
+    // backend the internal keyer is on BECAUSE we turned it on.
+    if (rigKeyerOn_ > 0 && keyer_ && keyer_->isOpen()
+        && keyerKind_ == QLatin1String("winkeyer"))
         t += "   ⚠ paddle-mode jack — WinKeyer may key continuous dits";
     rigKeyer_->setText(t);
 }
 
 void CwWindow::setRigCwAvailable(bool on) {
     if (rigBox_) rigBox_->setEnabled(on);
+}
+
+// Which engine should be live. "auto" is the public-build path: an Orion
+// owner with no WinKeyer gets working keyboard CW with nothing to
+// configure, which is the whole reason the radio backend exists.
+QString CwWindow::resolveKeyerKind() const {
+    QSettings s;
+    const QString want = s.value("cw/keyer", "auto").toString();
+    const bool haveWk = !s.value("cw/port").toString().isEmpty();
+    // connected() as well as capable: caps describe the radio TYPE, so an
+    // Orion whose port never opened still claims it can key. Offering a
+    // keyer that cannot possibly work reads as a broken console.
+    const bool radioCan =
+        radio_ && radio_->connected() && radio_->caps().catCwKeying;
+    if (want == "auto") {
+        // A configured WinKeyer port means the operator owns one, and it
+        // is very likely sitting in the KEY jack. NEVER auto-enable the
+        // internal keyer behind it — that jack becomes a paddle input and
+        // the WinKeyer's key-down reads as a held dit. Auto picks the
+        // radio only when the operator has told us there is no WinKeyer.
+        if (haveWk) return QStringLiteral("winkeyer");
+        return radioCan ? QStringLiteral("radio") : QStringLiteral("none");
+    }
+    if (want == "radio" && !radioCan) return QStringLiteral("none");
+    if (want == "winkeyer" || want == "radio" || want == "none") return want;
+    return haveWk ? QStringLiteral("winkeyer") : QStringLiteral("none");
+}
+
+void CwWindow::applyKeyerChoice() {
+    const QString want = resolveKeyerKind();
+    if (want == keyerKind_) return;
+    const bool live = !keyerKind_.isEmpty();     // a switch, not startup
+
+    // Confirm before taking the radio's keyer while a WinKeyer is
+    // configured: software can close our serial port but it cannot pull
+    // the plug out of the KEY jack, and that plug is the hazard.
+    if (live && want == "radio"
+        && !QSettings().value("cw/port").toString().isEmpty()) {
+        const auto go = QMessageBox::warning(
+            this, "Switch to the radio's keyer?",
+            "The Orion's internal keyer reads the KEY jack as a PADDLE.\n\n"
+            "Unplug the WinKeyer from the KEY jack first, or the radio will "
+            "see its key-down as a held dit and send continuous dits.",
+            QMessageBox::Ok | QMessageBox::Cancel);
+        if (go != QMessageBox::Ok) return;
+    }
+
+    // Ordering is the safety property. Our WinKeyer must let go of its
+    // port BEFORE the internal keyer is enabled, and the internal keyer
+    // must be off BEFORE we take the port back. close() on each backend
+    // does its half; doing it in this order is what keeps them apart.
+    if (keyer_) {
+        keyer_->close();
+        keyer_->deleteLater();
+        keyer_ = nullptr;
+    }
+    if (want == "winkeyer")   keyer_ = new WinKeyer(this);
+    else if (want == "radio") keyer_ = new OrionKeyer(radio_, this);
+    else                      keyer_ = new NullKeyer(this);
+    keyerKind_ = want;
+    wireKeyer();
+    applyKeyerCaps();
+}
+
+void CwWindow::wireKeyer() {
+    connect(keyer_, &CwKeyer::potChanged, this, [this](int wpm) {
+        const QSignalBlocker b(wpm_);
+        wpm_->setValue(wpm);                 // follow the physical pot
+        keyer_->setSpeed(wpm);
+        QSettings().setValue("cw/wpm", wpm);
+        updateStatus(QString("pot -> %1 WPM").arg(wpm));
+    });
+    connect(keyer_, &CwKeyer::breakIn, this, [this] {
+        sentView_->clear();
+        prevLen_ = 0;
+        line_->clear();
+        updateStatus("paddle break-in");
+    });
+    connect(keyer_, &CwKeyer::busyChanged, this,
+            [this](bool) { updateStatus(); });
+    connect(keyer_, &CwKeyer::errorOccurred, this,
+            [this](const QString& e) { updateStatus(e); });
+}
+
+// The window follows the backend rather than assuming a WinKeyer: a
+// keyer that cannot unsend a character must not offer the send modes
+// built on unsending, and the speed box must not promise a knob that
+// isn't there.
+void CwWindow::applyKeyerCaps() {
+    const CwKeyer::Caps& c = keyer_->caps();
+    setWindowTitle(QString("CW — %1").arg(c.name));
+    const int wpm = wpm_->value();
+    wpm_->setRange(c.wpmMin, c.wpmMax);
+    wpm_->setValue(std::clamp(wpm, c.wpmMin, c.wpmMax));
+    wpm_->setToolTip(c.speedPot
+        ? QStringLiteral("Keying speed. The WinKeyer's physical speed pot "
+                         "also sets this —\nturn the knob and this box "
+                         "follows.")
+        : QString("Keying speed (%1-%2 on this keyer).")
+              .arg(c.wpmMin).arg(c.wpmMax));
+    for (QCheckBox* b : {word_, live_}) {
+        b->setEnabled(c.backspace);
+        if (!c.backspace) b->setChecked(false);
+    }
+    tuneBtn_->setEnabled(c.tune);
+    for (QPushButton* m : mem_) m->setEnabled(c.name != NullKeyer::kCaps.name);
+    updateRigKeyerLine();
+    updateStatus();
 }
 
 void CwWindow::setHisCall(const QString& call) {

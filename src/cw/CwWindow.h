@@ -17,6 +17,7 @@ class QPlainTextEdit;
 namespace ttc {
 
 class CwKeyer;
+class RadioController;
 
 // CW sending window (the CWX idea): type-ahead line, four macro memories,
 // speed control synced both ways with the WinKeyer pot, TUNE and STOP.
@@ -35,7 +36,8 @@ class CwKeyer;
 class CwWindow : public QDialog {
     Q_OBJECT
 public:
-    explicit CwWindow(QWidget* parent = nullptr);
+    explicit CwWindow(RadioController* radio = nullptr,
+                      QWidget* parent = nullptr);
 
     void setMyCall(const QString& call)  { myCall_ = call; }
     // Arms the %c macro AND shows the call in the DX box, so every click
@@ -106,8 +108,16 @@ private:
     void tintDxCall();                   // amber until it looks like a call
     void announceHisCall();              // hand a typed call to cqrlog, once
     void updateRigKeyerLine();           // "rig keyer: off · 29 wpm · wt 119"
+    // Backend selection. Which engine is live is a TX-safety
+    // question, not a preference: see applyKeyerChoice().
+    QString resolveKeyerKind() const;
+    void applyKeyerChoice();
+    void wireKeyer();
+    void applyKeyerCaps();
 
-    CwKeyer* keyer_ = nullptr;      // WinKeyer today; radio keyer next
+    CwKeyer* keyer_ = nullptr;      // WinKeyer, Orion keyer, or none
+    QString keyerKind_;             // "winkeyer" | "radio" | "none"
+    RadioController* radio_ = nullptr;
     QUdpSocket* daemon_ = nullptr;       // cwdaemon-protocol server
     QUdpSocket* feed_ = nullptr;         // decode-text feed (localhost UDP)
     quint16 feedPort_ = 2336;            // cw/feedPort — Not1MM dock listens
