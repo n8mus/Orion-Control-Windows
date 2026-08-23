@@ -358,13 +358,15 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     // carries the 200 ms poll rotation, and the Orion silently drops
     // commands when its parser is busy.
     auto rigSlider = [this, rg](int row, int col, const char* cap,
-                                const char* tip, int lo, int hi,
+                                const char* tip, int lo, int hi, int snap,
                                 QSlider** out, QLabel** val,
                                 void (CwWindow::*sig)(int)) {
         auto* c = new QLabel(cap, rigBox_);
         c->setToolTip(tip);
         auto* s = new QSlider(Qt::Horizontal, rigBox_);
         s->setRange(lo, hi);
+        s->setSingleStep(snap);
+        s->setPageStep(snap * 5);
         s->setToolTip(tip);
         auto* v = new QLabel("--", rigBox_);
         v->setFixedWidth(42);
@@ -376,7 +378,21 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         auto* t = new QTimer(this);
         t->setSingleShot(true);
         t->setInterval(60);
-        connect(s, &QSlider::valueChanged, this, [v, t](int nv) {
+        connect(s, &QSlider::valueChanged, this, [s, v, t, snap, lo, hi](int nv) {
+            // Snap to the radio's own resolution while dragging. The Orion
+            // tunes its sidetone in 10 Hz steps like the front panel, so a
+            // slider offering 553 was offering a number the rig can't take
+            // (operator-found). A readback is shown as-is — display the
+            // truth even when it isn't on the grid.
+            if (snap > 1) {
+                const int q = std::clamp(((nv + snap / 2) / snap) * snap,
+                                         lo, hi);
+                if (q != nv) {
+                    const QSignalBlocker b(s);
+                    s->setValue(q);
+                    nv = q;
+                }
+            }
             v->setText(QString::number(nv));
             if (!t->isActive()) t->start();        // leading edge + latest
         });
@@ -389,24 +405,24 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
               "How loud the radio's CW sidetone is in your ears (*CV).\n"
               "The radio's own monitor level — nothing to do with the\n"
               "WinKeyer, and it applies however the rig is keyed.",
-              0, 100, &rigVol_, &rigVolVal_,
+              0, 100, 1, &rigVol_, &rigVolVal_,
               &CwWindow::rigSidetoneVolChanged);
     rigSlider(0, 1, "PITCH",
               "Sidetone pitch in Hz (*CT). The console follows this: the\n"
               "reader, zero-beat and the Hz readout all retune to whatever\n"
               "the radio says, instead of assuming 550.",
-              300, 1200, &rigPitch_, &rigPitchVal_,
+              300, 1200, 10, &rigPitch_, &rigPitchVal_,
               &CwWindow::rigSidetonePitchChanged);
     rigSlider(1, 0, "QSK",
               "Break-in delay (*CQ): how long the radio stays in transmit\n"
               "after the last element before it lets you hear again.\n"
               "Lower = hear between elements; higher = fewer relay flips.",
-              0, 100, &rigQsk_, &rigQskVal_,
+              0, 100, 1, &rigQsk_, &rigQskVal_,
               &CwWindow::rigQskDelayChanged);
     rigSlider(1, 1, "RISE",
               "CW envelope attack/decay in ms (*CD). Lower is crisper and\n"
               "wider on the band; higher is softer and easier on the ears.",
-              3, 10, &rigRise_, &rigRiseVal_,
+              3, 10, 1, &rigRise_, &rigRiseVal_,
               &CwWindow::rigAttackDecayChanged);
     rigKeyer_ = new QLabel(this);
     rigKeyer_->setStyleSheet("color: #7f93a8; font-size: 13px;");
