@@ -20,7 +20,12 @@
 #include <QUdpSocket>
 #include <QSpinBox>
 #include <QThread>
+#include <QGuiApplication>
+#include <QPushButton>
+#include <QScreen>
+#include <QScrollArea>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace ttc {
 
@@ -69,7 +74,21 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
         "QPushButton:hover { background: #2a3644; }");
 
     QSettings s;
-    auto* lay = new QVBoxLayout(this);
+    // The form is taller than a 1080p screen once every section is in it,
+    // and a QDialog does not scroll: OK ended up BELOW the desktop panel
+    // where it could not be clicked at all, so every change was silently
+    // discarded (live-found — the operator could not switch keyers and
+    // there was no symptom except "nothing happened"). Scroll the form and
+    // keep the buttons outside it, always reachable.
+    auto* outer = new QVBoxLayout(this);
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* page = new QWidget(scroll);
+    scroll->setWidget(page);
+    outer->addWidget(scroll, 1);
+    auto* lay = new QVBoxLayout(page);
     auto* form = new QFormLayout;
     form->setLabelAlignment(Qt::AlignRight);
     lay->addLayout(form);
@@ -308,12 +327,26 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
 
     auto* bb = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    lay->addWidget(bb);
+    bb->button(QDialogButtonBox::Ok)->setDefault(true);   // Enter also saves
+    outer->addWidget(bb);                                 // outside the scroll
     connect(bb, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     refreshPorts();
     applyConnMode(activeProfile());      // fills the radio device row per profile
+
+    // Open at the form's natural size, but never taller than the screen
+    // it has to fit on (panel included) — past that the scroll area takes
+    // over. Ask the PAGE, not the dialog: a QScrollArea's own size hint
+    // says nothing about what is inside it, which sized this at 562x416
+    // and made the operator scroll for everything.
+    if (QScreen* sc = QGuiApplication::primaryScreen()) {
+        const QRect avail = sc->availableGeometry();
+        const QSize want = page->sizeHint();
+        const int chrome = bb->sizeHint().height() + 24;
+        resize(std::min(want.width() + 24, avail.width() - 40),
+               std::min(want.height() + chrome, int(avail.height() * 0.92)));
+    }
 }
 
 // Probe the selected wattmeter once and decode what came back. The LP-100A
