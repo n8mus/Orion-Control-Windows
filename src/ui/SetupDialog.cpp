@@ -20,6 +20,8 @@
 #include <QUdpSocket>
 #include <QSpinBox>
 #include <QThread>
+#include <QAbstractSpinBox>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QPushButton>
 #include <QScreen>
@@ -63,6 +65,21 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     setWindowTitle("Station setup");
     setStyleSheet(
         "QDialog { background: #141b24; }"
+        // The scrolled page is a plain QWidget, not the QDialog, so the
+        // rule above misses it and it falls back to the light system
+        // palette — light-gray labels on white (live-found). Name it and
+        // paint it, and dress the scrollbar to match while we are here.
+        "#setupPage { background: #141b24; }"
+        "QScrollArea { background: #141b24; border: none; }"
+        "QScrollBar:vertical { background: #141b24; width: 12px;"
+        " margin: 0; }"
+        "QScrollBar::handle:vertical { background: #2a3644;"
+        " border-radius: 5px; min-height: 28px; }"
+        "QScrollBar::handle:vertical:hover { background: #3a4a5e; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+        " height: 0; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+        " background: #141b24; }"
         "QLabel { color: #c8d4e0; font-size: 14px; }"
         "QLineEdit, QComboBox, QSpinBox { background: #1c2430; color: #c8d4e0;"
         " border: 1px solid #2a3644; border-radius: 3px; padding: 4px 8px; }"
@@ -86,6 +103,7 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto* page = new QWidget(scroll);
+    page->setObjectName("setupPage");
     scroll->setWidget(page);
     outer->addWidget(scroll, 1);
     auto* lay = new QVBoxLayout(page);
@@ -335,6 +353,18 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     refreshPorts();
     applyConnMode(activeProfile());      // fills the radio device row per profile
 
+    // Inside a scroll area the wheel lands on whatever control is under the
+    // pointer and SILENTLY EDITS it — the operator went to scroll the page
+    // and changed his DX cluster port instead, with no idea which row had
+    // moved. Only a control the operator has deliberately focused takes the
+    // wheel; everything else lets it through to the page.
+    for (QWidget* w : findChildren<QWidget*>()) {
+        if (qobject_cast<QComboBox*>(w) || qobject_cast<QAbstractSpinBox*>(w)) {
+            w->setFocusPolicy(Qt::StrongFocus);
+            w->installEventFilter(this);
+        }
+    }
+
     // Open at the form's natural size, but never taller than the screen
     // it has to fit on (panel included) — past that the scroll area takes
     // over. Ask the PAGE, not the dialog: a QScrollArea's own size hint
@@ -347,6 +377,14 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
         resize(std::min(want.width() + 24, avail.width() - 40),
                std::min(want.height() + chrome, int(avail.height() * 0.92)));
     }
+}
+
+bool SetupDialog::eventFilter(QObject* o, QEvent* e) {
+    if (e->type() == QEvent::Wheel) {
+        auto* w = qobject_cast<QWidget*>(o);
+        if (w && !w->hasFocus()) { e->ignore(); return true; }
+    }
+    return QDialog::eventFilter(o, e);
 }
 
 // Probe the selected wattmeter once and decode what came back. The LP-100A

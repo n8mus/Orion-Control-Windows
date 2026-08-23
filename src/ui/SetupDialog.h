@@ -29,6 +29,10 @@ public:
 
     void accept() override;              // persist everything, stamp done
 
+protected:
+    // Wheel over a combo/spin box must scroll the page, not edit the value.
+    bool eventFilter(QObject* o, QEvent* e) override;
+
 private:
     void refreshPorts();
     // Enumerated serial ports, each offered under a stable
