@@ -69,6 +69,7 @@ add_executable(tentec-console
   src/util/WatchList.cpp        src/util/WatchList.h
   src/cw/WinKeyer.cpp           src/cw/WinKeyer.h
                                 src/cw/CwKeyer.h
+  src/cw/OrionKeyer.cpp         src/cw/OrionKeyer.h
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
   src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
   src/cw/FldigiCwEngine.cpp     src/cw/FldigiCwEngine.h
@@ -169,6 +170,14 @@ add_executable(skimreplay EXCLUDE_FROM_ALL
   resources/resources.qrc)
 target_include_directories(skimreplay PRIVATE src)
 target_link_libraries(skimreplay PRIVATE Qt6::Core Qt6::Gui)
+
+add_executable(keyertest EXCLUDE_FROM_ALL
+  tests/keyertest.cpp
+  src/cw/OrionKeyer.cpp src/cw/OrionKeyer.h
+  src/cw/CwKeyer.h                     # Q_OBJECT, no .cpp -> list for moc
+  src/radio/RadioController.h)
+target_include_directories(keyertest PRIVATE src)
+target_link_libraries(keyertest PRIVATE Qt6::Core)
 
 add_executable(cwtest EXCLUDE_FROM_ALL
   tests/cwtest.cpp

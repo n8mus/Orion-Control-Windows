@@ -25,6 +25,7 @@ struct CapabilityProfile {
                                      // Omni VII: only in REMOTE (Ethernet).
     bool  catCwControls    = false;  // CW & keyer group (sidetone level/pitch,
                                      // QSK delay, envelope). Orion only.
+    bool  catCwKeying      = false;  // can key CW over CAT ("/c"). Orion v3.
 };
 
 // Radio-agnostic control surface + report signals. Drivers override what
@@ -113,6 +114,16 @@ public:
     // than just filling a slider, so it is worth polling far more often
     // than the rest — one cheap query instead of seven.
     virtual void queryCwPitch() {}
+
+    // CW keying over CAT. Operator-verified on the Orion (v3 fw) 2026-08-23:
+    // ONE character per command ("/abc" sends only 'a'), the radio buffers
+    // what it is given, and *TU does NOT abort a send in flight — so a
+    // caller must release characters one at a time or it loses the ability
+    // to stop at all. Sending also starves the link (6/20 queries answered
+    // during a 10-character burst), which is the other reason to pace.
+    virtual void sendCwChar(char c) {}
+    virtual void setCwKeyerEnabled(bool on) {}
+    virtual void setCwKeyerSpeed(int wpm) {}
 
     // Audio outputs.
     virtual void setAfVolume(Rx, int /*pct*/) {}

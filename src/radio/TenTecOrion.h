@@ -88,6 +88,11 @@ public:
     void setCwAttackDecay(int ms);                // *CD<3-10> ms
     void queryCw();                               // ?CV/?CT/?CQ/?CD + ?CS/?CW/?CK
     void queryCwPitch();                          // ?CT alone (polled often)
+    // CW keying. One char per command; the radio buffers and cannot be
+    // aborted, so OrionKeyer paces the release rather than dumping text.
+    void sendCwChar(char c) override;             // /c
+    void setCwKeyerEnabled(bool on) override;     // *CK<0/1>
+    void setCwKeyerSpeed(int wpm) override;       // *CS<10-60>
 
     // VFO assignment: which VFO drives the main RX / sub RX / transmitter.
     // Letters 'A'/'B' ('N' = unassigned for sub/tx). RX on A with TX on B is

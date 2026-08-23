@@ -23,6 +23,7 @@ TenTecOrion::TenTecOrion(QObject* parent) : RadioController(parent) {
     caps_.dualReceiver     = true;
     caps_.needsHwHandshake = false;
     caps_.catCwControls    = true;    // whole CW group answers (live 2026-08-23)
+    caps_.catCwKeying      = true;    // "/c" keys (ear-verified 2026-08-23)
 
     connect(&serial_, &SerialPort::lineReceived, this, &TenTecOrion::onLine);
 }
@@ -191,6 +192,11 @@ void TenTecOrion::setCwSidetonePitch(int hz){ send("*CT" + QByteArray::number(cl
 void TenTecOrion::setCwQskDelay(int val)    { send("*CQ" + QByteArray::number(clampi(val, 0, 100))); }
 void TenTecOrion::setCwAttackDecay(int ms)  { send("*CD" + QByteArray::number(clampi(ms, 3, 10))); }
 void TenTecOrion::queryCwPitch()         { send("?CT"); }
+void TenTecOrion::sendCwChar(char c)     { send(QByteArray("/") + c); }
+void TenTecOrion::setCwKeyerEnabled(bool on) { send(on ? "*CK1" : "*CK0"); }
+void TenTecOrion::setCwKeyerSpeed(int wpm)   {
+    send("*CS" + QByteArray::number(clampi(wpm, 10, 60)));
+}
 
 void TenTecOrion::queryCw() {
     send("?CV");
