@@ -81,6 +81,10 @@ void MainWindow::setupLogUi() {
     connect(logBtn, &QToolButton::clicked, this, [this] {
         logUdp_->writeDatagram("CQRNEWQSO", QHostAddress::LocalHost,
             quint16(QSettings().value("log/port", 2334).toInt()));
+        // "Fresh QSO" has to mean fresh on BOTH sides: cqrlog's form goes
+        // blank, so the console's DX box can't keep pointing at the
+        // station just worked (operator had to clear it by hand).
+        if (cwWin_) cwWin_->setHisCall(QString());
         statusBar()->showMessage("new QSO in cqrlog", 2500);
     });
     // Spot click -> send the call (and POTA park/grid) to cqrlog's New QSO.

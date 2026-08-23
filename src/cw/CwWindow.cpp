@@ -192,11 +192,17 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         hisCall_ = up;
         tintDxCall();
     });
+    // Three ways a typed call reaches cqrlog, because there is no ONE
+    // gesture the operator always makes: Enter, leaving the box (clicking
+    // CW1-4 takes focus, so the normal type-then-send flow fires this),
+    // and spending %c on the air. announceHisCall() de-dupes, so all
+    // three firing for one call still sends a single datagram.
     connect(dxCall_, &QLineEdit::returnPressed, this, [this] {
-        if (hisCall_.isEmpty()) return;
-        emit hisCallEntered(hisCall_);
+        announceHisCall();
         line_->setFocus();               // keyboard back where CW is typed
     });
+    connect(dxCall_, &QLineEdit::editingFinished, this,
+            [this] { announceHisCall(); });
 
     // Rows 4-5: CW reader — decoded text from the SDR passband (no audio
     // cable; the decoder listens exactly where CW zap parks the carrier).
@@ -646,9 +652,19 @@ void CwWindow::keyPressEvent(QKeyEvent* e) {
 
 void CwWindow::setHisCall(const QString& call) {
     hisCall_ = call.trimmed().toUpper();
+    // A call that arrived by CLICK was already handed to cqrlog by the
+    // owner of that click — mark it pushed so spending %c doesn't send a
+    // second lookup for the same station.
+    pushedCall_ = hisCall_;
     if (!dxCall_) return;
     dxCall_->setText(hisCall_);          // textEdited only fires on typing
     tintDxCall();
+}
+
+void CwWindow::announceHisCall() {
+    if (hisCall_.isEmpty() || hisCall_ == pushedCall_) return;
+    pushedCall_ = hisCall_;
+    emit hisCallEntered(hisCall_);
 }
 
 void CwWindow::tintDxCall() {
@@ -675,6 +691,11 @@ void CwWindow::sendText(const QString& t) {
         dxCall_->setFocus();
         return;
     }
+    // Sending his call ON THE AIR is the moment the QSO is real — make
+    // sure cqrlog has it even if the box never lost focus (keyboard-only
+    // operating: type the call, hit the macro key, never touch the mouse).
+    if (t.contains(QStringLiteral("%C"), Qt::CaseInsensitive))
+        announceHisCall();
     emit txImminent();
     openKeyer();
     const QString out = substitute(t).simplified();

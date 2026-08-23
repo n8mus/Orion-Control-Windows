@@ -62,9 +62,10 @@ signals:
     // Double-click on a callsign-shaped token in the decode pane: the
     // fldigi move — copy says who they are, one gesture logs them.
     void callDoubleClicked(const QString& call);
-    // Enter in the DX box: a call typed by hand rides the same rails as a
-    // clicked one (cqrlog New QSO prefill). Not per-keystroke — the
-    // operator says when the call is finished.
+    // A hand-typed DX call is finished: it rides the same rails as a
+    // clicked one (cqrlog New QSO prefill). Fires when the operator leaves
+    // the box, presses Enter, or spends %c on the air — never per
+    // keystroke, and never twice for the same call.
     void hisCallEntered(const QString& call);
     // Decode-engine adjustments changed (engine, som, deep, attack, decay).
     void rxDecodeConfigChanged(bool eng, bool som, bool deep, int atk,
@@ -85,6 +86,7 @@ private:
     void editMemory(int i);
     void updateStatus(const QString& s = QString());
     void tintDxCall();                   // amber until it looks like a call
+    void announceHisCall();              // hand a typed call to cqrlog, once
 
     WinKeyer* wk_ = nullptr;
     QUdpSocket* daemon_ = nullptr;       // cwdaemon-protocol server
@@ -114,6 +116,7 @@ private:
     double rxPitchVal_ = -1.0;
     void updateRxInfo();                 // compose "18 WPM · 547 Hz"
     QString myCall_, hisCall_;
+    QString pushedCall_;                 // last call handed to cqrlog
     int prevLen_ = 0;                    // live-mode: chars already streamed
 };
 
