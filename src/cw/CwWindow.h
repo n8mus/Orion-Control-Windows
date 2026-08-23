@@ -61,6 +61,10 @@ public slots:
     void showRigKeyerWeight(int pct);    // the WinKeyer owns our speed
     void showRigKeyerEnabled(bool on);
     void setRigCwAvailable(bool on);     // gray out on a radio without them
+    // Re-read the keyer choice (Station setup just changed it). Applying
+    // only on the next window open was a trap: the operator selects the
+    // radio's keyer, nothing changes, and there is no way to tell why.
+    void reloadKeyer();
 
 signals:
     // True while the window is visible with RX decode checked — gates the

@@ -803,6 +803,11 @@ QString CwWindow::resolveKeyerKind() const {
     return haveWk ? QStringLiteral("winkeyer") : QStringLiteral("none");
 }
 
+void CwWindow::reloadKeyer() {
+    applyKeyerChoice();
+    if (isVisible()) openKeyer();       // take the new engine into service
+}
+
 void CwWindow::applyKeyerChoice() {
     const QString want = resolveKeyerKind();
     if (want == keyerKind_) return;

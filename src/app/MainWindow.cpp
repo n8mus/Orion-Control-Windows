@@ -3421,10 +3421,15 @@ void MainWindow::openSetup() {
         (cwWin_ && cwWin_->keyerOpen())
             ? QSettings().value("cw/port").toString() : QString();
     SetupDialog dlg(radioDevUsed_, keyerDev, meterDevUsed_, radioUp_, this);
-    if (dlg.exec() == QDialog::Accepted)
+    if (dlg.exec() == QDialog::Accepted) {
+        // The keyer choice applies NOW: it is the one setting whose whole
+        // point is "make CW come out of a different thing", and silently
+        // deferring it reads as the selector doing nothing.
+        if (cwWin_) cwWin_->reloadKeyer();
         statusBar()->showMessage(
-            "setup saved — radio, keyer and cluster changes apply on the "
-            "next launch", 8000);
+            "setup saved — the keyer applies now; radio and cluster "
+            "changes apply on the next launch", 8000);
+    }
 }
 
 MainWindow::~MainWindow() {
