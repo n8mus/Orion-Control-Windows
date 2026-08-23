@@ -49,6 +49,12 @@ public:
 
     virtual void setSpeed(int wpm) = 0;
     virtual void send(const QString& text) = 0;
+    // Send two letters bonded into ONE character (AR, SK, BT, KN, AS...).
+    // Default is best-effort: two separate letters, which is audibly wrong
+    // for a real prosign but is what a keyer with no merge can manage.
+    virtual void sendProsign(char a, char b) {
+        send(QString(QChar(a)) + QChar(b));
+    }
     virtual void stop() = 0;             // dump everything, key up NOW
     virtual void tune(bool on) = 0;
     virtual void backspace() = 0;        // no-op unless caps().backspace

@@ -21,6 +21,7 @@
 #include <QRegularExpression>
 #include <QTextBlock>
 #include <QLabel>
+#include <QHash>
 #include <QMenu>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -582,7 +583,7 @@ CwWindow::CwWindow(RadioController* radio, QWidget* parent)
                 } else {
                     emit txImminent();
                     openKeyer();             // cqrlog may key before we show
-                    keyer_->send(QString::fromLatin1(d).trimmed());
+                    sendDaemonText(QString::fromLatin1(d).trimmed());
                 }
             }
         });
@@ -755,6 +756,32 @@ void CwWindow::showRigSidetonePitch(int hz) {
 void CwWindow::showRigKeyerSpeed(int wpm)  { rigKeyerWpm_ = wpm; updateRigKeyerLine(); }
 void CwWindow::showRigKeyerWeight(int pct) { rigKeyerWt_ = pct;  updateRigKeyerLine(); }
 void CwWindow::showRigKeyerEnabled(bool on){ rigKeyerOn_ = on;   updateRigKeyerLine(); }
+
+// Text arriving on the cwdaemon port, in cwdaemon's prosign convention.
+// It is NOT the keyer's convention and the two collide: cwdaemon's '<' is
+// SK where the WinKeyer's own '<' is AR, and cwdaemon's '*' (AR) is a
+// character the keyer maps to null and silently drops. Passed through
+// raw — as it was — cqrlog's AR vanished and its SK came out as AR.
+//
+// Translate here, at the boundary where the convention is known, and let
+// the backend decide how to key each prosign (0x1B merge on a WinKeyer,
+// the rig's own character on the Orion). Text typed into THIS window is
+// untouched and still uses the live keyer's own characters, which the
+// type-ahead tooltip lists.
+void CwWindow::sendDaemonText(const QString& t) {
+    static const QHash<QChar, QString> kCwDaemon = {
+        {'*', "AR"}, {'=', "BT"}, {'<', "SK"}, {'(', "KN"},
+        {'!', "SN"}, {'&', "AS"}, {'>', "BK"},
+    };
+    QString run;
+    for (QChar c : t) {
+        const QString ps = kCwDaemon.value(c);
+        if (ps.isEmpty()) { run += c; continue; }
+        if (!run.isEmpty()) { keyer_->send(run); run.clear(); }
+        keyer_->sendProsign(ps[0].toLatin1(), ps[1].toLatin1());
+    }
+    if (!run.isEmpty()) keyer_->send(run);
+}
 
 void CwWindow::updateRigKeyerLine() {
     if (!rigKeyer_) return;

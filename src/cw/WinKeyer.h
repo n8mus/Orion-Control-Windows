@@ -33,6 +33,7 @@ public:
     int  speed() const { return wpm_; }
     void setPotRange(int minWpm, int maxWpm);  // 0x05 min range 0
     void send(const QString& text) override;   // buffered ASCII (uppercased)
+    void sendProsign(char a, char b) override; // 0x1B merge
     void stop() override;                  // 0x0A: dump the buffer, key up
     void tune(bool on) override;           // 0x0B: steady carrier
     void backspace() override;             // 0x08: unsend last buffered char

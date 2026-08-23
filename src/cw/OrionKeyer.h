@@ -66,6 +66,7 @@ public:
 
     void setSpeed(int wpm) override;
     void send(const QString& text) override;
+    void sendProsign(char a, char b) override;
     void stop() override;
     void tune(bool on) override;
     void backspace() override;

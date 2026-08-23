@@ -181,6 +181,26 @@ int main(int argc, char** argv) {
                               : "prosign ^ (KN) is sendable");
         check(OrionKeyer::charMs('$', 20) > OrionKeyer::charMs('+', 20),
               "SK (6 elements) outlasts AR (5)");
+
+        // sendProsign: the rig has no merge command, so the four in its
+        // own table become ONE character and the rest fall back to two.
+        StubRadio r3; OrionKeyer k3(&r3);
+        k3.open(); k3.setSpeed(20);
+        k3.sendProsign('A', 'R'); pump(1200);
+        check(std::string(r3.chars.begin(), r3.chars.end()) == "+",
+              "AR becomes the rig's single '+' character");
+        r3.chars.clear();
+        k3.sendProsign('S', 'K'); pump(1200);
+        check(std::string(r3.chars.begin(), r3.chars.end()) == "$",
+              "SK becomes '$'");
+        r3.chars.clear();
+        k3.sendProsign('K', 'N'); pump(1200);
+        check(std::string(r3.chars.begin(), r3.chars.end()) == "^",
+              "KN becomes '^'");
+        r3.chars.clear();
+        k3.sendProsign('S', 'N'); pump(2000);
+        check(std::string(r3.chars.begin(), r3.chars.end()) == "SN",
+              "SN has no rig character, so falls back to two letters");
         k2.close();
         check(!r2.keyerOn, "close() puts the internal keyer back off");
     }

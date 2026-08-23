@@ -158,6 +158,19 @@ void WinKeyer::send(const QString& text) {
     if (!busy_) { busy_ = true; emit busyChanged(true); }
 }
 
+// 0x1B bonds the next two characters into one prosign (WK3 datasheet
+// p15, "Merge Letters", unchanged since WK1). Always merge rather than
+// leaning on the keyer's native ASCII table: that table differs between
+// WK2 and WK3, and the cwdaemon convention our clients speak disagrees
+// with it anyway ('<' is SK to cwdaemon, AR to the keyer).
+void WinKeyer::sendProsign(char a, char b) {
+    if (!open_) return;
+    const char cmd[] = {0x1B, char(QChar(a).toUpper().toLatin1()),
+                              char(QChar(b).toUpper().toLatin1())};
+    ser_->write(cmd, 3);
+    if (!busy_) { busy_ = true; emit busyChanged(true); }
+}
+
 void WinKeyer::stop() {
     if (!open_) return;
     const char cmd[] = {0x0A};

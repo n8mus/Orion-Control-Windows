@@ -108,6 +108,19 @@ void OrionKeyer::send(const QString& text) {
     if (!timer_->isActive()) releaseNext();      // start immediately
 }
 
+// The rig has no merge command, but its table already contains four
+// prosigns as single characters. Anything else can only go as two
+// letters — audibly wrong for AS and SN, though BK is sent as two
+// letters in practice anyway.
+void OrionKeyer::sendProsign(char a, char b) {
+    static const QHash<QString, QChar> kNative = {
+        {"AR", '+'}, {"SK", '$'}, {"KN", '^'}, {"AA", '*'}, {"BT", '='},
+    };
+    const QString pair = (QString(QChar(a)) + QChar(b)).toUpper();
+    const QChar native = kNative.value(pair);
+    send(native.isNull() ? pair : QString(native));
+}
+
 void OrionKeyer::releaseNext() {
     if (pending_.isEmpty()) {
         if (busy_) { busy_ = false; emit busyChanged(false); }

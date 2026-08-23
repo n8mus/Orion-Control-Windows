@@ -111,6 +111,7 @@ private:
     void updateStatus(const QString& s = QString());
     void tintDxCall();                   // amber until it looks like a call
     void announceHisCall();              // hand a typed call to cqrlog, once
+    void sendDaemonText(const QString& t);  // cwdaemon prosign convention
     void updateRigKeyerLine();           // "rig keyer: off · 29 wpm · wt 119"
     // Backend selection. Which engine is live is a TX-safety
     // question, not a preference: see applyKeyerChoice().
