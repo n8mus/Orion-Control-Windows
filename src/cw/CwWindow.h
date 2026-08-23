@@ -10,6 +10,7 @@ class QPushButton;
 class QCheckBox;
 class QComboBox;
 class QSlider;
+class QGroupBox;
 class QUdpSocket;
 class QPlainTextEdit;
 
@@ -48,6 +49,17 @@ public slots:
     void setRxWpm(int wpm);
     void setRxPitch(double hz);          // fldigi-equivalent audio pitch
 
+    // The radio's own CW settings, arriving from the CAT poll. Each one
+    // moves its slider without echoing a set back down the link.
+    void showRigSidetoneVol(int pct);
+    void showRigSidetonePitch(int hz);
+    void showRigQskDelay(int val);
+    void showRigAttackDecay(int ms);
+    void showRigKeyerSpeed(int wpm);     // the RADIO's keyer, read-only —
+    void showRigKeyerWeight(int pct);    // the WinKeyer owns our speed
+    void showRigKeyerEnabled(bool on);
+    void setRigCwAvailable(bool on);     // gray out on a radio without them
+
 signals:
     // True while the window is visible with RX decode checked — gates the
     // IQ-side decoder so it costs nothing when the window is closed.
@@ -72,6 +84,12 @@ signals:
                                int dcy);
     // Noise squelch changed (fldigi metric gate, 0..40 on the SQL slider).
     void rxSquelchChanged(int sql);
+    // Radio-side CW settings the operator dragged. Throttled — the CAT
+    // link is shared with the poll rotation, so a drag must not flood it.
+    void rigSidetoneVolChanged(int pct);
+    void rigSidetonePitchChanged(int hz);
+    void rigQskDelayChanged(int val);
+    void rigAttackDecayChanged(int ms);
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -87,6 +105,7 @@ private:
     void updateStatus(const QString& s = QString());
     void tintDxCall();                   // amber until it looks like a call
     void announceHisCall();              // hand a typed call to cqrlog, once
+    void updateRigKeyerLine();           // "rig keyer: off · 29 wpm · wt 119"
 
     WinKeyer* wk_ = nullptr;
     QUdpSocket* daemon_ = nullptr;       // cwdaemon-protocol server
@@ -115,6 +134,16 @@ private:
     int rxWpmVal_ = 0;
     double rxPitchVal_ = -1.0;
     void updateRxInfo();                 // compose "18 WPM · 547 Hz"
+    // The radio's own CW settings over CAT (Orion *CV/*CT/*CQ/*CD). Rig-
+    // side, so they apply with the WinKeyer doing the keying.
+    QGroupBox* rigBox_    = nullptr;
+    QSlider* rigVol_      = nullptr;     QLabel* rigVolVal_   = nullptr;
+    QSlider* rigPitch_    = nullptr;     QLabel* rigPitchVal_ = nullptr;
+    QSlider* rigQsk_      = nullptr;     QLabel* rigQskVal_   = nullptr;
+    QSlider* rigRise_     = nullptr;     QLabel* rigRiseVal_  = nullptr;
+    QLabel*  rigKeyer_    = nullptr;     // the radio's keyer, read-only
+    int rigKeyerWpm_ = 0, rigKeyerWt_ = 0, rigKeyerOn_ = -1;
+
     QString myCall_, hisCall_;
     QString pushedCall_;                 // last call handed to cqrlog
     int prevLen_ = 0;                    // live-mode: chars already streamed

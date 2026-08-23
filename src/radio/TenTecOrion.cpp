@@ -22,6 +22,7 @@ TenTecOrion::TenTecOrion(QObject* parent) : RadioController(parent) {
     caps_.continuousFilter = true;    // the flagship: smooth passband drag
     caps_.dualReceiver     = true;
     caps_.needsHwHandshake = false;
+    caps_.catCwControls    = true;    // whole CW group answers (live 2026-08-23)
 
     connect(&serial_, &SerialPort::lineReceived, this, &TenTecOrion::onLine);
 }
@@ -183,6 +184,22 @@ void TenTecOrion::queryTxAudio() {
     send("?UM");                                   // volume query is speculative
 }
 
+// CW & keyer group. Out-of-range sets are REJECTED by the radio rather
+// than clamped (same trap as the manual notch), so clamp on this side.
+void TenTecOrion::setCwSidetoneVol(int pct) { send("*CV" + QByteArray::number(clampi(pct, 0, 100))); }
+void TenTecOrion::setCwSidetonePitch(int hz){ send("*CT" + QByteArray::number(clampi(hz, 300, 1200))); }
+void TenTecOrion::setCwQskDelay(int val)    { send("*CQ" + QByteArray::number(clampi(val, 0, 100))); }
+void TenTecOrion::setCwAttackDecay(int ms)  { send("*CD" + QByteArray::number(clampi(ms, 3, 10))); }
+void TenTecOrion::queryCw() {
+    send("?CV");
+    send("?CT");
+    send("?CQ");
+    send("?CD");
+    send("?CS");                                   // radio's own keyer, shown
+    send("?CW");                                   // read-only next to ours
+    send("?CK");
+}
+
 void TenTecOrion::querySMeter()          { send("?S"); }
 void TenTecOrion::queryAgc(Rx rx)        { send(QByteArray("?R") + rxLetter(rx) + "A"); }
 void TenTecOrion::queryRfGain(Rx rx)     { send(QByteArray("?R") + rxLetter(rx) + "G"); }
@@ -337,6 +354,24 @@ void TenTecOrion::onLine(const QByteArray& line) {
             emit monitorReported(static_cast<int>(v));
         else if (line[2] == 'T' && (line[3] == '0' || line[3] == '1'))
             emit tunerReported(line[3] == '1');
+        return;
+    }
+    if (line[1] == 'C' && line.size() >= 4) {         // CW group @C<V/T/Q/D/S/W/K>
+        if (line[2] == 'V' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
+            emit cwSidetoneVolReported(static_cast<int>(v));
+        else if (line[2] == 'T' && parseLeadingInt(line.mid(3), v)
+                 && v >= 300 && v <= 1200)
+            emit cwSidetonePitchReported(static_cast<int>(v));
+        else if (line[2] == 'Q' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
+            emit cwQskDelayReported(static_cast<int>(v));
+        else if (line[2] == 'D' && parseLeadingInt(line.mid(3), v) && v >= 3 && v <= 10)
+            emit cwAttackDecayReported(static_cast<int>(v));
+        else if (line[2] == 'S' && parseLeadingInt(line.mid(3), v) && v >= 10 && v <= 60)
+            emit cwKeyerSpeedReported(static_cast<int>(v));
+        else if (line[2] == 'W' && parseLeadingInt(line.mid(3), v) && v >= 50 && v <= 150)
+            emit cwKeyerWeightReported(static_cast<int>(v));
+        else if (line[2] == 'K' && (line[3] == '0' || line[3] == '1'))
+            emit cwKeyerEnabledReported(line[3] == '1');
         return;
     }
     if (line[1] == 'K' && line.size() >= 6) {         // @KV<m><s><t> / @KA<1><2><rx>

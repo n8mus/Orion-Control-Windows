@@ -75,6 +75,19 @@ public:
     void setTunerEnabled(bool on);                // *TT<0/1> (internal tuner)
     void startTune();                             // *TTT (tune cycle)
 
+    // CW & keyer group (prg guide p24; whole group set+query live-verified
+    // 2026-08-23 — an older note claiming ?C* is silently ignored was
+    // wrong). These four are radio-side and apply however the rig is
+    // keyed, so they matter with the WinKeyer doing the sending. NOT
+    // exposed: *CK keyer on/off, *CS speed, *CW weighting — enabling the
+    // internal keyer re-reads the key jack as a paddle and would fight
+    // the WinKeyer wired into it.
+    void setCwSidetoneVol(int pct);               // *CV<0-100>
+    void setCwSidetonePitch(int hz);              // *CT<300-1200>
+    void setCwQskDelay(int val);                  // *CQ<0-100>
+    void setCwAttackDecay(int ms);                // *CD<3-10> ms
+    void queryCw();                               // ?CV/?CT/?CQ/?CD + ?CS/?CW/?CK
+
     // VFO assignment: which VFO drives the main RX / sub RX / transmitter.
     // Letters 'A'/'B' ('N' = unassigned for sub/tx). RX on A with TX on B is
     // how the Orion does split. *KV[mainrx][subrx][tx], query ?KV -> @KV...

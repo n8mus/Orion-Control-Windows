@@ -242,12 +242,70 @@ void MainWindow::setupCwUi() {
                         applyCfg);
                 connect(cwWin_, &CwWindow::rxSquelchChanged, this, applySql);
             }
+            wireRigCwPanel();
         }
         cwWin_->show();
         cwWin_->raise();
         cwWin_->activateWindow();
     });
 
+}
+
+// The CW window's "RADIO — CW" panel: the rig's own sidetone level and
+// pitch, QSK delay and envelope, over CAT. Rig-side settings, so they
+// apply with the WinKeyer doing the keying — which is why they live in
+// the keyer window rather than a setup dialog.
+void MainWindow::wireRigCwPanel() {
+    if (!cwWin_ || !radio_) return;
+    cwWin_->setRigCwAvailable(radio_->caps().catCwControls
+                              && radio_->connected());
+
+    connect(cwWin_, &CwWindow::rigSidetoneVolChanged, this,
+            [this](int v) { radio_->setCwSidetoneVol(v); });
+    connect(cwWin_, &CwWindow::rigQskDelayChanged, this,
+            [this](int v) { radio_->setCwQskDelay(v); });
+    connect(cwWin_, &CwWindow::rigAttackDecayChanged, this,
+            [this](int v) { radio_->setCwAttackDecay(v); });
+    connect(cwWin_, &CwWindow::rigSidetonePitchChanged, this, [this](int hz) {
+        radio_->setCwSidetonePitch(hz);
+        applyCwPitch(hz);                  // follow our own change at once
+    });
+
+    connect(radio_, &RadioController::cwSidetoneVolReported,
+            cwWin_, &CwWindow::showRigSidetoneVol);
+    connect(radio_, &RadioController::cwQskDelayReported,
+            cwWin_, &CwWindow::showRigQskDelay);
+    connect(radio_, &RadioController::cwAttackDecayReported,
+            cwWin_, &CwWindow::showRigAttackDecay);
+    connect(radio_, &RadioController::cwKeyerSpeedReported,
+            cwWin_, &CwWindow::showRigKeyerSpeed);
+    connect(radio_, &RadioController::cwKeyerWeightReported,
+            cwWin_, &CwWindow::showRigKeyerWeight);
+    connect(radio_, &RadioController::cwKeyerEnabledReported,
+            cwWin_, &CwWindow::showRigKeyerEnabled);
+    connect(radio_, &RadioController::cwSidetonePitchReported, this,
+            [this](int hz) {
+                cwWin_->showRigSidetonePitch(hz);
+                applyCwPitch(hz);          // and follow the FRONT PANEL
+            });
+    radio_->queryCw();                     // fill the panel on first open
+}
+
+// The radio's sidetone pitch is the truth; cw/pitchHz is only our cache
+// of it. Everything that assumed 550 now follows whatever the rig says —
+// which is what makes the reader work for an operator who isn't Jon.
+void MainWindow::applyCwPitch(int hz) {
+    if (hz < 300 || hz > 1200) return;
+    if (QSettings().value("cw/pitchHz", 550).toInt() == hz) return;
+    QSettings().setValue("cw/pitchHz", hz);
+    // The audio-path decoder mixes the sidetone down to DC, so its offset
+    // IS the pitch — retune() is atomic and the capture thread applies it
+    // at the next block. The SDR-path decoder is carrier-at-dial and the
+    // skimmer hops its own channels, so neither cares. Zero-beat and the
+    // Hz readout re-read the setting every time they run.
+    if (audioDec_) audioDec_->retune(double(hz));
+    statusBar()->showMessage(
+        QString("CW sidetone %1 Hz — reader and 0-beat follow").arg(hz), 4000);
 }
 
 void MainWindow::setupSkimUi(const QString& stationCall) {

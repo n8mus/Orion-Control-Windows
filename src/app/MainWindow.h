@@ -78,6 +78,8 @@ private:
     void sendCqrLookup(const QString& call, const QString& park = {},
                        const QString& grid = {});
     void setupCwUi();
+    void wireRigCwPanel();             // rig's CW settings <-> CW window
+    void applyCwPitch(int hz);         // the radio's sidetone pitch is truth
     void setupSkimUi(const QString& stationCall);
     void openSkimView();               // lazy CW-Skimmer-style waterfall
     void setupDigiUi();

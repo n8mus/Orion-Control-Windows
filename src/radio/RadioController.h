@@ -23,6 +23,8 @@ struct CapabilityProfile {
     bool  needsHwHandshake = false;  // Omni VII serial requires RTS/CTS
     bool  catTxControls    = true;   // power/mic/proc/txbw/tune over CAT.
                                      // Omni VII: only in REMOTE (Ethernet).
+    bool  catCwControls    = false;  // CW & keyer group (sidetone level/pitch,
+                                     // QSK delay, envelope). Orion only.
 };
 
 // Radio-agnostic control surface + report signals. Drivers override what
@@ -95,6 +97,18 @@ public:
     virtual void setTxEq(int /*-20..20 dB*/) {}
     virtual void setTxRolloff(int /*70-300 Hz*/) {}
 
+    // CW & keyer group. These four are RADIO-side: the rig makes the
+    // sidetone and shapes the CW envelope whenever it transmits CW, no
+    // matter what did the keying — its own keyer, a WinKeyer, or a
+    // straight key. So they are worth having even though the console
+    // never touches the internal keyer (*CK/*CS/*CW), which would fight
+    // the WinKeyer for the key jack.
+    virtual void setCwSidetoneVol(int /*0-100*/) {}
+    virtual void setCwSidetonePitch(int /*300-1200 Hz*/) {}
+    virtual void setCwQskDelay(int /*0-100*/) {}
+    virtual void setCwAttackDecay(int /*3-10 ms*/) {}
+    virtual void queryCw() {}
+
     // Audio outputs.
     virtual void setAfVolume(Rx, int /*pct*/) {}
     // Computer-side playback level of the RIP receive-audio stream (Omni VII
@@ -156,6 +170,13 @@ signals:
     void vfoLockReported(char vfo, bool locked);
     void txEqReported(int db);
     void txRolloffReported(int hz);
+    void cwSidetoneVolReported(int pct);
+    void cwSidetonePitchReported(int hz);    // drives the decoder's pitch
+    void cwQskDelayReported(int val);
+    void cwAttackDecayReported(int ms);
+    void cwKeyerSpeedReported(int wpm);      // read-only: the RADIO's keyer,
+    void cwKeyerWeightReported(int pct);     // not the WinKeyer's speed pot
+    void cwKeyerEnabledReported(bool on);
 };
 
 } // namespace ttc

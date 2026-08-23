@@ -7,6 +7,7 @@
 #include <cmath>
 #include <QComboBox>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QSlider>
@@ -23,6 +24,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
+#include <QTimer>
 #include <QUdpSocket>
 
 namespace ttc {
@@ -334,6 +336,90 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     connect(dcy_, &QComboBox::currentIndexChanged, this, decodeChanged);
     connect(nr_, &QCheckBox::toggled, this, decodeChanged);
 
+    // Row 6: the RADIO's own CW settings, over CAT. These four are rig-
+    // side — the Orion makes the sidetone and shapes the CW envelope
+    // whenever it transmits CW, no matter what did the keying — so they
+    // work with the WinKeyer sending, and belong beside it. The internal
+    // keyer's own controls (*CK on/off, *CS speed, *CW weight) are
+    // deliberately NOT here: enabling that keyer re-reads the key jack as
+    // a paddle and would fight the WinKeyer wired into it. It's shown
+    // read-only instead, so the operator can see what the rig thinks.
+    rigBox_ = new QGroupBox("RADIO — CW (over CAT)", this);
+    rigBox_->setStyleSheet(
+        "QGroupBox { border: 1px solid #3a4a5e; border-radius: 4px;"
+        " margin-top: 8px; padding-top: 6px; color: #b8c8d8; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 9px;"
+        " padding: 0 4px; }");
+    auto* rg = new QGridLayout(rigBox_);
+    rg->setContentsMargins(10, 4, 10, 6);
+    rg->setHorizontalSpacing(8);
+    rg->setVerticalSpacing(6);
+    // One throttled slider. The timer coalesces a drag: the CAT link also
+    // carries the 200 ms poll rotation, and the Orion silently drops
+    // commands when its parser is busy.
+    auto rigSlider = [this, rg](int row, int col, const char* cap,
+                                const char* tip, int lo, int hi,
+                                QSlider** out, QLabel** val,
+                                void (CwWindow::*sig)(int)) {
+        auto* c = new QLabel(cap, rigBox_);
+        c->setToolTip(tip);
+        auto* s = new QSlider(Qt::Horizontal, rigBox_);
+        s->setRange(lo, hi);
+        s->setToolTip(tip);
+        auto* v = new QLabel("--", rigBox_);
+        v->setFixedWidth(42);
+        v->setToolTip(tip);
+        rg->addWidget(c, row, col * 3);
+        rg->addWidget(s, row, col * 3 + 1);
+        rg->addWidget(v, row, col * 3 + 2);
+        rg->setColumnStretch(col * 3 + 1, 1);
+        auto* t = new QTimer(this);
+        t->setSingleShot(true);
+        t->setInterval(60);
+        connect(s, &QSlider::valueChanged, this, [v, t](int nv) {
+            v->setText(QString::number(nv));
+            if (!t->isActive()) t->start();        // leading edge + latest
+        });
+        connect(t, &QTimer::timeout, this,
+                [this, s, sig] { (this->*sig)(s->value()); });
+        *out = s;
+        *val = v;
+    };
+    rigSlider(0, 0, "SIDETONE",
+              "How loud the radio's CW sidetone is in your ears (*CV).\n"
+              "The radio's own monitor level — nothing to do with the\n"
+              "WinKeyer, and it applies however the rig is keyed.",
+              0, 100, &rigVol_, &rigVolVal_,
+              &CwWindow::rigSidetoneVolChanged);
+    rigSlider(0, 1, "PITCH",
+              "Sidetone pitch in Hz (*CT). The console follows this: the\n"
+              "reader, zero-beat and the Hz readout all retune to whatever\n"
+              "the radio says, instead of assuming 550.",
+              300, 1200, &rigPitch_, &rigPitchVal_,
+              &CwWindow::rigSidetonePitchChanged);
+    rigSlider(1, 0, "QSK",
+              "Break-in delay (*CQ): how long the radio stays in transmit\n"
+              "after the last element before it lets you hear again.\n"
+              "Lower = hear between elements; higher = fewer relay flips.",
+              0, 100, &rigQsk_, &rigQskVal_,
+              &CwWindow::rigQskDelayChanged);
+    rigSlider(1, 1, "RISE",
+              "CW envelope attack/decay in ms (*CD). Lower is crisper and\n"
+              "wider on the band; higher is softer and easier on the ears.",
+              3, 10, &rigRise_, &rigRiseVal_,
+              &CwWindow::rigAttackDecayChanged);
+    rigKeyer_ = new QLabel(this);
+    rigKeyer_->setStyleSheet("color: #7f93a8; font-size: 13px;");
+    rigKeyer_->setToolTip(
+        "The RADIO's built-in keyer, shown read-only.\n"
+        "The console doesn't drive it: turning it on re-reads the key\n"
+        "jack as a paddle, which would fight the WinKeyer plugged in\n"
+        "there. Your sending speed is the WinKeyer's (and its pot).");
+    rg->addWidget(rigKeyer_, 2, 0, 1, 6);
+    g->addWidget(rigBox_, 6, 0, 1, 5);
+    updateRigKeyerLine();
+    rigBox_->setEnabled(false);            // until a radio says it can
+
     rx_ = new QPlainTextEdit(this);
     rx_->setReadOnly(true);
     // Resizing the window feeds the decode pane: extra height grows the
@@ -344,7 +430,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     rx_->setStyleSheet("QPlainTextEdit { background: #0d1218; color: "
                        "#9fe89f; border: 1px solid #3a4a5e; border-radius: "
                        "3px; font-family: monospace; font-size: 16px; }");
-    g->addWidget(rx_, 6, 0, 1, 5);
+    g->addWidget(rx_, 7, 0, 1, 5);
     rx_->setToolTip("Decoded CW. Double-click a callsign to put it in the "
                     "DX box\n(the %c macro); right-click to erase.");
     rx_->viewport()->installEventFilter(this);   // double-click call capture
@@ -374,9 +460,9 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
 
     // Row 7: status
     status_ = new QLabel(this);
-    g->addWidget(status_, 7, 0, 1, 5);
+    g->addWidget(status_, 8, 0, 1, 5);
     g->setRowStretch(1, 1);                // spare height: 1/3 to the entry
-    g->setRowStretch(6, 2);                // ... 2/3 to the decode pane
+    g->setRowStretch(7, 2);                // ... 2/3 to the decode pane
     for (int c = 0; c < 5; ++c)            // spare width -> spread evenly
         g->setColumnStretch(c, 1);
 
@@ -648,6 +734,45 @@ void CwWindow::keyPressEvent(QKeyEvent* e) {
         return;
     }
     QDialog::keyPressEvent(e);
+}
+
+// Radio -> UI. Block signals: a poll answer must move the slider without
+// bouncing a set straight back down the CAT link (and fighting a drag).
+static void showRig(QSlider* s, QLabel* v, int val) {
+    if (!s) return;
+    const QSignalBlocker b(s);
+    s->setValue(val);
+    v->setText(QString::number(val));
+}
+
+void CwWindow::showRigSidetoneVol(int pct) { showRig(rigVol_, rigVolVal_, pct); }
+void CwWindow::showRigQskDelay(int val)    { showRig(rigQsk_, rigQskVal_, val); }
+void CwWindow::showRigAttackDecay(int ms)  { showRig(rigRise_, rigRiseVal_, ms); }
+
+void CwWindow::showRigSidetonePitch(int hz) {
+    showRig(rigPitch_, rigPitchVal_, hz);
+}
+
+void CwWindow::showRigKeyerSpeed(int wpm)  { rigKeyerWpm_ = wpm; updateRigKeyerLine(); }
+void CwWindow::showRigKeyerWeight(int pct) { rigKeyerWt_ = pct;  updateRigKeyerLine(); }
+void CwWindow::showRigKeyerEnabled(bool on){ rigKeyerOn_ = on;   updateRigKeyerLine(); }
+
+void CwWindow::updateRigKeyerLine() {
+    if (!rigKeyer_) return;
+    if (rigKeyerOn_ < 0) { rigKeyer_->setText("rig keyer: —"); return; }
+    QString t = QString("rig keyer: %1").arg(rigKeyerOn_ ? "ON" : "off");
+    if (rigKeyerWpm_ > 0) t += QString(" · %1 wpm").arg(rigKeyerWpm_);
+    if (rigKeyerWt_ > 0)  t += QString(" · wt %1").arg(rigKeyerWt_);
+    // ON while a WinKeyer is wired into the key jack is worth flagging:
+    // the radio then reads that jack as a paddle, so a key-down looks
+    // like a held dit.
+    if (rigKeyerOn_ > 0 && wk_->isOpen())
+        t += "   ⚠ paddle-mode jack — WinKeyer may key continuous dits";
+    rigKeyer_->setText(t);
+}
+
+void CwWindow::setRigCwAvailable(bool on) {
+    if (rigBox_) rigBox_->setEnabled(on);
 }
 
 void CwWindow::setHisCall(const QString& call) {

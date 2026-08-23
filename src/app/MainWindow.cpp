@@ -3175,7 +3175,7 @@ MainWindow::MainWindow(QWidget* parent)
                 sinceDialMove_.isValid() && sinceDialMove_.elapsed() < 800;
             if ((phase == 1 || phase == 3) && !burst) {
                 if (pollTick_ % 25 == 3) {
-                    switch ((pollTick_ / 25) % 13) {
+                    switch ((pollTick_ / 25) % 14) {
                         case 0:  radio_->queryAgc(Rx::Main);
                                  radio_->queryAgcThreshold(Rx::Main); break;
                         case 9:  radio_->queryAgcHang(Rx::Main);
@@ -3198,6 +3198,8 @@ MainWindow::MainWindow(QWidget* parent)
                         case 11: radio_->queryVfoLock('A');         // front-panel lock
                                  radio_->queryVfoLock('B');         // button presses
                                  break;
+                        case 12: if (cwWin_) radio_->queryCw();     // sidetone/QSK;
+                                 break;                             // only when open
                         default: radio_->queryNotch(Rx::Main);      break;
                     }
                 } else {
