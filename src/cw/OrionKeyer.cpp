@@ -113,12 +113,21 @@ void OrionKeyer::releaseNext() {
     const qint64 now = clock_.elapsed();
     if (airFreeAt_ < now) airFreeAt_ = now;      // rig had gone idle
     const QChar c = pending_.dequeue();
-    if (c != ' ' && radio_) radio_->sendCwChar(c.toLatin1());
+    const bool isSpace = (c == QLatin1Char(' '));
+    if (!isSpace && radio_) radio_->sendCwChar(c.toLatin1());
     airFreeAt_ += charMs(c, wpm_);
-    // Stay kDepthMs ahead of the air. Negative means the buffer is
+    // Stay depthMs() ahead of the air. Negative means the buffer is
     // shallower than that, so the next character goes at once — which is
     // what primes it at the start of a macro.
-    const qint64 wait = airFreeAt_ - depthMs() - now;
+    //
+    // EXCEPT across a word gap, which has to be real elapsed time rather
+    // than bookkeeping. The rig is never sent a space (its table has
+    // none), so if the cushion applied here it would simply receive the
+    // next word's first character immediately and run the words together
+    // — "5NN MI" arrived as 5NNMI. Wait for the buffer to drain and the
+    // gap to pass before feeding again.
+    const qint64 wait = isSpace ? (airFreeAt_ - now)
+                                : (airFreeAt_ - depthMs() - now);
     timer_->start(int(std::clamp<qint64>(wait, 0, 5000)));
 }
 

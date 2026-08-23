@@ -76,11 +76,12 @@ int main(int argc, char** argv) {
         check(r.keyerOn, "open() enables the radio's internal keyer");
         k.setSpeed(20);
         r.clock.start();
-        k.send("PARIS PARIS PARIS");
+        k.send("PARISPARISPARIS");   // no spaces: a word gap is a
+                                     // DELIBERATE drain, tested below
         pump(80);
-        check(r.chars.size() < 17,
+        check(r.chars.size() < 15,
               "does NOT dump the whole macro (abort survives)");
-        std::printf("      (%zu of 17 characters out at 80 ms)\n",
+        std::printf("      (%zu of 15 characters out at 80 ms)\n",
                     r.chars.size());
         pump(4000);
         // THE property, and the one the operator heard break: with
@@ -95,9 +96,23 @@ int main(int argc, char** argv) {
             air = std::max(air, r.atMs[i])
                   + OrionKeyer::charMs(QChar(r.chars[i]), 20);
         }
-        check(starved == 0, "the rig's buffer never runs dry mid-macro");
+        check(starved == 0, "the rig's buffer never runs dry mid-WORD");
         std::printf("      (%zu characters, %d starved hand-offs)\n",
                     r.chars.size(), starved);
+    }
+    {
+        std::printf("\na word gap is real time, not just bookkeeping\n");
+        StubRadio r; OrionKeyer k(&r);
+        k.open(); k.setSpeed(20);
+        r.clock.start();
+        k.send("E E");
+        pump(2000);
+        check(r.chars.size() == 2, "the space itself is never sent to the rig");
+        const qint64 gap = r.atMs.size() > 1 ? r.atMs[1] - r.atMs[0] : 0;
+        // E is 240 ms incl. its own gap, the word gap adds 4 units = 240.
+        check(gap >= 400, "the second word waits for a real word gap");
+        std::printf("      (gap %lld ms; E=240 + word gap 240)\n",
+                    static_cast<long long>(gap));
     }
     {
         std::printf("\nstop() is the abort the radio itself cannot do\n");
