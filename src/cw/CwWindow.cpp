@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cw/CwWindow.h"
+#include "cw/CwKeyer.h"
 #include "cw/WinKeyer.h"
 
 #include <QCheckBox>
@@ -51,7 +52,6 @@ const QRegularExpression& callRe() {
 } // namespace
 
 CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
-    setWindowTitle("CW — WinKeyer");
     setModal(false);
     // Every control sets an explicit text color: widgets with a styled
     // background otherwise keep the SYSTEM palette's text — dark-on-dark
@@ -75,7 +75,8 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         "QPushButton:checked { background: #8a2727; border-color: #e05d5d;"
         " color: #ffe8e8; }");
 
-    wk_ = new WinKeyer(this);
+    keyer_ = new WinKeyer(this);
+    setWindowTitle(QString("CW — %1").arg(keyer_->caps().name));
     auto* g = new QGridLayout(this);
     g->setContentsMargins(12, 10, 12, 10);
     g->setHorizontalSpacing(8);
@@ -483,7 +484,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         g->setColumnStretch(c, 1);
 
     connect(wpm_, &QSpinBox::valueChanged, this, [this](int v) {
-        wk_->setSpeed(v);
+        keyer_->setSpeed(v);
         QSettings().setValue("cw/wpm", v);
         updateStatus();
     });
@@ -500,7 +501,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         line_->clear();
     });
     connect(stopBtn, &QPushButton::clicked, this, [this] {
-        wk_->stop();
+        keyer_->stop();
         tuneBtn_->setChecked(false);
         sentView_->clear();
         prevLen_ = 0;
@@ -509,7 +510,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     });
     connect(tuneBtn_, &QPushButton::toggled, this, [this](bool on) {
         if (on) emit txImminent();
-        wk_->tune(on);
+        keyer_->tune(on);
         updateStatus(on ? "TUNE — key down" : QString());
     });
     connect(line_, &QLineEdit::returnPressed, this, [this] {
@@ -528,7 +529,7 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
             if (!out.simplified().isEmpty()) {
                 emit txImminent();
                 openKeyer();
-                wk_->send(out);
+                keyer_->send(out);
                 sentView_->setText((sentView_->text() + out).right(60));
             }
             line_->setText(t.mid(sp + 1));
@@ -537,31 +538,31 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
         if (!live_->isChecked()) return;
         // Stream the delta; backspace unsends if the char hasn't gone out.
         if (t.length() < prevLen_) {
-            for (int i = t.length(); i < prevLen_; ++i) wk_->backspace();
+            for (int i = t.length(); i < prevLen_; ++i) keyer_->backspace();
         } else if (t.length() > prevLen_) {
             const QString add = substitute(t.mid(prevLen_));
             emit txImminent();
-            wk_->send(add);
+            keyer_->send(add);
             sentView_->setText((sentView_->text() + add).right(60));
         }
         prevLen_ = t.length();
     });
-    connect(wk_, &WinKeyer::potChanged, this, [this](int wpm) {
+    connect(keyer_, &CwKeyer::potChanged, this, [this](int wpm) {
         const QSignalBlocker b(wpm_);
         wpm_->setValue(wpm);                 // follow the physical pot
-        wk_->setSpeed(wpm);
+        keyer_->setSpeed(wpm);
         QSettings().setValue("cw/wpm", wpm);
         updateStatus(QString("pot -> %1 WPM").arg(wpm));
     });
-    connect(wk_, &WinKeyer::breakIn, this, [this] {
+    connect(keyer_, &CwKeyer::breakIn, this, [this] {
         sentView_->clear();
         prevLen_ = 0;
         line_->clear();
         updateStatus("paddle break-in");
     });
-    connect(wk_, &WinKeyer::busyChanged, this,
+    connect(keyer_, &CwKeyer::busyChanged, this,
             [this](bool) { updateStatus(); });
-    connect(wk_, &WinKeyer::errorOccurred, this,
+    connect(keyer_, &CwKeyer::errorOccurred, this,
             [this](const QString& e) { updateStatus(e); });
 
     // Decode-text feed: every decoded chunk is also datagrammed to
@@ -583,19 +584,19 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
                 daemon_->readDatagram(d.data(), d.size());
                 if (d.startsWith('\x1b')) {
                     if (d.size() < 2) continue;
-                    if (d[1] == '4' || d[1] == '0') { wk_->stop(); }
+                    if (d[1] == '4' || d[1] == '0') { keyer_->stop(); }
                     else if (d[1] == '2') {
                         const int v = QString::fromLatin1(d.mid(2)).toInt();
                         if (v >= 5 && v <= 60) {
                             const QSignalBlocker b(wpm_);
                             wpm_->setValue(v);
-                            wk_->setSpeed(v);
+                            keyer_->setSpeed(v);
                         }
                     }
                 } else {
                     emit txImminent();
                     openKeyer();             // cqrlog may key before we show
-                    wk_->send(QString::fromLatin1(d).trimmed());
+                    keyer_->send(QString::fromLatin1(d).trimmed());
                 }
             }
         });
@@ -610,22 +611,15 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
     }
 }
 
-bool CwWindow::keyerOpen() const { return wk_->isOpen(); }
+bool CwWindow::keyerOpen() const { return keyer_->isOpen(); }
 
 void CwWindow::openKeyer() {
-    if (wk_->isOpen()) return;
-    QSettings s;
-    // Unset = no keyer configured; Station setup lists this machine's ports.
-    const QString dev = s.value("cw/port").toString();
-    if (dev.isEmpty()) {
-        updateStatus("no keyer port set (SDR ▸ Station setup…)");
-        return;
-    }
-    if (wk_->open(dev)) {
-        wk_->setPotRange(s.value("cw/potMin", 7).toInt(),
-                         s.value("cw/potMax", 45).toInt());
-        wk_->setSpeed(wpm_->value());
+    if (keyer_->isOpen()) return;
+    if (keyer_->open()) {
+        keyer_->setSpeed(wpm_->value());
         updateStatus("keyer ready");
+    } else {
+        updateStatus();          // the base line already carries lastError()
     }
 }
 
@@ -741,7 +735,7 @@ void CwWindow::resizeEvent(QResizeEvent* e) {
 
 void CwWindow::keyPressEvent(QKeyEvent* e) {
     if (e->key() == Qt::Key_Escape) {        // Esc = stop, never close
-        wk_->stop();
+        keyer_->stop();
         tuneBtn_->setChecked(false);
         sentView_->clear();
         prevLen_ = 0;
@@ -782,7 +776,7 @@ void CwWindow::updateRigKeyerLine() {
     // ON while a WinKeyer is wired into the key jack is worth flagging:
     // the radio then reads that jack as a paddle, so a key-down looks
     // like a held dit.
-    if (rigKeyerOn_ > 0 && wk_->isOpen())
+    if (rigKeyerOn_ > 0 && keyer_->isOpen())
         t += "   ⚠ paddle-mode jack — WinKeyer may key continuous dits";
     rigKeyer_->setText(t);
 }
@@ -841,7 +835,7 @@ void CwWindow::sendText(const QString& t) {
     openKeyer();
     const QString out = substitute(t).simplified();
     if (out.isEmpty()) return;
-    wk_->send(out);
+    keyer_->send(out);
     sentView_->setText(out.right(60));
 }
 
@@ -860,9 +854,11 @@ void CwWindow::editMemory(int i) {
 }
 
 void CwWindow::updateStatus(const QString& s) {
-    const QString base = wk_->isOpen()
-        ? QString("WinKeyer ready · %1 WPM").arg(wpm_->value())
-        : QString("WinKeyer not connected (%1)").arg(wk_->lastError());
+    const QString base = keyer_->isOpen()
+        ? QString("%1 ready · %2 WPM").arg(keyer_->caps().name)
+              .arg(wpm_->value())
+        : QString("%1 not connected (%2)").arg(keyer_->caps().name)
+              .arg(keyer_->lastError());
     status_->setText(s.isEmpty() ? base : base + " · " + s);
 }
 

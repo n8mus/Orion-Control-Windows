@@ -2,6 +2,7 @@
 #include "cw/WinKeyer.h"
 
 #include <QSerialPort>
+#include <QSettings>
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
@@ -14,7 +15,7 @@ constexpr quint8 kStBreakIn = 0x02;
 constexpr quint8 kStBusy    = 0x04;
 } // namespace
 
-WinKeyer::WinKeyer(QObject* parent) : QObject(parent) {
+WinKeyer::WinKeyer(QObject* parent) : CwKeyer(parent) {
     ser_ = new QSerialPort(this);
     connect(ser_, &QSerialPort::readyRead, this, &WinKeyer::onReadyRead);
     potTimer_ = new QTimer(this);
@@ -29,6 +30,21 @@ WinKeyer::WinKeyer(QObject* parent) : QObject(parent) {
 }
 
 WinKeyer::~WinKeyer() { close(); }
+
+// Settings-driven open, so the CW window never has to know that THIS
+// backend is the one needing a serial port and a pot calibration.
+bool WinKeyer::open() {
+    QSettings s;
+    const QString dev = s.value("cw/port").toString();
+    if (dev.isEmpty()) {                   // unset = no keyer configured
+        err_ = "no keyer port set (SDR ▸ Station setup…)";
+        return false;
+    }
+    if (!open(dev)) return false;
+    setPotRange(s.value("cw/potMin", 7).toInt(),
+                s.value("cw/potMax", 45).toInt());
+    return true;
+}
 
 bool WinKeyer::open(const QString& device) {
     if (open_) close();

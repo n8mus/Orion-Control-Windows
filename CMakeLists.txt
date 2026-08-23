@@ -68,6 +68,7 @@ add_executable(tentec-console
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
   src/util/WatchList.cpp        src/util/WatchList.h
   src/cw/WinKeyer.cpp           src/cw/WinKeyer.h
+                                src/cw/CwKeyer.h
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
   src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
   src/cw/FldigiCwEngine.cpp     src/cw/FldigiCwEngine.h

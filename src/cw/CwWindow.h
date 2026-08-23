@@ -16,7 +16,7 @@ class QPlainTextEdit;
 
 namespace ttc {
 
-class WinKeyer;
+class CwKeyer;
 
 // CW sending window (the CWX idea): type-ahead line, four macro memories,
 // speed control synced both ways with the WinKeyer pot, TUNE and STOP.
@@ -107,7 +107,7 @@ private:
     void announceHisCall();              // hand a typed call to cqrlog, once
     void updateRigKeyerLine();           // "rig keyer: off · 29 wpm · wt 119"
 
-    WinKeyer* wk_ = nullptr;
+    CwKeyer* keyer_ = nullptr;      // WinKeyer today; radio keyer next
     QUdpSocket* daemon_ = nullptr;       // cwdaemon-protocol server
     QUdpSocket* feed_ = nullptr;         // decode-text feed (localhost UDP)
     quint16 feedPort_ = 2336;            // cw/feedPort — Not1MM dock listens
