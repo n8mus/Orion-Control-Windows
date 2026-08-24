@@ -84,17 +84,32 @@ QVector<int> SmithChartWidget::inferXSigns(const QVector<double>& absX,
     // If the source ever starts delivering signed X (future firmware),
     // believe it and leave the data alone.
     for (double v : absX) if (v < 0.0) return out;
+    // The comparison neighbourhood and the merge distance are FRACTIONS OF
+    // THE SWEEP, never fixed sample counts. They used to be ±8 and >2
+    // samples, which silently meant "±17% and >4% of the span" back when
+    // every sweep was 48 steps. Once the step count started scaling with
+    // span those same numbers covered half as much spectrum, and the
+    // wobble along a single near-zero |X| graze — meter noise on a
+    // reactance already at ~0 — spread far enough apart to register as TWO
+    // crossings. That double-flips the sign and folds the locus back on
+    // itself: the KT34XA's 15 m and 10 m charts both came out wrong that
+    // way (2026-08-23), while 20 m, sampled no finer than before, was
+    // untouched. As fractions these reduce to exactly 8 and 2 at n = 48,
+    // so the runs that validated this inference (40 m series resonance,
+    // 80 m anti-resonance) replay bit-identical.
+    const int win   = std::max(3, (n + 3) / 6);    // was 8 at n = 48
+    const int merge = std::max(1, (n + 12) / 24);  // was 2 at n = 48
     QVector<int> cross;
     for (int i = 1; i < n - 1; ++i) {
         if (absX[i] > absX[i - 1] || absX[i] > absX[i + 1]) continue;
         double lMax = 0, rMax = 0;
-        for (int j = std::max(0, i - 8); j < i; ++j)
+        for (int j = std::max(0, i - win); j < i; ++j)
             lMax = std::max(lMax, absX[j]);
-        for (int j = i + 1; j < std::min(n, i + 9); ++j)
+        for (int j = i + 1; j < std::min(n, i + win + 1); ++j)
             rMax = std::max(rMax, absX[j]);
         const double side = std::min(lMax, rMax);
         if (absX[i] < 0.4 * side && side - absX[i] > 3.0)
-            if (cross.isEmpty() || i - cross.last() > 2)
+            if (cross.isEmpty() || i - cross.last() > merge)
                 cross.append(i);
     }
     int sign = -1, k = 0;                 // candidate: capacitive first
