@@ -13,10 +13,12 @@
 #include "cw/SkimmerEngine.h"
 #include "cw/SkimServer.h"
 #include "cw/SkimStft.h"
+#include "cw/WinKeyer.h"
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
 #include "ui/SkimmerWindow.h"
 #include "ui/SkimViewWindow.h"
+#include "ui/WinKeyerPanel.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -124,7 +126,9 @@ void MainWindow::setupCwUi() {
     cwBtn->setFocusPolicy(Qt::NoFocus);
     cwBtn->setStyleSheet(QString(kToolBtnStyle));
     cwBtn->setToolTip("CW keyboard/memories via the WinKeyer\n(paddle always "
-                      "wins — touching it dumps the buffer)");
+                      "wins — touching it dumps the buffer)\n"
+                      "Right-click: WinKeyer control (weighting, key "
+                      "compensation, ratio…)");
     topLay2_->addSpacing(8);
     topLay2_->addWidget(cwBtn);
     connect(cwBtn, &QToolButton::clicked, this, [this] {
@@ -250,6 +254,34 @@ void MainWindow::setupCwUi() {
         cwWin_->activateWindow();
     });
 
+    // Right-click opens the WinKeyer control box. It is a right-click and
+    // not a sixth button because the top strip has ~2 px of slack against
+    // the width budget, and losing the maximize button has bitten twice —
+    // same reason the SWR menu hangs off a right-click on TUNE.
+    cwBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(cwBtn, &QToolButton::customContextMenuRequested, this,
+            [this, cwBtn](const QPoint&) {
+        // Reuse the left-click path wholesale so the keyer gets built and
+        // opened exactly the way it always is.
+        if (!cwWin_) cwBtn->click();
+        auto* wk = qobject_cast<ttc::WinKeyer*>(
+            cwWin_ ? cwWin_->keyer() : nullptr);
+        if (!wk) {
+            statusBar()->showMessage(
+                "WinKeyer control: the WinKeyer is not the active keyer — "
+                "the radio's own keyer has no host-settable element timing "
+                "(SDR ▸ Station setup… to switch)", 8000);
+            return;
+        }
+        if (!wkPanel_) {
+            auto* p = new ttc::WinKeyerPanel(wk, this);
+            p->setAttribute(Qt::WA_DeleteOnClose);
+            wkPanel_ = p;
+        }
+        wkPanel_->show();
+        wkPanel_->raise();
+        wkPanel_->activateWindow();
+    });
 }
 
 // The CW window's "RADIO — CW" panel: the rig's own sidetone level and

@@ -45,6 +45,9 @@ public:
     void setHisCall(const QString& call);
     void openKeyer();                    // connect + handshake (idempotent)
     bool keyerOpen() const;              // holds the serial port right now?
+    // The live backend, for the WinKeyer control panel. Null before the
+    // first open; may be an OrionKeyer, so callers must qobject_cast.
+    CwKeyer* keyer() const { return keyer_; }
 
 public slots:
     void appendRx(const QString& text);  // decoded CW from the SDR reader

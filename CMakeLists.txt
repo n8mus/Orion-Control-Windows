@@ -83,6 +83,7 @@ add_executable(tentec-console
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/SmithChartWidget.cpp   src/ui/SmithChartWidget.h
   src/ui/SwrHistoryDialog.cpp   src/ui/SwrHistoryDialog.h
+  src/ui/WinKeyerPanel.cpp      src/ui/WinKeyerPanel.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/SetupDialog.cpp        src/ui/SetupDialog.h
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h
@@ -134,6 +135,15 @@ add_executable(dcutest EXCLUDE_FROM_ALL
   src/net/RotorServer.cpp)
 target_include_directories(dcutest PRIVATE src)
 target_link_libraries(dcutest PRIVATE Qt6::Core Qt6::Network)
+
+# WinKeyer wire format against a pty playing the keyer. Asserts the exact
+# command bytes for every timing parameter against the K1EL WK3 manual's
+# own worked examples. Needs no hardware and must never touch /dev/cwkeyer.
+add_executable(wktest EXCLUDE_FROM_ALL
+  tests/wktest.cpp
+  src/cw/WinKeyer.cpp  src/cw/WinKeyer.h  src/cw/CwKeyer.h)
+target_include_directories(wktest PRIVATE src)
+target_link_libraries(wktest PRIVATE Qt6::Core Qt6::SerialPort)
 
 # LP-100A wattmeter frame decode. Pure parser test — needs no hardware.
 add_executable(lptest EXCLUDE_FROM_ALL

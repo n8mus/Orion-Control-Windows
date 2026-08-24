@@ -81,6 +81,7 @@ senders and weak-signal cases are the hard set.
 | `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
 | `pmtest` | PowerMaster wattmeter frame decode + CRC (pure parser, no hardware) | — |
 | `smithtest` | renders a stored antenna+band sweep to PNG for eyeballing (`QT_QPA_PLATFORM=offscreen ./smithtest <swr.json> <band> <out.png> [ant]`, ant defaults to unlabeled; also loads a pre-antenna file) | — |
+| `wktest` | WinKeyer wire format against a pty it drives itself — every timing command asserted against the K1EL WK3 manual's own worked examples, plus range clamping. Never touches `/dev/cwkeyer` | — |
 | `nrtest` | noise-reduction ruler: keyed 550 Hz tone at swept SNR through {none, RNNoise, SpectralNr} into the audio-path decoder. Verdict 2026-07-16: RNNoise perfect to -6 dB; our SpectralNr lost and stays test-only | — |
 
 Run the relevant tests plus a selftest sizing check before every commit.
@@ -195,8 +196,20 @@ that night's own capture).
 
 ## Station facts the code assumes
 
-Operator callsign N8EM, grid EN83al. WinKeyer USB on the FTDI A904QF5Z
-by-id path. **Orion CAT is the motherboard's native RS-232 `/dev/ttyS0`**
+Operator callsign N8EM, grid EN83al. WinKeyer USB (**WK3 silicon** —
+operator-confirmed 2026-08-24; `isWk3()` gates the extra prosigns `[` AS
+`\` DN `]` KN off the host-open firmware byte, 3x = WK3) on the FTDI
+A904QF5Z by-id path. **Right-click the CW button** for the WinKeyer control box:
+weighting, key compensation, first extension, dit/dah ratio, letterspace,
+PTT lead/tail, Farnsworth, sidetone, presets (`src/ui/WinKeyerPanel`,
+`wktest`). It is a right-click and not a sixth toolbar button because the
+width budget has ~2 px of slack. Values live in `cw/wk/*` and an ABSENT
+key means never adopted — `WinKeyer::loadOwned()` only re-sends what the
+operator actually touched, so a keyer nobody has configured here keeps its
+own timing. That is the surviving half of the old "never write the mode
+register" rule: the paddle/mode register is now writable, but only behind
+an explicit opt-in (`cw/wk/manageMode`), because WK3's `Get Values` always
+answers 0 and there is no way to read the owner's settings back. **Orion CAT is the motherboard's native RS-232 `/dev/ttyS0`**
 (`radio/device` setting; device precedence: `TTC_RADIO_DEV` env >
 setting > `/dev/orion` default). The FT4232H quad converter that used
 to carry both radios was condemned 2026-07-16 — it WAS the 40 m spike

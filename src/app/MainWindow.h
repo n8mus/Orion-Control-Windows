@@ -220,6 +220,7 @@ private:
     QHash<QString, QVector<PanadapterWidget::SwrRun>> swrRuns_;
     QPointer<QDialog> smithDlg_;               // non-modal Smith chart
     QPointer<QDialog> swrHistDlg_;             // non-modal SWR history browser
+    QPointer<QDialog> wkPanel_;                // non-modal WinKeyer control box
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing
