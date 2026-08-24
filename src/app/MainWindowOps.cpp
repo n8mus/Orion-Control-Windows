@@ -6,14 +6,17 @@
 #include "app/MainWindowInternal.h"
 #include "app/Bands.h"
 #include "ui/SmithChartWidget.h"
+#include "ui/SwrHistoryDialog.h"
 
 #include <QVBoxLayout>
 
+#include <QActionGroup>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -159,7 +162,37 @@ void MainWindow::stopManualTune() {
 // carrier and steps the dial while keyed — no T/R relay chatter. The view
 // is held on the swept range with the same frame the band overview uses.
 
-static constexpr int kSwrSteps = 48;
+// Step count follows the swept span instead of being fixed, so a narrow
+// view sweep is not wastefully slow and a whole-band sweep on 10 m or 6 m
+// is not uselessly blocky. Every step costs a keyed-carrier second, so the
+// cap is a duty-cycle and patience limit, not a resolution one: 4 MHz of
+// 6 m cannot be swept finely by keying a carrier at each stop, and asking
+// for it would mean a minutes-long transmission.
+static constexpr int64_t kSwrTargetHzPerStep = 5000;
+static constexpr int kSwrMinSteps = 24;   // narrow spans still get detail
+static constexpr int kSwrMaxSteps = 96;   // ~44 s of carrier — the ceiling
+
+// Settle time after each dial move before a reading counts. The FIRST
+// step needs far more than the rest, and the reason is not the dial:
+// startManualTune() brings the carrier up COLD, so step 0 is a PA ramp
+// plus ALC settling on top of the tune, while every later step is a dial
+// nudge with the carrier already hot and steady. On top of that, a
+// meter reading's timestamp is when its FRAME ARRIVED, not when the RF
+// was sampled — both meters average internally, so a frame arriving just
+// after arming can still carry an average blended with the pre-carrier
+// state. Mid-sweep that is harmless (the neighbouring frequency reads
+// about the same); at step 0 it blends real RF with NO RF, which is
+// exactly the false first point the operator saw on a live 40 m sweep
+// (2026-08-23). Cure is time, not arithmetic.
+static constexpr int kSwrSettleMs      = 300;
+static constexpr int kSwrFirstSettleMs = 1200;
+static constexpr int kSwrTickMs        = 150;   // sweep state-machine period
+
+// Never park the carrier exactly on a band edge: a whole-band sweep used
+// to start at 7.000000 dead on, where the occupied bandwidth spills below
+// the edge. Nudge both ends inside by this much — invisible on a curve
+// hundreds of kHz wide.
+static constexpr int64_t kSwrEdgeMarginHz = 1000;
 
 // The external meter is believed only when it is enabled, chosen as the
 // source, AND answering right now. Everything else falls through to @STF,
@@ -173,6 +206,65 @@ void MainWindow::showSwrMenu(const QPoint& globalPos) {
     auto* m = new QMenu(this);
     m->setAttribute(Qt::WA_DeleteOnClose);
     styleMenu(m);
+    // Antenna picker — set BEFORE sweeping so the run gets tagged right;
+    // the label always mirrors curAntenna_ so a glance at the menu
+    // confirms what the next sweep will be filed under.
+    QMenu* antMenu = m->addMenu(
+        QString("Antenna: %1")
+            .arg(curAntenna_.isEmpty() ? "(unlabeled)" : curAntenna_));
+    styleMenu(antMenu);
+    auto* antGroup = new QActionGroup(antMenu);
+    antGroup->setExclusive(true);
+    QAction* unlabeled = antMenu->addAction("(unlabeled)");
+    unlabeled->setCheckable(true);
+    unlabeled->setChecked(curAntenna_.isEmpty());
+    antGroup->addAction(unlabeled);
+    connect(unlabeled, &QAction::triggered, this, [this] {
+        curAntenna_.clear();
+        QSettings().setValue("swr/currentAntenna", curAntenna_);
+        refreshSwrOverlay();
+    });
+    for (const QString& name : QSettings().value("swr/antennas").toStringList()) {
+        QAction* a = antMenu->addAction(name);
+        a->setCheckable(true);
+        a->setChecked(curAntenna_ == name);
+        antGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, name] {
+            curAntenna_ = name;
+            QSettings().setValue("swr/currentAntenna", curAntenna_);
+            refreshSwrOverlay();
+        });
+    }
+    antMenu->addSeparator();
+    QAction* newAnt = antMenu->addAction("New antenna…");
+    connect(newAnt, &QAction::triggered, this, [this] {
+        const QString typed = QInputDialog::getText(
+            this, "New antenna", "Antenna name (e.g. \"40m dipole\"):");
+        const QString name = typed.trimmed();
+        if (name.isEmpty()) return;
+        QSettings s;
+        QStringList known = s.value("swr/antennas").toStringList();
+        // Nudge consistent naming rather than silently forking history —
+        // a near-duplicate almost always means "I forgot how I spelled
+        // it last time", not "this is a genuinely different antenna".
+        for (const QString& k : known)
+            if (k.compare(name, Qt::CaseInsensitive) == 0 && k != name) {
+                statusBar()->showMessage(
+                    QString("SWR: using existing antenna \"%1\" instead "
+                            "(close match)").arg(k), 6000);
+                curAntenna_ = k;
+                s.setValue("swr/currentAntenna", curAntenna_);
+                refreshSwrOverlay();
+                return;
+            }
+        if (!known.contains(name)) {
+            known << name;
+            s.setValue("swr/antennas", known);
+        }
+        curAntenna_ = name;
+        s.setValue("swr/currentAntenna", curAntenna_);
+        refreshSwrOverlay();
+    });
     QAction* sweep = m->addAction(
         swrSweeping_ ? QStringLiteral("Stop SWR sweep")
                      : QStringLiteral("Sweep SWR across the view"));
@@ -200,28 +292,33 @@ void MainWindow::showSwrMenu(const QPoint& globalPos) {
     });
     // Smith chart — only for runs with impedance, i.e. LP-100A sweeps.
     QAction* smith = m->addAction(QStringLiteral("Smith chart…"));
+    const QString curKey = curBand_ >= 0
+        ? swrKey(curAntenna_, QLatin1String(kBands[curBand_].label))
+        : QString();
     bool hasZ = false;
     if (curBand_ >= 0)
-        for (const auto& run :
-             swrRuns_.value(QLatin1String(kBands[curBand_].label)))
+        for (const auto& run : swrRuns_.value(curKey))
             for (const auto& pt : run.pts)
                 if (pt.zValid) { hasZ = true; break; }
     smith->setEnabled(hasZ);
     smith->setToolTip(hasZ ? QString()
                            : QStringLiteral("Needs a sweep taken with the "
                                             "LP-100A (R+jX per point)"));
-    connect(smith, &QAction::triggered, this, &MainWindow::showSmithChart);
-    QAction* clear = m->addAction(QStringLiteral("Clear this band's runs"));
-    clear->setEnabled(curBand_ >= 0
-                      && !swrRuns_.value(QLatin1String(
-                             curBand_ >= 0 ? kBands[curBand_].label : ""))
-                              .isEmpty());
-    connect(clear, &QAction::triggered, this, [this] {
+    connect(smith, &QAction::triggered, this, [this] {
         if (curBand_ < 0) return;
-        swrRuns_.remove(QLatin1String(kBands[curBand_].label));
+        showSmithChart(curAntenna_, QLatin1String(kBands[curBand_].label));
+    });
+    QAction* hist = m->addAction(QStringLiteral("SWR history…"));
+    connect(hist, &QAction::triggered, this, &MainWindow::showSwrHistory);
+    QAction* clear =
+        m->addAction(QStringLiteral("Clear this antenna's runs on this band"));
+    clear->setEnabled(curBand_ >= 0 && !swrRuns_.value(curKey).isEmpty());
+    connect(clear, &QAction::triggered, this, [this, curKey] {
+        if (curBand_ < 0) return;
+        swrRuns_.remove(curKey);
         saveSwrRuns();
         refreshSwrOverlay();
-        statusBar()->showMessage("SWR: runs cleared for this band");
+        statusBar()->showMessage("SWR: runs cleared for this antenna+band");
     });
     m->popup(globalPos);
 }
@@ -245,17 +342,19 @@ void MainWindow::startSwrSweep(bool wholeBand) {
     }
     const int64_t viewC = int64_t(centerHz_) + pan_->viewShiftHz();
     const int span = pan_->viewSpanHz();
+    // Both ends stay kSwrEdgeMarginHz inside the band: the carrier must
+    // never sit exactly on the edge (see the constant).
+    const int64_t bandLo = int64_t(kBands[curBand_].loHz) + kSwrEdgeMarginHz;
+    const int64_t bandHi = int64_t(kBands[curBand_].hiHz) - kSwrEdgeMarginHz;
     if (wholeBand) {
         // Band edge to edge. The dial has no view limit; the pan overlay
         // simply clips to whatever the frame can show, and the Smith
         // chart renders the full run.
-        swrF0_ = int64_t(kBands[curBand_].loHz);
-        swrF1_ = int64_t(kBands[curBand_].hiHz);
+        swrF0_ = bandLo;
+        swrF1_ = bandHi;
     } else {
-        swrF0_ = std::max<int64_t>(viewC - span / 2,
-                                   int64_t(kBands[curBand_].loHz));
-        swrF1_ = std::min<int64_t>(viewC + span / 2,
-                                   int64_t(kBands[curBand_].hiHz));
+        swrF0_ = std::max<int64_t>(viewC - span / 2, bandLo);
+        swrF1_ = std::min<int64_t>(viewC + span / 2, bandHi);
     }
     if (swrF1_ - swrF0_ < 20000) {
         statusBar()->showMessage("SWR sweep: visible in-band range is too "
@@ -270,7 +369,8 @@ void MainWindow::startSwrSweep(bool wholeBand) {
     swrPts_.clear();
     swrStepIdx_ = 0;
     swrStepTuned_ = false;
-    swrStepCount_ = kSwrSteps;
+    swrStepCount_ = int(std::clamp<int64_t>(
+        (swrF1_ - swrF0_) / kSwrTargetHzPerStep, kSwrMinSteps, kSwrMaxSteps));
     lastSwrMs_ = 0;
     swrUsedMeter_ = meterSwrReady();
     swrMeterPts_ = 0;
@@ -283,21 +383,41 @@ void MainWindow::startSwrSweep(bool wholeBand) {
     // even reaches the serial numbers is unproven; if a sweep taken in
     // Peak Hold ever comes out visibly smeared, that is the evidence to
     // revisit with — LpMeter::seekMode() is still there and verified.
-    tuneTimeout_->stop();                          // sweep failsafe: 75 s
-    tuneTimeout_->setInterval(75000);              // (restored on stop)
-    tuneTimeout_->start();
+    // Carrier failsafe. It has to scale with the step count now that the
+    // count scales with span, or a legitimately long 6 m sweep would trip
+    // its own safety net partway through and throw the run away. Budget
+    // the typical per-step cost (one tick to tune, the settle rounded up
+    // to whole ticks, one tick to read), double it for slow steps, and
+    // never go below the old 75 s.
+    // A step costs one tick to issue the tune, its settle rounded up to
+    // whole ticks, then the tick that takes the reading.
+    const auto stepMs = [](int settleMs) {
+        return kSwrTickMs
+               + ((settleMs + kSwrTickMs - 1) / kSwrTickMs) * kSwrTickMs;
+    };
+    const int sweepEstMs = stepMs(kSwrFirstSettleMs)
+                           + (swrStepCount_ - 1) * stepMs(kSwrSettleMs);
+    tuneTimeout_->stop();
+    tuneTimeout_->setInterval(std::max(75000, sweepEstMs * 2));
+    tuneTimeout_->start();                         // (restored on stop)
     if (!swrTick_) {
         swrTick_ = new QTimer(this);
-        swrTick_->setInterval(150);
+        swrTick_->setInterval(kSwrTickMs);
         connect(swrTick_, &QTimer::timeout, this, &MainWindow::swrTickStep);
     }
     swrSweeping_ = true;
     swrTick_->start();
+    // Step count and duration both vary with span now, so say them: the
+    // operator is about to hold a carrier up and should know for how long.
     statusBar()->showMessage(
-        QString("SWR sweep: %1-%2 MHz, %3 steps at %4 W, reading %5 "
-                "— any click aborts")
+        QString("SWR sweep: %1-%2 MHz, %3 steps (%4 kHz each, ~%5 s) at "
+                "%6 W, reading %7 — any click aborts")
             .arg(swrF0_ / 1e6, 0, 'f', 3).arg(swrF1_ / 1e6, 0, 'f', 3)
-            .arg(swrStepCount_).arg(txBar_->tuneLevel())
+            .arg(swrStepCount_)
+            .arg(double(swrF1_ - swrF0_) / 1000.0
+                     / std::max(1, swrStepCount_ - 1), 0, 'f', 1)
+            .arg(sweepEstMs / 1000)
+            .arg(txBar_->tuneLevel())
             .arg(swrUsedMeter_ ? "the wattmeter" : "the radio"));
 }
 
@@ -314,7 +434,11 @@ void MainWindow::swrTickStep() {
         swrQuietTune_ = true;                      // no plan-mode re-moding
         tuneAbsolute(uint64_t(stepF));
         swrQuietTune_ = false;
-        swrStepArmedMs_ = now + 300;               // let the dial + PA settle
+        // Step 0 pays for the cold key-up (and flushes the meter's
+        // averaging window of its pre-carrier state); later steps only
+        // have to settle a dial move. See kSwrFirstSettleMs.
+        swrStepArmedMs_ = now + (swrStepIdx_ == 0 ? kSwrFirstSettleMs
+                                                  : kSwrSettleMs);
         swrStepTuned_ = true;
         return;
     }
@@ -375,11 +499,14 @@ void MainWindow::stopSwrSweep(bool completed) {
     swrQuietTune_ = false;
     if (completed && swrPts_.size() >= 8 && curBand_ >= 0) {
         PanadapterWidget::SwrRun run;
-        run.ts = QDateTime::currentSecsSinceEpoch();
-        run.pts = swrPts_;
-        auto& list = swrRuns_[QLatin1String(kBands[curBand_].label)];
-        list.prepend(run);
-        while (list.size() > 2) list.removeLast();
+        run.ts   = QDateTime::currentSecsSinceEpoch();
+        run.ant  = curAntenna_;
+        run.band = QLatin1String(kBands[curBand_].label);
+        run.pts  = swrPts_;
+        // Storage keeps every sweep forever (browse/delete via the SWR
+        // history dialog); only the live overlay/Smith chart trim to a
+        // couple of runs for display.
+        swrRuns_[swrKey(run.ant, run.band)].prepend(run);
         saveSwrRuns();
         QSettings().setValue("swr/show", true);
         pan_->setShowSwr(true);
@@ -445,20 +572,39 @@ void MainWindow::stopSwrSweep(bool completed) {
 }
 
 // Non-modal so the operator can sweep again and compare; reopening just
-// refreshes it with the current band's runs.
-void MainWindow::showSmithChart() {
-    if (curBand_ < 0) return;
-    const QString label = QLatin1String(kBands[curBand_].label);
+// refreshes it with the given antenna+band's runs. Only the newest two
+// runs are shown (SmithChartWidget itself only ever draws runs[0]/[1] —
+// "newest" + "one dim backdrop" — so trimming here just keeps the list
+// we hand it small and cheap; storage underneath is unbounded).
+void MainWindow::showSmithChart(const QString& ant, const QString& band) {
+    if (band.isEmpty()) return;
+    const QVector<PanadapterWidget::SwrRun> runs =
+        swrRuns_.value(swrKey(ant, band)).mid(0, 2);
     if (smithDlg_) smithDlg_->close();     // WA_DeleteOnClose reaps it
     auto* dlg = new QDialog(this);
     smithDlg_ = dlg;
     dlg->setAttribute(Qt::WA_DeleteOnClose);
-    dlg->setWindowTitle(QString("Smith chart — %1 m").arg(label));
+    dlg->setWindowTitle(QString("Smith chart — %1 / %2 m")
+                             .arg(ant.isEmpty() ? "(unlabeled)" : ant, band));
     dlg->setStyleSheet("QDialog { background: #141b24; }");
     auto* lay = new QVBoxLayout(dlg);
     lay->setContentsMargins(4, 4, 4, 4);
+    if (!runs.isEmpty()) {
+        // Condition context (weather, recent antenna work) for the newest
+        // run — this is where a past sweep gets reviewed in detail, so an
+        // odd-looking curve's explanation should be visible right here.
+        auto* sub = new QLabel(dlg);
+        sub->setStyleSheet("QLabel { color: #8a9bb0; }");
+        sub->setWordWrap(true);
+        QString subTxt = QDateTime::fromSecsSinceEpoch(runs.first().ts)
+                              .toString("yyyy-MM-dd HH:mm");
+        if (!runs.first().notes.isEmpty())
+            subTxt += " — " + runs.first().notes;
+        sub->setText(subTxt);
+        lay->addWidget(sub);
+    }
     auto* chart = new SmithChartWidget(dlg);
-    chart->setRuns(swrRuns_.value(label), label);
+    chart->setRuns(runs, band);
     lay->addWidget(chart);
     dlg->resize(600, 660);
     dlg->show();
@@ -466,30 +612,104 @@ void MainWindow::showSmithChart() {
 
 void MainWindow::refreshSwrOverlay() {
     if (curBand_ >= 0)
-        pan_->setSwrRuns(swrRuns_.value(QLatin1String(kBands[curBand_].label)));
+        pan_->setSwrRuns(swrRuns_.value(swrKey(curAntenna_,
+                              QLatin1String(kBands[curBand_].label))).mid(0, 2));
     else
         pan_->setSwrRuns({});
 }
 
+// Non-modal, single instance (like smithDlg_) — reopening just refreshes
+// it. The dialog owns no data; it reacts to user actions with signals
+// and this is where they land against the real store.
+void MainWindow::showSwrHistory() {
+    if (!swrHistDlg_) {
+        auto* dlg = new SwrHistoryDialog(this);
+        swrHistDlg_ = dlg;
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        connect(dlg, &SwrHistoryDialog::openSmith, this,
+                [this](const QString& ant, const QString& band) {
+                    showSmithChart(ant, band);
+                });
+        connect(dlg, &SwrHistoryDialog::deleteRun, this,
+                [this, dlg](const QString& ant, const QString& band, qint64 ts) {
+                    auto& list = swrRuns_[swrKey(ant, band)];
+                    list.erase(std::remove_if(list.begin(), list.end(),
+                                   [ts](const auto& r) { return r.ts == ts; }),
+                               list.end());
+                    if (list.isEmpty()) swrRuns_.remove(swrKey(ant, band));
+                    saveSwrRuns();
+                    refreshSwrOverlay();
+                    dlg->setRuns(allSwrRuns());
+                    statusBar()->showMessage("SWR: sweep deleted");
+                });
+        connect(dlg, &SwrHistoryDialog::clearBucket, this,
+                [this, dlg](const QString& ant, const QString& band) {
+                    swrRuns_.remove(swrKey(ant, band));
+                    saveSwrRuns();
+                    refreshSwrOverlay();
+                    dlg->setRuns(allSwrRuns());
+                    statusBar()->showMessage(
+                        "SWR: history cleared for this antenna+band");
+                });
+        connect(dlg, &SwrHistoryDialog::notesEdited, this,
+                [this, dlg](const QString& ant, const QString& band,
+                            qint64 ts, const QString& notes) {
+                    auto& list = swrRuns_[swrKey(ant, band)];
+                    for (auto& r : list)
+                        if (r.ts == ts) { r.notes = notes; break; }
+                    saveSwrRuns();
+                    dlg->setRuns(allSwrRuns());
+                });
+    }
+    static_cast<SwrHistoryDialog*>(swrHistDlg_.data())->setRuns(allSwrRuns());
+    swrHistDlg_->show();
+    swrHistDlg_->raise();
+    swrHistDlg_->activateWindow();
+}
+
+QVector<PanadapterWidget::SwrRun> MainWindow::allSwrRuns() const {
+    QVector<PanadapterWidget::SwrRun> out;
+    for (const auto& list : swrRuns_) out += list;
+    return out;
+}
+
+// Composite key: antenna + band, so two antennas covering the same band
+// keep separate histories instead of overwriting each other's runs.
+// Unit separator (0x1F) never appears in typed antenna names and splits
+// trivially — used only as the in-memory QHash key, never persisted.
+QString MainWindow::swrKey(const QString& ant, const QString& band) {
+    return ant + QChar(0x1F) + band;
+}
+
+// v2 file schema: {"version":2, "antennas":[...], "runs":[{"ant","band",
+// "ts","notes","pts"}, ...]}. Unlike the old point-array format (which
+// degrades both ways on purpose), this is a hard bump: an old build
+// finds no band-label keys at the root of a v2 file and just loads
+// nothing (not a crash) — acceptable since there is no real downgrade
+// path, and silently misreading a run with no antenna concept at all
+// would corrupt grouping rather than just losing a field.
 void MainWindow::saveSwrRuns() const {
     QJsonObject root;
+    root["version"] = 2;
+    root["antennas"] =
+        QJsonArray::fromStringList(QSettings().value("swr/antennas").toStringList());
+    QJsonArray runs;
     for (auto it = swrRuns_.cbegin(); it != swrRuns_.cend(); ++it) {
-        QJsonArray runs;
         for (const auto& run : it.value()) {
             QJsonArray pts;
             // [Hz, SWR] as always, extended to [Hz, SWR, R, X] for points
-            // measured with a vector meter. Old files (2-element points)
-            // still load; old builds reading a new file take the first two
-            // and ignore the rest, so the format degrades both ways.
+            // measured with a vector meter.
             for (const auto& p : run.pts) {
                 QJsonArray pa{double(p.hz), p.swr};
                 if (p.zValid) { pa.append(p.rOhm); pa.append(p.xOhm); }
                 pts.append(pa);
             }
-            runs.append(QJsonObject{{"ts", double(run.ts)}, {"pts", pts}});
+            runs.append(QJsonObject{{"ant", run.ant}, {"band", run.band},
+                                     {"ts", double(run.ts)},
+                                     {"notes", run.notes}, {"pts", pts}});
         }
-        root[it.key()] = runs;
     }
+    root["runs"] = runs;
     const QString dir =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
@@ -498,32 +718,67 @@ void MainWindow::saveSwrRuns() const {
         f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
 }
 
+static PanadapterWidget::SwrRun swrRunFromJson(const QJsonObject& ro) {
+    PanadapterWidget::SwrRun run;
+    run.ts    = qint64(ro.value("ts").toDouble());
+    run.ant   = ro.value("ant").toString();
+    run.notes = ro.value("notes").toString();
+    for (const QJsonValue& pv : ro.value("pts").toArray()) {
+        const QJsonArray pa = pv.toArray();
+        PanadapterWidget::SwrRun::Pt pt;
+        pt.hz  = qint64(pa.at(0).toDouble());
+        pt.swr = pa.at(1).toDouble();
+        if (pa.size() >= 4) {          // vector-meter run
+            pt.rOhm   = pa.at(2).toDouble();
+            pt.xOhm   = pa.at(3).toDouble();
+            pt.zValid = true;
+        }
+        run.pts.append(pt);
+    }
+    return run;
+}
+
 void MainWindow::loadSwrRuns() {
     QFile f(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
             + "/swr.json");
     if (!f.open(QIODevice::ReadOnly)) return;
     const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
-    for (auto it = root.begin(); it != root.end(); ++it) {
-        QVector<PanadapterWidget::SwrRun> list;
-        for (const QJsonValue& rv : it.value().toArray()) {
-            PanadapterWidget::SwrRun run;
-            const QJsonObject ro = rv.toObject();
-            run.ts = qint64(ro.value("ts").toDouble());
-            for (const QJsonValue& pv : ro.value("pts").toArray()) {
-                const QJsonArray pa = pv.toArray();
-                PanadapterWidget::SwrRun::Pt pt;
-                pt.hz  = qint64(pa.at(0).toDouble());
-                pt.swr = pa.at(1).toDouble();
-                if (pa.size() >= 4) {          // vector-meter run
-                    pt.rOhm   = pa.at(2).toDouble();
-                    pt.xOhm   = pa.at(3).toDouble();
-                    pt.zValid = true;
-                }
-                run.pts.append(pt);
+    if (!root.contains("version")) {
+        // Old band-only format: {"<band>": [{"ts","pts"}, ...]}. Every run
+        // migrates into the unlabeled ("") antenna bucket for that band —
+        // real historical sweeps are preserved, nothing dropped. Re-saved
+        // in v2 immediately below so this path runs exactly once.
+        for (auto it = root.begin(); it != root.end(); ++it) {
+            QVector<PanadapterWidget::SwrRun> list;
+            for (const QJsonValue& rv : it.value().toArray()) {
+                PanadapterWidget::SwrRun run = swrRunFromJson(rv.toObject());
+                run.ant = QString();
+                run.band = it.key();
+                if (run.pts.size() >= 2) list.append(run);
             }
-            if (run.pts.size() >= 2) list.append(run);
+            if (!list.isEmpty()) swrRuns_[swrKey(QString(), it.key())] = list;
         }
-        if (!list.isEmpty()) swrRuns_[it.key()] = list;
+        if (!swrRuns_.isEmpty()) saveSwrRuns();
+        return;
+    }
+    // swr.json's "antennas" array is a synced-on-save copy for the file's
+    // self-description; QSettings stays authoritative — merge in anything
+    // the file knows that QSettings doesn't (e.g. a config wipe).
+    {
+        QSettings s;
+        QStringList known = s.value("swr/antennas").toStringList();
+        for (const QJsonValue& v : root.value("antennas").toArray()) {
+            const QString name = v.toString();
+            if (!name.isEmpty() && !known.contains(name)) known << name;
+        }
+        s.setValue("swr/antennas", known);
+    }
+    for (const QJsonValue& rv : root.value("runs").toArray()) {
+        const QJsonObject ro = rv.toObject();
+        PanadapterWidget::SwrRun run = swrRunFromJson(ro);
+        run.band = ro.value("band").toString();
+        if (run.pts.size() >= 2)
+            swrRuns_[swrKey(run.ant, run.band)].append(run);
     }
 }
 

@@ -2015,7 +2015,8 @@ MainWindow::MainWindow(QWidget* parent)
                 lastSwr_ = swr;
                 lastSwrMs_ = QDateTime::currentMSecsSinceEpoch();
             });
-    loadSwrRuns();                                 // per-band curves from disk
+    curAntenna_ = QSettings().value("swr/currentAntenna").toString();
+    loadSwrRuns();                                 // antenna+band curves from disk
     pan_->setShowSwr(QSettings().value("swr/show", true).toBool());
     refreshSwrOverlay();
     // Panic key: ESC drops a running SWR sweep (carrier off, all restored).

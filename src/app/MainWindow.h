@@ -100,7 +100,11 @@ private:
     void startManualTune();            // steady carrier for amp/external tuner
     void stopManualTune();
     void showSwrMenu(const QPoint& globalPos);  // right-click TUNE
-    void showSmithChart();             // vector-meter runs on a Smith chart
+    // Vector-meter runs on a Smith chart for one antenna+band. The
+    // right-click path passes curAntenna_+the current band; the history
+    // dialog passes an arbitrary past pair so an old sweep can be
+    // inspected without retuning.
+    void showSmithChart(const QString& ant, const QString& band);
     // Step a range reading SWR. Default = the visible span; wholeBand
     // sweeps band edge to edge regardless of the view (the pan can only
     // frame 480 kHz, but the dial and the Smith chart have no such limit
@@ -108,9 +112,12 @@ private:
     void startSwrSweep(bool wholeBand = false);
     void stopSwrSweep(bool completed); // unkey, restore dial, maybe save
     void swrTickStep();                // sweep state machine (150 ms timer)
-    void refreshSwrOverlay();          // push current band's runs to the pan
+    void refreshSwrOverlay();          // push current antenna+band's runs to the pan
+    void showSwrHistory();             // browse/delete every saved sweep
     void saveSwrRuns() const;          // JSON in AppDataLocation/swr.json
     void loadSwrRuns();
+    static QString swrKey(const QString& ant, const QString& band);  // composite hash key
+    QVector<PanadapterWidget::SwrRun> allSwrRuns() const;  // flattened for the history dialog
     void setDigitalMode(bool on);      // line-in for digital vs mic for voice
     void applyTxProfile(int slot);     // recall a stored TX-audio bundle
     void openSetup();                  // station-setup dialog (first run + SDR menu)
@@ -204,8 +211,15 @@ private:
     bool     swrQuietTune_ = false;            // sweep tunes bypass plan-mode
     bool     swrUsedMeter_ = false;            // this run wanted the wattmeter
     int      swrMeterPts_ = 0;                 // points that actually came from it
-    QHash<QString, QVector<PanadapterWidget::SwrRun>> swrRuns_;  // band label ->
+    QString  curAntenna_;                      // "" = unlabeled; tags the next sweep
+    // Keyed by swrKey(antenna, band) — a composite key, not band alone, so
+    // multiple antennas on the same band keep separate histories. History
+    // is unbounded (kept forever, pruned only by hand via SwrHistoryDialog);
+    // display call sites (refreshSwrOverlay, showSmithChart) trim to the
+    // newest couple of runs themselves.
+    QHash<QString, QVector<PanadapterWidget::SwrRun>> swrRuns_;
     QPointer<QDialog> smithDlg_;               // non-modal Smith chart
+    QPointer<QDialog> swrHistDlg_;             // non-modal SWR history browser
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing

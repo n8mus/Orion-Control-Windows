@@ -82,6 +82,7 @@ add_executable(tentec-console
   src/ui/SkimViewWindow.cpp     src/ui/SkimViewWindow.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/SmithChartWidget.cpp   src/ui/SmithChartWidget.h
+  src/ui/SwrHistoryDialog.cpp   src/ui/SwrHistoryDialog.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/SetupDialog.cpp        src/ui/SetupDialog.h
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h

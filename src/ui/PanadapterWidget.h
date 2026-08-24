@@ -117,6 +117,9 @@ public:
             bool   zValid = false;
         };
         qint64 ts = 0;                              // secs since epoch
+        QString ant;                                 // antenna label, "" = unlabeled
+        QString band;                                 // band label (kBands[].label)
+        QString notes;                                // conditions that could affect tuning
         QVector<Pt> pts;
     };
     void setSwrRuns(const QVector<SwrRun>& runs);
