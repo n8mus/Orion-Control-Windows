@@ -1,5 +1,8 @@
 /build/
 /build-*/
+# Coding-agent working directory: local settings, handoff notes, and entire
+# worktree checkouts of this repo. This repo is public — never publish it.
+/.claude/
 *.o
 *.user
 .cache/
