@@ -29,6 +29,10 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+#include "audio/AudioIo.h"
+#endif
+
 namespace ttc {
 
 namespace {
@@ -39,9 +43,15 @@ QLabel* section(const QString& text, QWidget* parent) {
     return l;
 }
 
-// PipeWire/Pulse capture sources by name — the CW window's RADIO source
-// (the radio's line-out into a USB codec). Listed so a tester picks
-// their interface instead of inheriting this station's SignaLink node.
+// Capture sources by name — the CW window's RADIO source (the radio's
+// line-out into a USB codec). Listed so a tester picks their interface
+// instead of inheriting this station's SignaLink node. PipeWire node
+// names on Linux (via pactl); Windows device descriptions via the
+// ClipDeck's Qt Multimedia listing — cw/audioDev matches by substring on
+// both, so either kind of name works as typed.
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+QStringList audioSources() { return ttc::AudioCapture::inputDescriptions(); }
+#else
 QStringList audioSources() {
     QProcess p;
     p.start("pactl", {"list", "short", "sources"});
@@ -53,6 +63,7 @@ QStringList audioSources() {
             out << line.section('\t', 1, 1);
     return out;
 }
+#endif
 } // namespace
 
 SetupDialog::SetupDialog(const QString& liveRadioDev,

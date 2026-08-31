@@ -11,6 +11,10 @@
 
 #include <rnnoise.h>
 
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+#include "audio/AudioIo.h"
+#endif
+
 namespace ttc {
 
 namespace {
@@ -20,10 +24,62 @@ namespace {
 const char* kDefaultDev =
     "alsa_input.usb-BurrBrown_from_Texas_Instruments_USB_AUDIO_CODEC-00"
     ".analog-stereo";
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+// The same SignaLink on Windows: its USB descriptor reads "USB AUDIO
+// CODEC" there too. On this platform cw/audioDev is a case-insensitive
+// substring of the Windows device description (see AudioIo).
+const char* kDefaultDevWin = "USB AUDIO CODEC";
+#endif
 } // namespace
 
 AudioCwSource::AudioCwSource(CwDecoder* sink, QObject* parent)
     : QObject(parent), sink_(sink) {}
+
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+
+// Windows: Qt Multimedia capture (WASAPI shared mode — other programs can
+// keep reading the same device, the property parec/PipeWire provides on
+// Linux). Everything downstream of the raw bytes is processPcm, shared.
+bool AudioCwSource::running() const { return cap_ && cap_->running(); }
+
+void AudioCwSource::start() {
+    if (running()) return;
+    const QString dev =
+        QSettings().value("cw/audioDev", kDefaultDevWin).toString();
+    if (!cap_) {
+        cap_ = new AudioCapture(this);
+        connect(cap_, &AudioCapture::chunk, this,
+                &AudioCwSource::processPcm);
+        connect(cap_, &AudioCapture::errorText, this,
+                [this](const QString& what) {
+                    emit statusChanged("RADIO audio: " + what);
+                });
+    }
+    carry_.clear();
+    nrFill_ = 0;
+    steadyHz_ = notchHz_ = -1.0;
+    steadyN_ = notchGoneN_ = 0;
+    if (nrSt_) { rnnoise_destroy(nrSt_); nrSt_ = nullptr; }
+    if (cap_->start(dev, 48000))
+        emit statusChanged("RADIO audio: " + cap_->deviceDescription()
+                           + " @ 48 kHz");
+    else
+        emit statusChanged("RADIO audio: no capture device — set "
+                           "cw/audioDev to part of the device name");
+}
+
+void AudioCwSource::stop() {
+    if (!running()) return;
+    cap_->stop();
+    carry_.clear();
+    pitchBuf_.clear();
+    pitchFill_ = 0;
+    steadyHz_ = notchHz_ = -1.0;
+    steadyN_ = notchGoneN_ = 0;
+    emit pitchMeasured(-1.0);
+}
+
+#else  // Linux: parec via the pulse layer (live-verified path, see header)
 
 bool AudioCwSource::running() const {
     return proc_ && proc_->state() != QProcess::NotRunning;
@@ -60,11 +116,6 @@ void AudioCwSource::start() {
                        + " @ 48 kHz");
 }
 
-void AudioCwSource::setNr(bool on) {
-    nrOn_ = on;
-    nrFill_ = 0;
-}
-
 void AudioCwSource::stop() {
     if (!running()) return;
     proc_->kill();
@@ -75,6 +126,13 @@ void AudioCwSource::stop() {
     steadyHz_ = notchHz_ = -1.0;
     steadyN_ = notchGoneN_ = 0;
     emit pitchMeasured(-1.0);
+}
+
+#endif
+
+void AudioCwSource::setNr(bool on) {
+    nrOn_ = on;
+    nrFill_ = 0;
 }
 
 // Strongest tone in the CW audio range, fldigi-style: Hann + 8192-pt FFT
@@ -204,7 +262,11 @@ void AudioCwSource::measurePitch() {
 }
 
 void AudioCwSource::onReadable() {
-    QByteArray data = carry_ + proc_->readAllStandardOutput();
+    if (proc_) processPcm(proc_->readAllStandardOutput());
+}
+
+void AudioCwSource::processPcm(const QByteArray& pcm) {
+    QByteArray data = carry_ + pcm;
     const int usable = data.size() & ~1;   // whole int16 samples only
     carry_ = data.mid(usable);
     const int n = usable / 2;

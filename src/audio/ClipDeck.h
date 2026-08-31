@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#include <QFile>
 #include <QObject>
 #include <QProcess>
 
+class QTimer;
+
 namespace ttc {
 
-// One-clip-at-a-time WAV recorder/player riding PipeWire's own CLI tools
-// (pw-record / pw-play), so no audio library dependency and device routing
-// uses the same node names pactl shows. Backs the DVR: off-air RX capture,
+class AudioCapture;
+class AudioPlayback;
+
+// One-clip-at-a-time WAV recorder/player. On Linux it rides PipeWire's own
+// CLI tools (parecord / paplay), so no audio library dependency and device
+// routing uses the same node names pactl shows; on Windows the same deck
+// runs on Qt Multimedia (src/audio/AudioIo) and "node" means a substring
+// of the Windows device description. Backs the DVR: off-air RX capture,
 // voice-keyer message record, and playback either to the speakers or out
 // the radio's sound path (SignaLink) for transmit.
 class ClipDeck : public QObject {
@@ -50,6 +58,15 @@ private:
     QProcess proc_;
     State state_ = State::Idle;
     bool stopping_ = false;           // our SIGINT, not a real error
+    // Windows deck (Qt Multimedia); untouched on Linux.
+    AudioCapture* cap_ = nullptr;
+    AudioPlayback* out_ = nullptr;
+    QTimer* pump_ = nullptr;          // paced file playback / drain watch
+    QFile wav_;                       // recording target
+    qint64 dataBytes_ = 0;            // PCM bytes written so far
+    QByteArray playPcm_;              // s16 mono payload being played
+    qsizetype playPos_ = 0;
+    int playRate_ = 48000;
 };
 
 } // namespace ttc

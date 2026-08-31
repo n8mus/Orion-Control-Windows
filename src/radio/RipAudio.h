@@ -8,6 +8,8 @@ class QTimer;
 
 namespace ttc {
 
+class AudioPlayback;
+
 // RIP — the Omni VII's receive audio over Ethernet (One Plug REMOTE mode).
 // The radio streams its speaker audio as UDP datagrams on CMD port +2:
 // 12-byte header (variant 0x00 carries the live S-meter in octets 8-11,
@@ -56,6 +58,7 @@ private:
     QUdpSocket* sock_ = nullptr;
     QTimer* keepalive_ = nullptr;
     QProcess* player_ = nullptr;
+    AudioPlayback* out_ = nullptr;         // Windows playback endpoint
     quint32 host_ = 0;
     quint16 audioPort_ = 0;
     quint16 passcode_ = 0;

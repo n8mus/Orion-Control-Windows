@@ -6,6 +6,11 @@
 #include <QUdpSocket>
 #include <cstdio>
 
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+#include "audio/AudioIo.h"
+#define TTC_TRIP_QTMM 1
+#endif
+
 namespace {
 constexpr int kSampleRate = 7013;
 constexpr int kSamplesPerPkt = 128;
@@ -43,6 +48,20 @@ bool TripAudio::start(quint32 host, quint16 cmdPort, const QString& source) {
         return false;
     }
     if (selftest_) return true;                  // no capture under the harness
+#ifdef TTC_TRIP_QTMM
+    // Windows capture endpoint (AudioIo resamples device rate → 7013).
+    // radio/tripSource matches the input's description on this platform.
+    cap_ = new AudioCapture(this);
+    connect(cap_, &AudioCapture::chunk, this, [this](const QByteArray& c) {
+        acc_ += c;                               // drain() sends, same as ever
+        const int cap = kSampleRate * 2 / 2;     // 0.5 s of s16 mono
+        if (acc_.size() > cap) acc_.remove(0, (acc_.size() - cap) & ~255);
+    });
+    if (!cap_->start(source.trimmed(), kSampleRate)) {
+        cap_->deleteLater();
+        cap_ = nullptr;                          // no capture: keyed, but silent
+    }
+#else
     rec_ = new QProcess(this);
     // Pulse-layer capture (parec -> raw s16 stdout), not pw-record:
     // live-measured that native capture reads sink MONITORS ~22 dB low
@@ -61,6 +80,7 @@ bool TripAudio::start(quint32 host, quint16 cmdPort, const QString& source) {
         rec_->deleteLater();
         rec_ = nullptr;                          // no capture: keyed, but silent
     }
+#endif
     // Pace packets out at the audio rate. The radio's transmit buffer needs a
     // STEADY ~55 pkt/s; dumping each capture burst onto the wire immediately
     // floods then starves it (gated/"dashed" TX audio). onCapture only fills
@@ -87,6 +107,13 @@ void TripAudio::stop() {
         rec_->deleteLater();
         rec_ = nullptr;
     }
+#ifdef TTC_TRIP_QTMM
+    if (cap_) {
+        cap_->stop();
+        cap_->deleteLater();
+        cap_ = nullptr;
+    }
+#endif
     if (sock_) {
         sock_->deleteLater();
         sock_ = nullptr;

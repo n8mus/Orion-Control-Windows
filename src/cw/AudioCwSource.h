@@ -11,6 +11,7 @@ struct DenoiseState;
 namespace ttc {
 
 class CwDecoder;
+class AudioCapture;
 
 // Radio-audio source for the CW window's tuned reader: captures the
 // SignaLink (the Orion's audio out — real antenna, crystal filter, AGC)
@@ -57,9 +58,13 @@ signals:
 
 private:
     void onReadable();
+    // Shared tail of the pipeline: raw s16le mono 48 kHz bytes in (from
+    // parec on Linux, AudioCapture on Windows), decoder/pitch/NR out.
+    void processPcm(const QByteArray& data);
 
     CwDecoder* sink_;
     QProcess* proc_ = nullptr;
+    AudioCapture* cap_ = nullptr;          // Windows capture endpoint
     QByteArray carry_;                     // odd trailing byte between reads
     std::vector<std::complex<float>> buf_;
     bool nrOn_ = false;

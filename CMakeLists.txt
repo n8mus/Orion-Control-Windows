@@ -36,6 +36,16 @@ endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort)
 
+# Qt Multimedia backs the Windows audio endpoints (src/audio/AudioIo) —
+# capture/playback where the PipeWire CLI tools don't exist. Required there;
+# optional on Linux, where the parec/pacat paths remain the live-verified
+# default and this stays unused.
+if(WIN32)
+  find_package(Qt6 REQUIRED COMPONENTS Multimedia)
+else()
+  find_package(Qt6 QUIET COMPONENTS Multimedia)
+endif()
+
 # OpenMP parallelizes the skimmer's channel bank (SkimmerEngine.cpp);
 # optional — without it the pragma is ignored and the bank runs serial.
 find_package(OpenMP QUIET)
@@ -134,6 +144,12 @@ if(WIN32)
   # Linux desktop-icon launch. Explicit redirects (selftest harness) still
   # capture stderr; only the auto-console goes away.
   set_target_properties(tentec-console PROPERTIES WIN32_EXECUTABLE ON)
+endif()
+if(TARGET Qt6::Multimedia)
+  target_sources(tentec-console PRIVATE
+    src/audio/AudioIo.cpp src/audio/AudioIo.h)
+  target_compile_definitions(tentec-console PRIVATE HAVE_QTMULTIMEDIA)
+  target_link_libraries(tentec-console PRIVATE Qt6::Multimedia)
 endif()
 if(OpenMP_CXX_FOUND)
   target_link_libraries(tentec-console PRIVATE OpenMP::OpenMP_CXX)

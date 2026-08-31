@@ -8,6 +8,11 @@
 #include <cstdio>
 #include <cstdlib>
 
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+#include "audio/AudioIo.h"
+#define TTC_RIP_QTMM 1
+#endif
+
 namespace ttc {
 
 RipAudio::RipAudio(QObject* parent) : QObject(parent) {
@@ -55,6 +60,9 @@ void RipAudio::stop() {
         player_->deleteLater();
         player_ = nullptr;
     }
+#ifdef TTC_RIP_QTMM
+    if (out_) { out_->stop(); out_->deleteLater(); out_ = nullptr; }
+#endif
     if (selftest_)
         fprintf(stderr, "[rip] %llu audio pkts received\n",
                 static_cast<unsigned long long>(pkts_));
@@ -74,6 +82,9 @@ void RipAudio::pause() {
         player_->deleteLater();
         player_ = nullptr;
     }
+#ifdef TTC_RIP_QTMM
+    if (out_) { out_->stop(); out_->deleteLater(); out_ = nullptr; }
+#endif
 }
 
 void RipAudio::resume() {
@@ -104,6 +115,20 @@ void RipAudio::onDatagram() {
         if (d.size() <= 12) continue;               // header-only / stray
         ++pkts_;
         if (selftest_) continue;                    // count only, no audio out
+#ifdef TTC_RIP_QTMM
+        if (!out_) {
+            // Windows playback endpoint (AudioIo resamples 7013 → device
+            // rate). radio/ripSink matches the output's description here.
+            out_ = new AudioPlayback(this);
+            if (!out_->start(
+                    QSettings().value("radio/ripSink").toString().trimmed(),
+                    7013)) {
+                out_->deleteLater();
+                out_ = nullptr;
+                return;                              // no audio out: count only
+            }
+        }
+#else
         if (!player_) {
             // Playback rides the PULSE layer (pacat -> pipewire-pulse), the
             // same path every desktop app uses — live-found: after a
@@ -135,6 +160,7 @@ void RipAudio::onDatagram() {
                 }
             }
         }
+#endif
         // Payload: signed 8-bit linear (top byte of s16, WWV-tone-verified)
         // — widen to s16le with the computer-side gain applied in-process
         // (volPct_ 100 = unity, exactly the old high-byte copy). 0 = muted:
@@ -149,7 +175,11 @@ void RipAudio::onDatagram() {
             dst[2 * i] = char(v & 0xff);
             dst[2 * i + 1] = char((v >> 8) & 0xff);
         }
+#ifdef TTC_RIP_QTMM
+        out_->write(pcm);
+#else
         player_->write(pcm);
+#endif
     }
 }
 

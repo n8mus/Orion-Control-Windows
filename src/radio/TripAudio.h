@@ -10,6 +10,8 @@ class QTimer;
 
 namespace ttc {
 
+class AudioCapture;
+
 // TRIP — Transmit audio over IP: the mirror of RIP, computer -> Omni VII.
 // While the rig is keyed in REMOTE mode the radio takes its TRANSMIT audio
 // from this stream instead of the mic, so remote SSB / digital / voice-keyer
@@ -49,6 +51,7 @@ private:
 
     QUdpSocket* sock_ = nullptr;
     QProcess* rec_ = nullptr;
+    AudioCapture* cap_ = nullptr;        // Windows capture endpoint
     QTimer* pacer_ = nullptr;            // clocks packets out at the audio rate
     QElapsedTimer clock_;                // real-time reference for pacing
     QByteArray acc_;                     // s16 capture accumulator
