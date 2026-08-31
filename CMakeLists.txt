@@ -128,6 +128,13 @@ add_executable(tentec-console
 )
 target_include_directories(tentec-console PRIVATE src)
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort rnnoise)
+if(WIN32)
+  # GUI subsystem: no stray console window on double-click. stderr then has
+  # no tty, so main.cpp's session-log redirect engages — same behavior as a
+  # Linux desktop-icon launch. Explicit redirects (selftest harness) still
+  # capture stderr; only the auto-console goes away.
+  set_target_properties(tentec-console PROPERTIES WIN32_EXECUTABLE ON)
+endif()
 if(OpenMP_CXX_FOUND)
   target_link_libraries(tentec-console PRIVATE OpenMP::OpenMP_CXX)
 endif()

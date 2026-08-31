@@ -41,6 +41,35 @@
 
 namespace ttc {
 
+// The big tool windows (CW, band map, SKIM waterfall, DIGI) get parked on
+// other monitors in a shack. On Windows an OWNED window has no taskbar
+// button and rides its owner's z-order, and dragging one across monitors
+// with different DPI recreates the native window — live-found 2026-08-31
+// on the all-in-one + second display: both windows stranded invisible
+// behind the maximized console ("they are gone"). Parentless top-levels
+// are the Windows convention for multi-window ham software (N1MM-style:
+// own taskbar entry, free stacking on any monitor). Linux keeps the
+// transient-for parent the operator's WM already handles well. The pair
+// below implements the split: parent choice + the quit/lifetime fixups a
+// parentless window needs (MainWindow's destructor deletes them).
+static QWidget* toolWinParent(QWidget* mainWin) {
+#ifdef Q_OS_WIN
+    Q_UNUSED(mainWin);
+    return nullptr;
+#else
+    return mainWin;
+#endif
+}
+static void adoptToolWindow(QWidget* w) {
+#ifdef Q_OS_WIN
+    // The console closing must still quit the app even while a parentless
+    // tool window is open.
+    w->setAttribute(Qt::WA_QuitOnClose, false);
+#else
+    Q_UNUSED(w);
+#endif
+}
+
 // MASTER.SCP loader (shared logic): cqrlog ships the contest super-check
 // list; the user's own copy wins if present.
 static QSet<QString> loadMasterScp() {
@@ -133,7 +162,8 @@ void MainWindow::setupCwUi() {
     topLay2_->addWidget(cwBtn);
     connect(cwBtn, &QToolButton::clicked, this, [this] {
         if (!cwWin_) {
-            cwWin_ = new CwWindow(radio_, this);
+            cwWin_ = new CwWindow(radio_, toolWinParent(this));
+            adoptToolWindow(cwWin_);
             cwWin_->setMyCall(QSettings()
                 .value("station/callsign", "N8EM").toString());
             cwWin_->setHisCall(QString());
@@ -403,7 +433,8 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
                     if (!logbook_.ready()) return QChar('?');
                     return logbook_.status(call, LogbookIndex::bandForHz(hz));
                 },
-                this);
+                toolWinParent(this));
+            adoptToolWindow(skimWin_);
             connect(skimWin_, &SkimmerWindow::tuneTo, this,
                     [this](qint64 hz, const QString& call) {
                         tuneAbsolute(uint64_t(hz));
@@ -513,7 +544,8 @@ void MainWindow::openSkimView() {
                 dial = qint64(centerHz_);
                 loOff = loOffHz_;
             },
-            this);
+            toolWinParent(this));
+        adoptToolWindow(skimView_);
         connect(skimView_, &SkimViewWindow::tuneTo, this,
                 [this](qint64 hz, const QString& call) {
                     tuneAbsolute(uint64_t(hz));
@@ -547,7 +579,8 @@ void MainWindow::setupDigiUi() {
             fldigi_->setEndpoint(
                 QSettings().value("digi/host", "127.0.0.1").toString(),
                 quint16(QSettings().value("digi/port", 7362).toUInt()));
-            digiWin_ = new DigiWindow(fldigi_, this);
+            digiWin_ = new DigiWindow(fldigi_, toolWinParent(this));
+            adoptToolWindow(digiWin_);
         }
         digiWin_->show();
         digiWin_->raise();

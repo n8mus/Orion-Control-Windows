@@ -3459,6 +3459,15 @@ MainWindow::~MainWindow() {
         iqWorker_->wait(2000);
     }
 #endif
+    // Tool windows are parentless top-levels on Windows (own taskbar entry
+    // and z-order; see toolWinParent in MainWindowTools.cpp) — nothing
+    // deletes them but us. Last, with every IQ producer quiet, matching
+    // where child destruction ran when they were parented (on Linux they
+    // still are, and these deletes just run a moment early).
+    delete cwWin_;    cwWin_ = nullptr;
+    delete skimWin_;  skimWin_ = nullptr;
+    delete skimView_; skimView_ = nullptr;
+    delete digiWin_;  digiWin_ = nullptr;
 }
 
 // One choke point for the VOACAP overlay: run the engine only when the
