@@ -14,8 +14,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <csignal>
+#ifdef Q_OS_WIN
+#include <io.h>                        // _isatty (fd 2 = stderr in the CRT)
+#define isatty _isatty
+#else
 #include <execinfo.h>
 #include <unistd.h>
+#endif
 #include "app/MainWindow.h"
 
 namespace {
@@ -24,18 +29,26 @@ namespace {
 // at the session log when launched from a desktop icon — see below), so a
 // tester's crash report carries evidence even before anyone reaches for
 // coredumpctl. backtrace_symbols_fd is async-signal-safe; the fancy
-// alternatives are not.
+// alternatives are not. Windows has no execinfo — the handler still stamps
+// WHICH signal hit the log (the session-log redirect works the same there);
+// a real trace comes from a debugger or WER, not from here.
 void fatalSignal(int sig) {
     const char* name = sig == SIGSEGV   ? "SIGSEGV"
                        : sig == SIGABRT ? "SIGABRT"
                        : sig == SIGFPE  ? "SIGFPE"
                                         : "signal";
+#ifdef Q_OS_WIN
+    fprintf(stderr, "\n=== FATAL %s ===\n", name);   // best effort; not
+    fflush(stderr);                                  // async-signal-safe, but
+                                                     // we're crashing anyway
+#else
     char head[64];
     const int n = snprintf(head, sizeof head, "\n=== FATAL %s ===\n", name);
     (void)!write(2, head, size_t(n));
     void* frames[48];
     const int cnt = backtrace(frames, 48);
     backtrace_symbols_fd(frames, cnt, 2);
+#endif
     signal(sig, SIG_DFL);                  // fall through to the core dump
     raise(sig);
 }

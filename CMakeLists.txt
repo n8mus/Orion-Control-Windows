@@ -6,6 +6,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
+if(MSVC)
+  # /utf-8: the source is UTF-8 (arrows/dashes in UI strings) and MSVC's
+  # default codepage mangles the literals. _USE_MATH_DEFINES: M_PI et al.
+  # NOMINMAX: windows.h's min/max macros collide with std::min/std::max.
+  add_compile_options(/utf-8)
+  add_compile_definitions(_USE_MATH_DEFINES NOMINMAX)
+endif()
 if(NOT CMAKE_BUILD_TYPE)
   # RelWithDebInfo, NOT Debug: the DSP chain (16k FFT, 24-channel skimmer
   # bank, the SKIM view's STFT) runs 10-30x slower unoptimized, and at
@@ -36,6 +43,25 @@ find_package(OpenMP QUIET)
 # SDRplay RSP source is optional so the core app always builds. Turn on with
 # -DBUILD_SDRPLAY=ON once the SDRplay API service is running (Phase 0).
 option(BUILD_SDRPLAY "Build the SDRplay RSP IQ source (needs sdrplay_api)" OFF)
+
+# rnnoise: on Linux a plain -lrnnoise from the distro package; on Windows it
+# comes from vcpkg (-DCMAKE_TOOLCHAIN_FILE=.../vcpkg.cmake), where the lib
+# and header land on CMake's default search path — find them explicitly so a
+# missing port fails at configure time, not deep in the link.
+if(WIN32)
+  find_path(RNNOISE_INCLUDE_DIR rnnoise.h REQUIRED)
+  find_library(RNNOISE_LIBRARY rnnoise REQUIRED)
+  add_library(rnnoise INTERFACE IMPORTED)
+  target_include_directories(rnnoise INTERFACE "${RNNOISE_INCLUDE_DIR}")
+  target_link_libraries(rnnoise INTERFACE "${RNNOISE_LIBRARY}")
+endif()
+
+# SDRplay API on Windows installs to a fixed vendor path (the service +
+# import lib + header); on Linux the headers/libs are on the system paths.
+if(WIN32)
+  set(SDRPLAY_ROOT "C:/Program Files/SDRplay/API" CACHE PATH
+      "SDRplay API install root (inc/ + x64/)")
+endif()
 
 add_executable(tentec-console
   src/app/main.cpp
@@ -134,7 +160,7 @@ add_executable(dcutest EXCLUDE_FROM_ALL
   src/radio/DcuRotor.cpp src/radio/SerialPort.cpp
   src/net/RotorServer.cpp)
 target_include_directories(dcutest PRIVATE src)
-target_link_libraries(dcutest PRIVATE Qt6::Core Qt6::Network)
+target_link_libraries(dcutest PRIVATE Qt6::Core Qt6::Network Qt6::SerialPort)
 
 # WinKeyer wire format against a pty playing the keyer. Asserts the exact
 # command bytes for every timing parameter against the K1EL WK3 manual's
@@ -150,14 +176,14 @@ add_executable(lptest EXCLUDE_FROM_ALL
   tests/lptest.cpp
   src/radio/LpMeter.cpp src/radio/SerialPort.cpp src/radio/TxMeter.h)
 target_include_directories(lptest PRIVATE src)
-target_link_libraries(lptest PRIVATE Qt6::Core)
+target_link_libraries(lptest PRIVATE Qt6::Core Qt6::SerialPort)
 
 # PowerMaster wattmeter frame decode. Pure parser test — needs no hardware.
 add_executable(pmtest EXCLUDE_FROM_ALL
   tests/pmtest.cpp
   src/radio/PmMeter.cpp src/radio/SerialPort.cpp src/radio/TxMeter.h)
 target_include_directories(pmtest PRIVATE src)
-target_link_libraries(pmtest PRIVATE Qt6::Core)
+target_link_libraries(pmtest PRIVATE Qt6::Core Qt6::SerialPort)
 
 # Smith-chart render harness: draws a band's stored sweep runs to a PNG
 # (offscreen), for eyeballing the chart against real captured data.
@@ -234,6 +260,13 @@ if(BUILD_SDRPLAY)
   add_executable(sdr_probe tools/sdr_probe.cpp src/sdr/SdrPlaySource.cpp)
   target_include_directories(sdr_probe PRIVATE src)
   target_link_libraries(sdr_probe PRIVATE sdrplay_api)
+
+  if(WIN32)  # vendor install: header + import lib are not on default paths
+    foreach(t tentec-console sdr_probe)
+      target_include_directories(${t} PRIVATE "${SDRPLAY_ROOT}/inc")
+      target_link_directories(${t} PRIVATE "${SDRPLAY_ROOT}/x64")
+    endforeach()
+  endif()
 else()
   message(STATUS "SDRplay RSP source: disabled (-DBUILD_SDRPLAY=ON to enable)")
 endif()

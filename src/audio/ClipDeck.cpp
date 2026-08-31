@@ -62,8 +62,15 @@ bool ClipDeck::play(const QString& wavPath, const QString& targetNode) {
 void ClipDeck::stop() {
     if (state_ == State::Idle) return;
     stopping_ = true;
+#ifdef Q_OS_WIN
+    // No SIGINT on Windows — but no parecord/paplay either: this whole
+    // helper-process deck is replaced by Qt Multimedia in the Windows audio
+    // phase. terminate() keeps it compiling (and harmless) until then.
+    proc_.terminate();
+#else
     if (proc_.processId() > 0)
         ::kill(static_cast<pid_t>(proc_.processId()), SIGINT);
+#endif
 }
 
 bool ClipDeck::launch(const QString& exe, const QStringList& args, State s) {

@@ -2,8 +2,8 @@
 #include "dsp/SpectrumComputer.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
-#include <ctime>
 
 namespace ttc {
 
@@ -16,8 +16,11 @@ SpectrumComputer::SpectrumComputer(int fftSize)
 }
 
 double SpectrumComputer::now_ms() {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+    // steady_clock = CLOCK_MONOTONIC on POSIX, QPC on Windows — same
+    // monotonic-ms contract, no platform split.
+    using namespace std::chrono;
+    return duration<double, std::milli>(
+               steady_clock::now().time_since_epoch()).count();
 }
 
 void SpectrumComputer::addSamples(const IqBlock& iq) {
