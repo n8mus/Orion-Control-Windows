@@ -28,6 +28,14 @@ bool SerialPort::open(const std::string& device, int baud, bool hwHandshake) {
         port_ = nullptr;
         return false;
     }
+    // Assert the modem lines. A POSIX tty open raises DTR+RTS on its own —
+    // the behavior every device on this bus was wired against — but Windows
+    // leaves them wherever the driver last had them, and the station's
+    // RS-232 side goes silent with DTR low (live-found on the Orion via the
+    // FT4232H, 2026-08-31: probes answered with DTR up, nothing without).
+    // Under HardwareControl RTS belongs to the driver; don't touch it there.
+    port_->setDataTerminalReady(true);
+    if (!hwHandshake) port_->setRequestToSend(true);
     port_->clear();                                    // both queues, like tcflush
     connect(port_, &QSerialPort::readyRead, this, &SerialPort::onReadable);
     // Surface async faults (device yanked, driver error). NoError is the
