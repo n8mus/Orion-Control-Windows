@@ -991,6 +991,16 @@ MainWindow::MainWindow(QWidget* parent)
     connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
     connect(&spotClient_, &SpotClient::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });
+    // Re-serve the whole aggregate on :7300 — cluster lines verbatim, POTA
+    // formatted (the server throttles POTA's poll repetition) — so a
+    // one-node client (HRD Logbook, cqrlog) points here and loses nothing
+    // against a direct cluster connection, and gains the skimmer.
+    connect(&spotClient_, &SpotClient::rawSpotLine,
+            skimSrv_, &SkimServer::relayLine);
+    connect(&potaClient_, &PotaClient::spotsChanged, this, [this] {
+        for (const Spot& s : potaClient_.spots())
+            skimSrv_->announcePota(s.call, s.hz, s.tag);
+    });
     connect(&potaClient_, &PotaClient::spotsChanged, this, pushSpots);
     connect(&potaClient_, &PotaClient::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });

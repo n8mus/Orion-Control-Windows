@@ -54,6 +54,10 @@ public:
 signals:
     void spotsChanged();
     void statusChanged(const QString& s);        // for the status bar
+    // Every accepted "DX de ..." line, verbatim (spotter and comment
+    // intact) — the SET/SKIMMER CW-RBN flood stays dropped. Feeds the
+    // :7300 server's relay so one local node carries the whole picture.
+    void rawSpotLine(const QString& line);
 
 private:
     void openSocket();

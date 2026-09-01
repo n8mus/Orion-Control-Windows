@@ -37,6 +37,16 @@ public:
 public slots:
     // Wire to SkimmerEngine::spotFound.
     void announce(const QString& call, qint64 hz, int wpm);
+    // Relay one raw "DX de ..." line from the console's own cluster
+    // connection, verbatim — original spotter and comment preserved. With
+    // these wired, :7300 carries everything the console aggregates and a
+    // single-node client (HRD, cqrlog) loses nothing by pointing here.
+    // No throttle: the upstream node already paced it.
+    void relayLine(const QString& line);
+    // POTA activations, formatted cluster-style. The POTA poller re-lists
+    // every active park each cycle, so these are throttled hard (10 min
+    // per call) — about the cadence real cluster re-spots give POTA.
+    void announcePota(const QString& call, qint64 hz, const QString& park);
 
 private:
     void onNewConnection();

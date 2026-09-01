@@ -178,6 +178,7 @@ void SpotClient::onData() {
         s.hz = hz;
         byCall_[s.call] = s;
         changed = true;
+        emit rawSpotLine(line);        // relay feed (:7300), original text
     }
     if (byCall_.size() > kMaxSpots) prune();
     if (changed) emit spotsChanged();

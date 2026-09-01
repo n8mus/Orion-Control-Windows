@@ -69,6 +69,27 @@ void SkimServer::sendLine(QTcpSocket* c, const QString& line) {
     c->write((line + QStringLiteral("\r\n")).toLatin1());
 }
 
+void SkimServer::relayLine(const QString& line) {
+    for (QTcpSocket* c : clients_) sendLine(c, line);
+}
+
+void SkimServer::announcePota(const QString& call, qint64 hz,
+                              const QString& park) {
+    if (clients_.isEmpty()) return;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const QString key = QStringLiteral("P:") + call;   // own throttle lane
+    if (now - lastSent_.value(key, 0) < 600) return;
+    lastSent_[key] = now;
+    const QString line =
+        QStringLiteral("DX de %1-#:  %2  %3 POTA %4  %5Z")
+            .arg(spotter_)
+            .arg(hz / 1000.0, 8, 'f', 1)
+            .arg(call, -12)
+            .arg(park)
+            .arg(QDateTime::currentDateTimeUtc().toString("hhmm"));
+    for (QTcpSocket* c : clients_) sendLine(c, line);
+}
+
 void SkimServer::announce(const QString& call, qint64 hz, int wpm) {
     if (clients_.isEmpty()) return;
     const qint64 now = QDateTime::currentSecsSinceEpoch();
