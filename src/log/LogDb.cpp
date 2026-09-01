@@ -115,6 +115,16 @@ bool LogDb::open(const QString& path) {
     if (!q.exec(QString::fromLatin1(kSchema))) return false;
     q.exec("CREATE INDEX IF NOT EXISTS idx_qso_call ON qso(call)");
     q.exec("CREATE INDEX IF NOT EXISTS idx_qso_call_band ON qso(call, band)");
+    // Repair migration: early imports bound absent text fields as SQL
+    // NULL (a null QString binds as NULL, not ''), and NULL poisons
+    // every <> comparison — the first LoTW sync skipped 6734 rows that
+    // way. Normalize once per open; idempotent and cheap.
+    for (const char* col : {"rst_s", "rst_r", "name", "qth", "grid",
+                            "country", "pota", "comment", "qsl_rcvd",
+                            "lotw_rcvd", "eqsl_rcvd", "up_lotw", "up_eqsl",
+                            "up_qrz", "up_club", "up_hrdlog"})
+        q.exec(QString("UPDATE qso SET %1='' WHERE %1 IS NULL")
+                   .arg(QLatin1String(col)));
     return true;
 }
 
@@ -257,8 +267,10 @@ Qso LogDb::fromAdif(const AdifRecord& r) {
         o.pota = r.value("SIG_INFO").toUpper();
     o.comment = r.value("COMMENT");
     const auto yes = [&r](const char* k) {
+        // Empty, never null — a null QString binds as SQL NULL and NULL
+        // poisons every later <> comparison (the 6734-row lesson).
         return r.value(QLatin1String(k)).startsWith('Y', Qt::CaseInsensitive)
-            ? QStringLiteral("Y") : QString();
+            ? QStringLiteral("Y") : QStringLiteral("");
     };
     o.qslRcvd  = yes("QSL_RCVD");
     o.lotwRcvd = yes("LOTW_QSL_RCVD");
@@ -273,7 +285,8 @@ int LogDb::applyLotwConfirmations(const QList<AdifRecord>& recs) {
     QSqlQuery q(db);
     q.prepare(
         "UPDATE qso SET lotw_rcvd='Y' WHERE call=:call AND band=:band"
-        " AND mode=:mode AND date(ts_utc)=:day AND lotw_rcvd<>'Y'");
+        " AND mode=:mode AND date(ts_utc)=:day"
+        " AND IFNULL(lotw_rcvd,'')<>'Y'");
     int n = 0;
     for (const AdifRecord& r : recs) {
         if (!r.value("QSL_RCVD").startsWith('Y', Qt::CaseInsensitive))
