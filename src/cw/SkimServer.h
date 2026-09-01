@@ -51,11 +51,20 @@ public slots:
 private:
     void onNewConnection();
     void sendLine(QTcpSocket* c, const QString& line);
+    // Append to the rolling history and send to every connected client.
+    // History fills whether or not anyone is connected — that's what makes
+    // the login replay below instantly useful.
+    void broadcast(const QString& line);
 
     QTcpServer srv_;
     QString spotter_ = QStringLiteral("N8EM");
     QVector<QTcpSocket*> clients_;         // logged-in or not, all get spots
     QHash<QString, qint64> lastSent_;      // call -> epoch (throttle)
+    // Rolling spot history, replayed to a client right after its login —
+    // the "full page on connect" real cluster nodes give (DXSpider sh/dx),
+    // so cqrlog/HRD/Not1MM start with the last hour instead of a blank map.
+    struct Kept { qint64 atSecs; QString line; };
+    QVector<Kept> history_;
 };
 
 } // namespace ttc

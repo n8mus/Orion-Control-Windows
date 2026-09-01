@@ -60,6 +60,10 @@ void SkimServer::onNewConnection() {
                     "hears them")
                         .arg(who.isEmpty() ? QStringLiteral("OM") : who,
                              spotter_));
+                // Backlog replay: the last hour of everything this node
+                // carries, so the band map fills on connect instead of
+                // starting blank — the sh/dx page real nodes serve.
+                for (const Kept& k : history_) sendLine(c, k.line);
             }
         });
     }
@@ -69,43 +73,51 @@ void SkimServer::sendLine(QTcpSocket* c, const QString& line) {
     c->write((line + QStringLiteral("\r\n")).toLatin1());
 }
 
-void SkimServer::relayLine(const QString& line) {
+void SkimServer::broadcast(const QString& line) {
+    // History first (even with zero clients — the login replay is only as
+    // good as what accumulated while nobody watched), then the live fans.
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    history_.push_back({now, line});
+    constexpr qint64 kKeepSecs = 3600;     // "about an hour", like a node
+    constexpr int    kKeepMax  = 500;      // contest-weekend cap
+    while (!history_.isEmpty()
+           && (now - history_.front().atSecs > kKeepSecs
+               || history_.size() > kKeepMax))
+        history_.pop_front();
     for (QTcpSocket* c : clients_) sendLine(c, line);
+}
+
+void SkimServer::relayLine(const QString& line) {
+    broadcast(line);
 }
 
 void SkimServer::announcePota(const QString& call, qint64 hz,
                               const QString& park) {
-    if (clients_.isEmpty()) return;
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     const QString key = QStringLiteral("P:") + call;   // own throttle lane
     if (now - lastSent_.value(key, 0) < 600) return;
     lastSent_[key] = now;
-    const QString line =
-        QStringLiteral("DX de %1-#:  %2  %3 POTA %4  %5Z")
-            .arg(spotter_)
-            .arg(hz / 1000.0, 8, 'f', 1)
-            .arg(call, -12)
-            .arg(park)
-            .arg(QDateTime::currentDateTimeUtc().toString("hhmm"));
-    for (QTcpSocket* c : clients_) sendLine(c, line);
+    broadcast(QStringLiteral("DX de %1-#:  %2  %3 POTA %4  %5Z")
+                  .arg(spotter_)
+                  .arg(hz / 1000.0, 8, 'f', 1)
+                  .arg(call, -12)
+                  .arg(park)
+                  .arg(QDateTime::currentDateTimeUtc().toString("hhmm")));
 }
 
 void SkimServer::announce(const QString& call, qint64 hz, int wpm) {
-    if (clients_.isEmpty()) return;
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     if (now - lastSent_.value(call, 0) < 120) return;
     lastSent_[call] = now;
     // Classic layout, column-compatible with what cluster parsers expect:
     // "DX de SPOTTER-#:  FREQ_KHZ  CALL  comment  HHMMZ"
-    const QString line =
-        QStringLiteral("DX de %1-#:  %2  %3 CW %4  %5Z")
-            .arg(spotter_)
-            .arg(hz / 1000.0, 8, 'f', 1)
-            .arg(call, -12)
-            .arg(wpm > 0 ? QString("%1 WPM").arg(wpm, 2)
-                         : QStringLiteral("      "))
-            .arg(QDateTime::currentDateTimeUtc().toString("hhmm"));
-    for (QTcpSocket* c : clients_) sendLine(c, line);
+    broadcast(QStringLiteral("DX de %1-#:  %2  %3 CW %4  %5Z")
+                  .arg(spotter_)
+                  .arg(hz / 1000.0, 8, 'f', 1)
+                  .arg(call, -12)
+                  .arg(wpm > 0 ? QString("%1 WPM").arg(wpm, 2)
+                               : QStringLiteral("      "))
+                  .arg(QDateTime::currentDateTimeUtc().toString("hhmm")));
 }
 
 } // namespace ttc
