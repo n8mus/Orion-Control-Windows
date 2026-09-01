@@ -14,6 +14,7 @@
 #include <QSettings>
 #include <QSqlQuery>
 #include <QSqlTableModel>
+#include <QStyledItemDelegate>
 #include <QTableView>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -30,6 +31,19 @@ enum Col { ColId = 0, ColTs, ColCall, ColBand, ColFreq, ColMode, ColRstS,
            ColRstR, ColName, ColQth, ColGrid, ColCountry, ColCqz, ColItuz,
            ColPota, ColComment, ColQsl, ColLotw, ColEqsl,
            ColUpLotw, ColUpEqsl, ColUpQrz, ColUpClub, ColUpHrdlog };
+
+// The table stores Hz; the operator reads MHz ("7.036 etc, don't need it
+// to the hz level"). Display-only — an edit still works in raw Hz.
+class MhzDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    QString displayText(const QVariant& v,
+                        const QLocale& locale) const override {
+        Q_UNUSED(locale);
+        const qlonglong hz = v.toLongLong();
+        return hz > 0 ? QString::number(hz / 1e6, 'f', 3) : QString();
+    }
+};
 } // namespace
 
 LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
@@ -96,7 +110,7 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     head(ColTs, "UTC");
     head(ColCall, "CALL");
     head(ColBand, "BAND");
-    head(ColFreq, "HZ");
+    head(ColFreq, "FREQ");
     head(ColMode, "MODE");
     head(ColRstS, "SENT");
     head(ColRstR, "RCVD");
@@ -120,6 +134,8 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
         view_->setColumnHidden(c, true);
     view_->setColumnWidth(ColUpLotw, 44);
     view_->setColumnWidth(ColLotw, 44);
+    view_->setColumnWidth(ColFreq, 64);
+    view_->setItemDelegateForColumn(ColFreq, new MhzDelegate(view_));
     // COMMENT soaks the slack; the upload columns keep their width.
     view_->horizontalHeader()->setStretchLastSection(false);
     view_->horizontalHeader()->setSectionResizeMode(ColComment,
