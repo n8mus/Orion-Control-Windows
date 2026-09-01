@@ -50,6 +50,7 @@ private:
 
     QLineEdit* call_ = nullptr;
     QLineEdit* grid_ = nullptr;
+    QComboBox* units_ = nullptr;
     QComboBox* model_ = nullptr;
     QComboBox* conn_ = nullptr;          // Connection: serial | remote
     QComboBox* radioDev_ = nullptr;

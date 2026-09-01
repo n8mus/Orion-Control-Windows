@@ -7,6 +7,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QPushButton>
 #include <QSettings>
 #include <QTableWidget>
@@ -50,6 +51,12 @@ LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
     : QDialog(parent), db_(db), idx_(idx), cty_(cty), rotor_(rotor) {
     setModal(false);
     setWindowTitle("LOG — New QSO");
+    // On Windows the tool windows are parentless top-levels (N1MM-style),
+    // so clicking the console would bury this one — but the whole point of
+    // the entry window is living above the band map while spots feed it
+    // (operator call, first live QSO). Linux keeps normal transient-for
+    // stacking via the parent.
+    if (!parent) setWindowFlag(Qt::WindowStaysOnTopHint);
     setStyleSheet(
         "QDialog { background: #141b24; color: #dde7f0; font-size: 15px; }"
         "QLabel { color: #b8c8d8; font-size: 13px; }"
@@ -313,8 +320,18 @@ void LogWindow::updateRotor() {
         spBtn_->setText(QString("SP %1°").arg(int(spAz_ + 0.5)));
         lpBtn_->setText(QString("LP %1°").arg(int(lpAz_ + 0.5)));
         if (!head.isEmpty()) head += "   ";
-        head += QString("%1 km sp · %2 km lp")
-                    .arg(qRound(km)).arg(qRound(40030.0 - km));
+        // station/units: auto = the system locale's system (US -> miles).
+        const QString up =
+            QSettings().value("station/units", "auto").toString();
+        const bool miles = up == "mi"
+            || (up == "auto"
+                && QLocale().measurementSystem() != QLocale::MetricSystem);
+        const double f = miles ? 0.621371 : 1.0;
+        const QString unit = miles ? "mi" : "km";
+        head += QString("%1 %3 sp · %2 %3 lp")
+                    .arg(qRound(km * f))
+                    .arg(qRound((40030.0 - km) * f))
+                    .arg(unit);
     } else {
         spBtn_->setText("SP —");
         lpBtn_->setText("LP —");

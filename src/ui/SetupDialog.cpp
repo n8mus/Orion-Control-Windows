@@ -131,6 +131,15 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     grid_->setToolTip("Maidenhead grid square (4 or 6 chars) — centers the "
                       "compass rose and bearing math");
     form->addRow("Grid square", grid_);
+    units_ = new QComboBox(this);
+    units_->addItem("Auto (locale)", "auto");
+    units_->addItem("Miles", "mi");
+    units_->addItem("Kilometers", "km");
+    units_->setToolTip("Distances in the LOG window's bearing readout.\n"
+                       "Auto follows the system locale (US = miles).");
+    const QString up = s.value("station/units", "auto").toString();
+    units_->setCurrentIndex(qMax(0, units_->findData(up)));
+    form->addRow("Distance", units_);
 
     form->addRow(section("RADIO  (takes effect on next launch)", this));
     model_ = new QComboBox(this);
@@ -750,6 +759,7 @@ void SetupDialog::accept() {
     QSettings s;
     s.setValue("station/callsign", call_->text().trimmed().toUpper());
     s.setValue("station/grid", grid_->text().trimmed());
+    s.setValue("station/units", units_->currentData().toString());
     s.setValue("radio/model", model_->currentData().toString());
     // Fold the currently-shown field back into its per-radio profile, save
     // all three, and mirror the active one into radio/device (what the app
