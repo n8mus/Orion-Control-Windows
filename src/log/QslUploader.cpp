@@ -121,7 +121,11 @@ void QslUploader::pushHttp(const Qso& q, const QString& svc) {
         if (mail.isEmpty() || pass.isEmpty() || call.isEmpty()
             || api.isEmpty())
             return;
-        QNetworkRequest req(QUrl("https://clublog.org/realtime.php"));
+        // The documented endpoint is secure.clublog.org (GridTracker posts
+        // to clublog.org and rides the redirect; go direct instead — a
+        // redirected POST can degrade to GET).
+        QNetworkRequest req(
+            QUrl("https://secure.clublog.org/realtime.php"));
         req.setHeader(QNetworkRequest::ContentTypeHeader,
                       "application/x-www-form-urlencoded");
         const QByteArray body = "email=" + enc(mail)
