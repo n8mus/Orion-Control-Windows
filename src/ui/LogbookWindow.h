@@ -4,6 +4,7 @@
 
 class QLabel;
 class QLineEdit;
+class QPlainTextEdit;
 class QSqlTableModel;
 class QTableView;
 class QTimer;
@@ -38,6 +39,7 @@ private:
     QTableView* view_ = nullptr;
     QLineEdit* search_ = nullptr;
     QLabel* stats_ = nullptr;
+    QPlainTextEdit* traffic_ = nullptr;
     QTimer* refresh_ = nullptr;
 };
 

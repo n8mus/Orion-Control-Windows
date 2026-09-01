@@ -8,7 +8,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSqlQuery>
 #include <QSqlTableModel>
@@ -17,6 +19,7 @@
 #include <QVBoxLayout>
 
 #include "log/LogDb.h"
+#include "log/QslUploader.h"
 #include "ui/OnlineLogsDialog.h"
 
 namespace ttc {
@@ -103,21 +106,17 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     head(ColCountry, "COUNTRY");
     head(ColPota, "POTA");
     head(ColComment, "COMMENT");
-    // The upload record, permanently visible per QSO — the status bar's
-    // announcements scroll away, these don't (operator: "i see no
-    // information on any uploads"). Y sent · E failed · blank pending.
+    // One upload column only — LoTW, the award tracker (operator: five
+    // columns "would be a bit much"; the rest live in the traffic print
+    // below). Y sent · E failed · blank pending.
     head(ColUpLotw, "LoTW");
-    head(ColUpEqsl, "eQSL");
-    head(ColUpQrz, "QRZ");
-    head(ColUpClub, "CLUB");
-    head(ColUpHrdlog, "HRD");
 
     view_ = new QTableView(this);
     view_->setModel(model_);
-    for (int c : {ColId, ColCqz, ColItuz, ColQsl, ColLotw, ColEqsl})
+    for (int c : {ColId, ColCqz, ColItuz, ColQsl, ColLotw, ColEqsl,
+                  ColUpEqsl, ColUpQrz, ColUpClub, ColUpHrdlog})
         view_->setColumnHidden(c, true);
-    for (int c : {ColUpLotw, ColUpEqsl, ColUpQrz, ColUpClub, ColUpHrdlog})
-        view_->setColumnWidth(c, 44);
+    view_->setColumnWidth(ColUpLotw, 44);
     // COMMENT soaks the slack; the upload columns keep their width.
     view_->horizontalHeader()->setStretchLastSection(false);
     view_->horizontalHeader()->setSectionResizeMode(ColComment,
@@ -132,6 +131,28 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     stats_ = new QLabel(this);
     stats_->setStyleSheet("QLabel { color: #7e8fa1; font-size: 12px; }");
     v->addWidget(stats_);
+
+    // The upload traffic print — GridTracker's scrolling "what happened"
+    // lines, which is all the record the operator wants for eQSL/QRZ/
+    // ClubLog/HRDLOG (LoTW additionally keeps its column above).
+    traffic_ = new QPlainTextEdit(this);
+    traffic_->setReadOnly(true);
+    traffic_->setMaximumHeight(96);
+    traffic_->setFocusPolicy(Qt::NoFocus);
+    traffic_->setStyleSheet(
+        "QPlainTextEdit { background: #0d1219; color: #9fb0c2; border: 1px"
+        " solid #2a3644; font-family: monospace; font-size: 12px; }");
+    if (uploader_) {
+        for (const QString& l : uploader_->recentTraffic())
+            traffic_->appendPlainText(l);
+        connect(uploader_, &QslUploader::trafficLine, this,
+                [this](const QString& l) {
+                    traffic_->appendPlainText(l);
+                    traffic_->verticalScrollBar()->setValue(
+                        traffic_->verticalScrollBar()->maximum());
+                });
+    }
+    v->addWidget(traffic_);
 
     connect(search_, &QLineEdit::textChanged, this,
             [this] { applyFilter(); });

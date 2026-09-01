@@ -2,6 +2,7 @@
 #include "log/QslUploader.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QHostAddress>
@@ -50,6 +51,17 @@ QByteArray enc(const QString& s) {
 QslUploader::QslUploader(LogDb* db, QObject* parent)
     : QObject(parent), db_(db) {
     net_ = new QNetworkAccessManager(this);
+    // Every result also becomes a line in the scrolling traffic print.
+    connect(this, &QslUploader::serviceResult, this,
+            [this](const QString& svc, bool ok, const QString& d) {
+                const QString line =
+                    QDateTime::currentDateTimeUtc().toString("HH:mm:ss ")
+                    + (ok ? QStringLiteral("✓ ") : QStringLiteral("✕ "))
+                    + svc + "  " + d;
+                traffic_.append(line);
+                while (traffic_.size() > 100) traffic_.removeFirst();
+                emit trafficLine(line);
+            });
     // One catch-up sweep after startup (QSOs logged while a service was
     // down); beyond that, failures wait for the Retry button — no
     // periodic background retrying (operator's call).

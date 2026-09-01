@@ -2,6 +2,7 @@
 #pragma once
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -54,10 +55,15 @@ public:
     void testHrdlogNet();
     void testLoggerPush(const QString& svc);   // "hrd" | "n1mm"
 
+    // The scrolling upload-traffic print (GridTracker's model, operator's
+    // spec): every outcome as a timestamped line, newest last, last 100.
+    QStringList recentTraffic() const { return traffic_; }
+
 signals:
     // ok=false always carries a human-readable reason; shown by the Setup
-    // window's Result column and (failures only) the status bar.
+    // window's Result column and the status bar.
     void serviceResult(const QString& svc, bool ok, const QString& detail);
+    void trafficLine(const QString& line);   // preformatted, for the print
 
 private:
     void sweep();                      // retry everything pending
@@ -68,6 +74,7 @@ private:
 
     LogDb* db_;
     QNetworkAccessManager* net_;
+    QStringList traffic_;
     bool tqslRunning_ = false;
 };
 
