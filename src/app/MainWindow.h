@@ -56,7 +56,6 @@ class QThread;
 
 namespace ttc {
 
-class GlobeWindow;
 class LogDb;
 class LogWindow;
 class LogbookWindow;
@@ -88,7 +87,6 @@ private:
                        const QString& grid = {});
     void openLogbookWindow();
     void openSpotTable();
-    void openGlobeWindow();
     void sendCqrLookup(const QString& call, const QString& park = {},
                        const QString& grid = {});
     void setupCwUi();
@@ -401,7 +399,6 @@ private:
     QslUploader* uploader_ = nullptr;          // online-log push engine
     WsjtxListener* wsjtx_ = nullptr;           // FT8 QSOs into the log
     QrzLookup* qrz_ = nullptr;                 // callbook for the LOG window
-    GlobeWindow* globeWin_ = nullptr;          // 3D earth, QTH-to-DX (lazy)
     LogWindow* logWin_ = nullptr;              // New QSO entry (lazy)
     LogbookWindow* logbookWin_ = nullptr;      // logbook browser (lazy)
     SpotTableWindow* spotTable_ = nullptr;     // cluster feed as a table (lazy)

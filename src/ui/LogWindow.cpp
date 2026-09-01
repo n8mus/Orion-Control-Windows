@@ -2,6 +2,7 @@
 #include "ui/LogWindow.h"
 
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -13,6 +14,7 @@
 #include <QTableWidget>
 #include <QTimeZone>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QtMath>
 
@@ -20,6 +22,7 @@
 #include "log/QrzLookup.h"
 #include "net/RotorLink.h"
 #include "util/Bearing.h"
+#include "util/BrowserGlobe.h"
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
 
@@ -97,23 +100,30 @@ LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
     qrzBtn->setMaximumWidth(56);
     callRow->addWidget(qrzBtn, 0);
     auto* globeBtn = new QPushButton("Globe", this);
-    globeBtn->setToolTip("Earth from space: your station, theirs, and the "
-                         "path between");
+    globeBtn->setToolTip("The 3D globe in your browser — both stations, "
+                         "borders, country names,\nand the great-circle "
+                         "path (the cqrlog globe, ported whole)");
     globeBtn->setFocusPolicy(Qt::NoFocus);
     globeBtn->setMaximumWidth(64);
     callRow->addWidget(globeBtn, 0);
     connect(globeBtn, &QPushButton::clicked, this,
-            [this] { emit globeRequested(); });
+            [this] { openBrowserGlobe(); });
     country_ = new QLabel(this);
     country_->setTextFormat(Qt::PlainText);
     country_->setWordWrap(true);
     callRow->addWidget(country_, 1);
     v->addLayout(callRow);
+    // The button does what a ham means by "look him up on QRZ": the page
+    // opens in the browser, and the XML callbook quietly fills name/QTH/
+    // grid behind it when the website login is configured.
+    connect(qrzBtn, &QPushButton::clicked, this, [this] {
+        const QString c = call_->text().trimmed().toUpper();
+        if (c.isEmpty()) return;
+        QDesktopServices::openUrl(
+            QUrl("https://www.qrz.com/db/" + c));
+        if (qrz_) qrz_->lookup(c);
+    });
     if (qrz_) {
-        connect(qrzBtn, &QPushButton::clicked, this, [this] {
-            if (!call_->text().trimmed().isEmpty())
-                qrz_->lookup(call_->text());
-        });
         connect(qrz_, &QrzLookup::result, this,
                 [this](const QString& call, bool ok, const QString& name,
                        const QString& qth, const QString& grid,
@@ -130,8 +140,6 @@ LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
                     updateBadges();
                     updateRotor();
                 });
-    } else {
-        qrzBtn->setEnabled(false);
     }
 
     // Needed badges (country-centric, HRD's three checkboxes).
@@ -341,6 +349,7 @@ void LogWindow::updateBadges() {
 
 void LogWindow::updateRotor() {
     spAz_ = lpAz_ = -1.0;
+    dxLat_ = dxLon_ = 999.0;
     double myLat = 0, myLon = 0, dxLat = 0, dxLon = 0;
     const QString myGrid =
         QSettings().value("station/grid", "EN83al").toString();
@@ -353,8 +362,12 @@ void LogWindow::updateRotor() {
     QString head;
     if (rotor_ && rotor_->connected() && rotor_->azimuth() >= 0)
         head = QString("rotor %1°").arg(int(rotor_->azimuth() + 0.5));
-    if (haveDx && !call_->text().trimmed().isEmpty())
-        emit dxLocated(dxLat, dxLon, call_->text().trimmed().toUpper());
+    if (haveDx) {
+        dxLat_ = dxLat;
+        dxLon_ = dxLon;
+        if (!call_->text().trimmed().isEmpty())
+            emit dxLocated(dxLat, dxLon, call_->text().trimmed().toUpper());
+    }
     if (haveMe && haveDx) {
         spAz_ = bearing::initialDeg(myLat, myLon, dxLat, dxLon);
         lpAz_ = spAz_ >= 180.0 ? spAz_ - 180.0 : spAz_ + 180.0;
@@ -382,6 +395,30 @@ void LogWindow::updateRotor() {
     const bool can = rotor_ && rotor_->connected() && spAz_ >= 0;
     spBtn_->setEnabled(can);
     lpBtn_->setEnabled(can);
+}
+
+void LogWindow::openBrowserGlobe() {
+    double myLat = 0, myLon = 0;
+    const QString myGrid =
+        QSettings().value("station/grid", "EN83al").toString();
+    if (!CtyLookup::gridToLatLon(myGrid, myLat, myLon)) return;
+    if (dxLat_ > 500.0) return;               // no located DX yet
+    const double km =
+        bearing::distanceKm(myLat, myLon, dxLat_, dxLon_);
+    const QString up =
+        QSettings().value("station/units", "auto").toString();
+    const bool miles = up == "mi"
+        || (up == "auto"
+            && QLocale().measurementSystem() != QLocale::MetricSystem);
+    const QString dist = miles
+        ? QString("%L1 mi").arg(qRound(km * 0.621371))
+        : QString("%L1 km").arg(qRound(km));
+    BrowserGlobe::show(
+        myLat, myLon,
+        QSettings().value("station/callsign", "N8EM").toString(), myGrid,
+        dxLat_, dxLon_, call_->text().trimmed().toUpper(),
+        grid_->text().trimmed().toUpper(), dist,
+        spAz_ >= 0 ? int(spAz_ + 0.5) : 0, country_->text());
 }
 
 void LogWindow::tickClock() {

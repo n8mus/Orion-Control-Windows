@@ -109,7 +109,7 @@ add_executable(tentec-console
   src/ui/LogWindow.cpp          src/ui/LogWindow.h
   src/ui/LogbookWindow.cpp      src/ui/LogbookWindow.h
   src/ui/SpotTableWindow.cpp    src/ui/SpotTableWindow.h
-  src/ui/GlobeWindow.cpp        src/ui/GlobeWindow.h
+  src/util/BrowserGlobe.cpp     src/util/BrowserGlobe.h
   src/util/CtyLookup.cpp        src/util/CtyLookup.h
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
   src/util/WatchList.cpp        src/util/WatchList.h

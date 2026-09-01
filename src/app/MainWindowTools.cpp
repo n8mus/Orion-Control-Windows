@@ -17,7 +17,6 @@
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
 #include "log/QslUploader.h"
-#include "ui/GlobeWindow.h"
 #include "ui/LogWindow.h"
 #include "ui/LogbookWindow.h"
 #include "ui/SpotTableWindow.h"
@@ -160,22 +159,14 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
         logWin_ = new LogWindow(logDb_, &logbook_, &cty_, &rotor_, qrz_,
                                 toolWinParent(this));
         adoptToolWindow(logWin_);
-        // Rose and globe follow whoever is in the window: country center
-        // from cty.dat, sharpened to the real grid when WSJT-X or a QRZ
-        // lookup provides one.
+        // The compass rose follows whoever is in the window: country
+        // center from cty.dat, sharpened to the real grid when WSJT-X or
+        // a QRZ lookup provides one. (The 3D globe is the window's own
+        // Globe button — the cqrlog browser globe, see BrowserGlobe.)
         connect(logWin_, &LogWindow::dxLocated, this,
                 [this](double lat, double lon, const QString& call) {
                     pan_->pointRoseAt(lat, lon, call);
-                    if (globeWin_ && globeWin_->isVisible()) {
-                        double la = 0, lo = 0;
-                        CtyLookup::gridToLatLon(
-                            QSettings().value("station/grid", "EN83al")
-                                .toString(), la, lo);
-                        globeWin_->setStations(la, lo, lat, lon, call);
-                    }
                 });
-        connect(logWin_, &LogWindow::globeRequested, this,
-                [this] { openGlobeWindow(); });
         connect(logWin_, &LogWindow::qsoLogged, this,
                 [this](qint64 id, const QString& c) {
                     statusBar()->showMessage("logged " + c, 3000);
@@ -209,17 +200,6 @@ void MainWindow::openLogbookWindow() {
     logbookWin_->show();
     logbookWin_->raise();
     logbookWin_->activateWindow();
-}
-
-void MainWindow::openGlobeWindow() {
-    if (!globeWin_) {
-        globeWin_ = new GlobeWindow(toolWinParent(this));
-        adoptToolWindow(globeWin_);
-    }
-    globeWin_->show();
-    globeWin_->raise();
-    // Seed it with whatever the LOG window is showing right now.
-    if (logWin_) logWin_->announceDx();
 }
 
 void MainWindow::openSpotTable() {

@@ -5,5 +5,8 @@
     <file>earth_night.jpg</file>
     <file>cty.dat</file>
     <file>icon.png</file>
+    <file>globe/globe.gl.min.js</file>
+    <file>globe/countries.json</file>
+    <file>globe/earth-blue-marble.jpg</file>
   </qresource>
 </RCC>

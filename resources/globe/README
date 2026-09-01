@@ -1,0 +1,16 @@
+Assets for the "show station on globe" button in the New QSO window.
+
+Installed to /usr/share/cqrlog/globe/ ; cqrlog copies them into
+~/.config/cqrlog/globe/ the first time the globe is opened (a browser
+loading a file:// page may only read files sitting next to it) and then
+writes globe.html there and hands it to the configured web browser.
+
+  globe.gl.min.js       globe.gl 2.46.2, MIT licence, three.js bundled.
+                        https://github.com/vasturiano/globe.gl
+  earth-blue-marble.jpg NASA Blue Marble surface texture, 4096x2048,
+                        as shipped in the three-globe example assets.
+
+If these files are missing, cqrlog falls back to loading the same two
+files from unpkg.com, so the button still works on a binary-only install
+as long as the machine is online. With them present the globe works with
+no network access at all.

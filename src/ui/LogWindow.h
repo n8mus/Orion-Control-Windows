@@ -33,14 +33,11 @@ public:
                  const QString& grid = QString());
     // Rig state (dial + ADIF-style mode text, e.g. "CW"/"SSB").
     void setRig(qint64 freqHz, const QString& mode);
-    // Re-emit dxLocated for the current call (a globe that just opened).
-    void announceDx() { updateRotor(); }
 
 signals:
     void qsoLogged(qint64 id, const QString& call);
-    // The DX in the window has a location — rose and globe follow.
+    // The DX in the window has a location — the compass rose follows.
     void dxLocated(double lat, double lon, const QString& call);
-    void globeRequested();                 // the window's Globe button
 
 private:
     void onCallEdited();
@@ -49,6 +46,7 @@ private:
     void updateBadges();
     void updateRotor();
     void tickClock();
+    void openBrowserGlobe();
 
     LogDb* db_;
     LogbookIndex* idx_;
@@ -79,6 +77,7 @@ private:
     QTimer* clock_ = nullptr;
 
     double spAz_ = -1.0, lpAz_ = -1.0;
+    double dxLat_ = 999.0, dxLon_ = 999.0;   // last located DX (999 = none)
     bool autoTime_ = true;
     QString lastAutoMode_;                 // last rig mode we applied
 };
