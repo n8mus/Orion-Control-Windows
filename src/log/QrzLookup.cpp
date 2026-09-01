@@ -15,15 +15,27 @@ namespace {
 QString cred(const char* k) {
     return QSettings().value(QLatin1String(k)).toString().trimmed();
 }
-// Pull one flat element's text out of the QRZ XML ("Key", "fname", ...).
+// Leaf-element text out of the QRZ XML ("Key", "fname", ...). The
+// document nests (<QRZDatabase><Session><Key>…), so walk tokens and take
+// the text under whatever element we're inside — readElementText on a
+// parent consumes its whole subtree and returns nothing (live-found:
+// every lookup died silently on the invisible session key).
 QHash<QString, QString> flatXml(const QByteArray& body) {
     QHash<QString, QString> out;
     QXmlStreamReader xml(body);
+    QString cur;
     while (!xml.atEnd()) {
-        if (xml.readNext() == QXmlStreamReader::StartElement)
-            out.insert(xml.name().toString(),
-                       xml.readElementText(
-                           QXmlStreamReader::SkipChildElements));
+        switch (xml.readNext()) {
+            case QXmlStreamReader::StartElement:
+                cur = xml.name().toString();
+                break;
+            case QXmlStreamReader::Characters:
+                if (!xml.isWhitespace() && !cur.isEmpty())
+                    out.insert(cur, xml.text().toString().trimmed());
+                break;
+            default:
+                break;
+        }
     }
     return out;
 }

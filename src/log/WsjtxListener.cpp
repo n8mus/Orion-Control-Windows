@@ -61,7 +61,7 @@ void WsjtxListener::onDatagram() {
             in >> id;
             quint64 dial = 0;
             in >> dial;
-            utf8Field(in);                          // mode
+            const QString wsMode = utf8Field(in).trimmed().toUpper();
             const QString dxCall = utf8Field(in).trimmed().toUpper();
             utf8Field(in);                          // report
             utf8Field(in);                          // tx mode
@@ -75,7 +75,7 @@ void WsjtxListener::onDatagram() {
             if (in.status() != QDataStream::Ok) continue;
             if (dxCall.isEmpty() || dxCall == lastDx_) continue;
             lastDx_ = dxCall;
-            emit dxChanged(dxCall, dxGrid);
+            emit dxChanged(dxCall, dxGrid, wsMode);
             continue;
         }
         if (type != kTypeLoggedAdif) continue;

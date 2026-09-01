@@ -6,6 +6,7 @@
 #include "log/QrzLookup.h"
 #include "log/QslUploader.h"
 #include "log/WsjtxListener.h"
+#include "ui/LogWindow.h"
 #include "ui/SpotTableWindow.h"
 
 #include <QSettings>
@@ -1038,8 +1039,11 @@ MainWindow::MainWindow(QWidget* parent)
     // same rails as a spot click: New QSO window pre-fills, cqrlog is
     // nudged, and the globe swings to the station.
     connect(wsjtx_, &WsjtxListener::dxChanged, this,
-            [this](const QString& call, const QString& grid) {
+            [this](const QString& call, const QString& grid,
+                   const QString& mode) {
                 sendCqrLookup(call, {}, grid);
+                if (logWin_ && logWin_->isVisible())
+                    logWin_->setModeHint(mode);
             });
     qrz_ = new QrzLookup(this);
     // cqrlog's habit, kept: every logged QSO gets its callbook lookup and

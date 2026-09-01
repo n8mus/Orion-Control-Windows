@@ -32,7 +32,9 @@ signals:
     void qsoLogged(qint64 id, const QString& call, bool pushWanted);
     // The DX call WSJT-X is working changed (a decode was clicked, or a
     // transmission started) — feeds the New QSO window and the globe.
-    void dxChanged(const QString& call, const QString& grid);
+    // mode is WSJT-X's own ("FT8"), which outranks the rig's USB.
+    void dxChanged(const QString& call, const QString& grid,
+                   const QString& mode);
 
 private:
     void onDatagram();

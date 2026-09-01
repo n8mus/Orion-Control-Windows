@@ -294,6 +294,8 @@ void LogWindow::autoLookup() {
 
 void LogWindow::setRig(qint64 freqHz, const QString& mode) {
     if (freqHz > 0) freq_->setText(QString::number(freqHz));
+    // Only a CHANGE of rig mode rewrites the field — so a WSJT-X mode
+    // hint ("FT8") survives the radio sitting in USB the whole session.
     if (!mode.isEmpty() && mode != lastAutoMode_) {
         lastAutoMode_ = mode;
         mode_->setText(mode);
@@ -301,6 +303,13 @@ void LogWindow::setRig(qint64 freqHz, const QString& mode) {
         rstS_->setText(cw ? "599" : "59");
         rstR_->setText(cw ? "599" : "59");
     }
+    updateBadges();
+}
+
+void LogWindow::setModeHint(const QString& mode) {
+    const QString m = mode.trimmed().toUpper();
+    if (m.isEmpty()) return;
+    mode_->setText(m);
     updateBadges();
 }
 

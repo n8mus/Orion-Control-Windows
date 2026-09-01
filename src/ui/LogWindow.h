@@ -33,6 +33,9 @@ public:
                  const QString& grid = QString());
     // Rig state (dial + ADIF-style mode text, e.g. "CW"/"SSB").
     void setRig(qint64 freqHz, const QString& mode);
+    // A digital app's own mode ("FT8") — outranks the rig's USB until the
+    // radio's mode actually changes.
+    void setModeHint(const QString& mode);
 
 signals:
     void qsoLogged(qint64 id, const QString& call);
