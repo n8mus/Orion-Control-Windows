@@ -78,6 +78,9 @@ struct SpotLabel {
     char    status = '?';
     // DX-watch hit: the label draws with an orange alert ring.
     bool    alert = false;
+    // For the spot table (the band map itself never draws these).
+    QString spotter;
+    QString comment;
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:

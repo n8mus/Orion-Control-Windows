@@ -162,8 +162,10 @@ void SpotClient::onData() {
         const bool skimmer = m.captured(1).endsWith("-#");
         const QString comment = m.captured(4).toUpper();
         Spot s;
-        s.call   = m.captured(3).toUpper();
-        s.atSecs = QDateTime::currentSecsSinceEpoch();
+        s.call    = m.captured(3).toUpper();
+        s.atSecs  = QDateTime::currentSecsSinceEpoch();
+        s.spotter = m.captured(1).toUpper();
+        s.comment = m.captured(4).trimmed();
         if (comment.contains("FT8") || comment.contains("FT4")) {
             s.kind = 'F';
             const auto o = kHzOffRe.match(comment);    // dial + audio offset

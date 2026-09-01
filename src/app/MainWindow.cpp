@@ -3,6 +3,7 @@
 #include "app/Bands.h"
 #include "app/MainWindowInternal.h"
 #include "log/LogDb.h"
+#include "ui/SpotTableWindow.h"
 
 #include <QSettings>
 #include <QSlider>
@@ -741,6 +742,14 @@ MainWindow::MainWindow(QWidget* parent)
     areaCustom->setActionGroup(areaGrp);
     auto* spotsClear = spotsMenu->addAction("Clear spots");
     spotsMenu->addSeparator();
+    // The whole feed as a sortable table (HRD-style needed-status columns).
+    auto* tableAct = spotsMenu->addAction("Spot table…");
+    tableAct->setToolTip("Every spot as a row: country/band/mode needed "
+                         "columns,\nazimuth (click = rotate), double-click "
+                         "= tune + log");
+    connect(tableAct, &QAction::triggered, this,
+            [this] { openSpotTable(); });
+    spotsMenu->addSeparator();
     // DX watch: patterns matched against every spot; hits get an orange
     // alert ring, a status-bar callout and (optionally) a beep.
     watch_.setPatterns(QSettings().value("spots/watch").toString());
@@ -918,6 +927,8 @@ MainWindow::MainWindow(QWidget* parent)
                 SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag, s.lat, s.lon};
                 if (l.lat > 500.0) ctyPlace(l);
                 l.status = logStatus(l);
+                l.spotter = s.spotter;
+                l.comment = s.comment;
                 labels.push_back(l);
             }
         }
@@ -954,6 +965,7 @@ MainWindow::MainWindow(QWidget* parent)
             }
         }
         pan_->setSpots(labels);
+        if (spotTable_) spotTable_->setSpots(labels);
     };
     connect(skim_, &SkimmerEngine::spotsChanged, this, pushSpots);
     connect(watchEdit, &QAction::triggered, this,

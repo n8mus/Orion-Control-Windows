@@ -59,6 +59,7 @@ namespace ttc {
 class LogDb;
 class LogWindow;
 class LogbookWindow;
+class SpotTableWindow;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -82,6 +83,7 @@ private:
     void openLogWindow(const QString& call = {}, const QString& park = {},
                        const QString& grid = {});
     void openLogbookWindow();
+    void openSpotTable();
     void sendCqrLookup(const QString& call, const QString& park = {},
                        const QString& grid = {});
     void setupCwUi();
@@ -393,6 +395,7 @@ private:
     LogDb* logDb_ = nullptr;                   // the station's own SQLite log
     LogWindow* logWin_ = nullptr;              // New QSO entry (lazy)
     LogbookWindow* logbookWin_ = nullptr;      // logbook browser (lazy)
+    SpotTableWindow* spotTable_ = nullptr;     // cluster feed as a table (lazy)
     CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
     CwDecoder* audioDec_ = nullptr;            // radio-audio CW reader (lazy)
     AudioCwSource* audioSrc_ = nullptr;        // SignaLink capture for it

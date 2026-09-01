@@ -18,6 +18,7 @@
 #include "ui/DigiWindow.h"
 #include "ui/LogWindow.h"
 #include "ui/LogbookWindow.h"
+#include "ui/SpotTableWindow.h"
 #include "ui/SkimmerWindow.h"
 #include "ui/SkimViewWindow.h"
 #include "ui/WinKeyerPanel.h"
@@ -188,6 +189,32 @@ void MainWindow::openLogbookWindow() {
     logbookWin_->show();
     logbookWin_->raise();
     logbookWin_->activateWindow();
+}
+
+void MainWindow::openSpotTable() {
+    if (!spotTable_) {
+        spotTable_ = new SpotTableWindow(&logbook_, &rotor_,
+                                         toolWinParent(this));
+        adoptToolWindow(spotTable_);
+        // Double-click = the band-map spot click, plus the QSY the band map
+        // can't do (a table row may live on another band entirely).
+        connect(spotTable_, &SpotTableWindow::spotActivated, this,
+                [this](const QString& call, qint64 hz, QChar kind,
+                       const QString& tag) {
+                    if (hz > 0) radio_->setFrequencyHz(Rx::Main, hz);
+                    if (cwWin_) cwWin_->setHisCall(call);
+                    QString park, grid;
+                    if (kind == QChar('P')) {
+                        park = tag;
+                        for (const Spot& s : potaClient_.spots())
+                            if (s.call == call) { grid = s.grid; break; }
+                    }
+                    sendCqrLookup(call, park, grid);
+                });
+    }
+    spotTable_->show();
+    spotTable_->raise();
+    spotTable_->activateWindow();
 }
 
 void MainWindow::sendCqrLookup(const QString& call, const QString& park,
