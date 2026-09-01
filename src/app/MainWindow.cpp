@@ -2104,7 +2104,16 @@ MainWindow::MainWindow(QWidget* parent)
     {
         QSettings s;
         const QString radioMatch =
-            s.value("dvr/radioAudioMatch", "USB_AUDIO_CODEC").toString();
+            s.value("dvr/radioAudioMatch",
+#ifdef Q_OS_WIN
+                    // Windows device descriptions, not PipeWire node names —
+                    // and the codec spells itself "USB AUDIO  CODEC" (double
+                    // space, live-found), so match only the stable prefix.
+                    "USB AUDIO"
+#else
+                    "USB_AUDIO_CODEC"
+#endif
+                    ).toString();
         radioSink_   = ClipDeck::findSink(radioMatch);
         radioSource_ = ClipDeck::findSource(radioMatch);
         micSource_   = s.value("dvr/micSource").toString();
