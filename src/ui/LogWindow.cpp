@@ -17,6 +17,7 @@
 #include <QtMath>
 
 #include "log/LogDb.h"
+#include "log/QrzLookup.h"
 #include "net/RotorLink.h"
 #include "util/Bearing.h"
 #include "util/CtyLookup.h"
@@ -47,8 +48,9 @@ QString needText(QChar st, const QString& what) {
 } // namespace
 
 LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
-                     RotorLink* rotor, QWidget* parent)
-    : QDialog(parent), db_(db), idx_(idx), cty_(cty), rotor_(rotor) {
+                     RotorLink* rotor, QrzLookup* qrz, QWidget* parent)
+    : QDialog(parent), db_(db), idx_(idx), cty_(cty), rotor_(rotor),
+      qrz_(qrz) {
     setModal(false);
     setWindowTitle("LOG — New QSO");
     // On Windows the tool windows are parentless top-levels (N1MM-style),
@@ -88,11 +90,49 @@ LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
     call_->setFont(cf);
     call_->setMinimumWidth(190);
     callRow->addWidget(call_, 0);
+    auto* qrzBtn = new QPushButton("QRZ", this);
+    qrzBtn->setToolTip("Look the call up on QRZ.com — fills name, QTH and "
+                       "grid\n(QRZ website login goes in Online Logs)");
+    qrzBtn->setFocusPolicy(Qt::NoFocus);
+    qrzBtn->setMaximumWidth(56);
+    callRow->addWidget(qrzBtn, 0);
+    auto* globeBtn = new QPushButton("Globe", this);
+    globeBtn->setToolTip("Earth from space: your station, theirs, and the "
+                         "path between");
+    globeBtn->setFocusPolicy(Qt::NoFocus);
+    globeBtn->setMaximumWidth(64);
+    callRow->addWidget(globeBtn, 0);
+    connect(globeBtn, &QPushButton::clicked, this,
+            [this] { emit globeRequested(); });
     country_ = new QLabel(this);
     country_->setTextFormat(Qt::PlainText);
     country_->setWordWrap(true);
     callRow->addWidget(country_, 1);
     v->addLayout(callRow);
+    if (qrz_) {
+        connect(qrzBtn, &QPushButton::clicked, this, [this] {
+            if (!call_->text().trimmed().isEmpty())
+                qrz_->lookup(call_->text());
+        });
+        connect(qrz_, &QrzLookup::result, this,
+                [this](const QString& call, bool ok, const QString& name,
+                       const QString& qth, const QString& grid,
+                       const QString& err) {
+                    if (call != call_->text().trimmed().toUpper()) return;
+                    if (!ok) {
+                        country_->setText("QRZ: " + err);
+                        return;
+                    }
+                    if (!name.isEmpty()) name_->setText(name);
+                    if (!qth.isEmpty()) qth_->setText(qth);
+                    // A precise grid beats the country-center bearing.
+                    if (!grid.isEmpty()) grid_->setText(grid);
+                    updateBadges();
+                    updateRotor();
+                });
+    } else {
+        qrzBtn->setEnabled(false);
+    }
 
     // Needed badges (country-centric, HRD's three checkboxes).
     auto* badges = new QHBoxLayout;
@@ -313,6 +353,8 @@ void LogWindow::updateRotor() {
     QString head;
     if (rotor_ && rotor_->connected() && rotor_->azimuth() >= 0)
         head = QString("rotor %1°").arg(int(rotor_->azimuth() + 0.5));
+    if (haveDx && !call_->text().trimmed().isEmpty())
+        emit dxLocated(dxLat, dxLon, call_->text().trimmed().toUpper());
     if (haveMe && haveDx) {
         spAz_ = bearing::initialDeg(myLat, myLon, dxLat, dxLon);
         lpAz_ = spAz_ >= 180.0 ? spAz_ - 180.0 : spAz_ + 180.0;

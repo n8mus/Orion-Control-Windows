@@ -104,10 +104,12 @@ add_executable(tentec-console
   src/log/LogDb.cpp             src/log/LogDb.h
   src/log/QslUploader.cpp       src/log/QslUploader.h
   src/log/WsjtxListener.cpp     src/log/WsjtxListener.h
+  src/log/QrzLookup.cpp         src/log/QrzLookup.h
   src/ui/OnlineLogsDialog.cpp   src/ui/OnlineLogsDialog.h
   src/ui/LogWindow.cpp          src/ui/LogWindow.h
   src/ui/LogbookWindow.cpp      src/ui/LogbookWindow.h
   src/ui/SpotTableWindow.cpp    src/ui/SpotTableWindow.h
+  src/ui/GlobeWindow.cpp        src/ui/GlobeWindow.h
   src/util/CtyLookup.cpp        src/util/CtyLookup.h
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
   src/util/WatchList.cpp        src/util/WatchList.h

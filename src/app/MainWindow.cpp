@@ -3,6 +3,7 @@
 #include "app/Bands.h"
 #include "app/MainWindowInternal.h"
 #include "log/LogDb.h"
+#include "log/QrzLookup.h"
 #include "log/QslUploader.h"
 #include "log/WsjtxListener.h"
 #include "ui/SpotTableWindow.h"
@@ -1032,6 +1033,14 @@ MainWindow::MainWindow(QWidget* parent)
                                          4000);
                 if (pushWanted && uploader_) uploader_->pushQso(id);
             });
+    // Clicking a decode (or starting a transmission) in WSJT-X rides the
+    // same rails as a spot click: New QSO window pre-fills, cqrlog is
+    // nudged, and the globe swings to the station.
+    connect(wsjtx_, &WsjtxListener::dxChanged, this,
+            [this](const QString& call, const QString& grid) {
+                sendCqrLookup(call, {}, grid);
+            });
+    qrz_ = new QrzLookup(this);
     connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
     connect(&spotClient_, &SpotClient::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });

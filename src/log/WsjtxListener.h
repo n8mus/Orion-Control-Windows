@@ -30,6 +30,9 @@ public:
 
 signals:
     void qsoLogged(qint64 id, const QString& call, bool pushWanted);
+    // The DX call WSJT-X is working changed (a decode was clicked, or a
+    // transmission started) — feeds the New QSO window and the globe.
+    void dxChanged(const QString& call, const QString& grid);
 
 private:
     void onDatagram();
@@ -37,6 +40,7 @@ private:
     LogDb* db_;
     const CtyLookup* cty_;
     QUdpSocket* sock_ = nullptr;
+    QString lastDx_;
 };
 
 } // namespace ttc

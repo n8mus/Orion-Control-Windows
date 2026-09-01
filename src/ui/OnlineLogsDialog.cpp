@@ -189,6 +189,15 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
         auto* box = detailBox();
         auto* r = lineOf(box);
         pair(r, "LOGBOOK API KEY", field("qrz/key", "", 240, true, this));
+        auto* r2 = lineOf(box);
+        pair(r2, "XML USER",
+             field("qrzweb/user", "website login", 110, false, this));
+        pair(r2, "XML PASSWORD",
+             field("qrzweb/password", "", 120, true, this));
+        auto* note = new QLabel("for the LOG window's QRZ callbook button",
+                                this);
+        note->setStyleSheet("QLabel { color: #5f6e7e; font-size: 11px; }");
+        r2->insertWidget(r2->count() - 1, note);
         auto* t = testBtn("Test");
         testCol({t});
         resultLabel("qrz");
@@ -324,7 +333,7 @@ QLineEdit* OnlineLogsDialog::field(const QString& key,
                                                        : kEditBase);
     };
     const bool optional = key.endsWith("tqslPassword")
-        || key.endsWith("nickname");
+        || key.endsWith("nickname") || key.startsWith("qrzweb/");
     if (optional) e->setStyleSheet(kEditBase);
     else paint();
     connect(e, &QLineEdit::textChanged, this,

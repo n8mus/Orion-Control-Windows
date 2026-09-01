@@ -14,7 +14,14 @@ namespace ttc {
 
 namespace {
 constexpr quint32 kWsjtxMagic = 0xadbccbda;
+constexpr quint32 kTypeStatus = 1;
 constexpr quint32 kTypeLoggedAdif = 12;
+
+QString utf8Field(QDataStream& in) {
+    QByteArray b;
+    in >> b;
+    return QString::fromUtf8(b);
+}
 } // namespace
 
 WsjtxListener::WsjtxListener(LogDb* db, const CtyLookup* cty,
@@ -46,7 +53,32 @@ void WsjtxListener::onDatagram() {
         in.setByteOrder(QDataStream::BigEndian);
         quint32 magic = 0, schema = 0, type = 0;
         in >> magic >> schema >> type;
-        if (magic != kWsjtxMagic || type != kTypeLoggedAdif) continue;
+        if (magic != kWsjtxMagic) continue;
+        if (type == kTypeStatus) {
+            // Status rides in constantly; the DX-call field changes the
+            // moment a decode is clicked or a transmission starts.
+            QByteArray id;
+            in >> id;
+            quint64 dial = 0;
+            in >> dial;
+            utf8Field(in);                          // mode
+            const QString dxCall = utf8Field(in).trimmed().toUpper();
+            utf8Field(in);                          // report
+            utf8Field(in);                          // tx mode
+            bool txEnabled = false, transmitting = false, decoding = false;
+            in >> txEnabled >> transmitting >> decoding;
+            quint32 rxDf = 0, txDf = 0;
+            in >> rxDf >> txDf;
+            utf8Field(in);                          // DE call
+            utf8Field(in);                          // DE grid
+            const QString dxGrid = utf8Field(in).trimmed().toUpper();
+            if (in.status() != QDataStream::Ok) continue;
+            if (dxCall.isEmpty() || dxCall == lastDx_) continue;
+            lastDx_ = dxCall;
+            emit dxChanged(dxCall, dxGrid);
+            continue;
+        }
+        if (type != kTypeLoggedAdif) continue;
         QByteArray id, adif;
         in >> id >> adif;                    // QByteArray = length-prefixed
         if (in.status() != QDataStream::Ok || adif.isEmpty()) continue;
