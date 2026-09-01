@@ -93,11 +93,12 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
         grid_->addWidget(enableBox("lotw"), row_, 1, Qt::AlignTop);
         auto* box = new QVBoxLayout;
         auto* r1 = new QHBoxLayout;
-        pair(r1, "Login", field("lotw/login", "n8em", 90, false, this));
+        pair(r1, "Login",
+             field("lotw/login", "LoTW username", 110, false, this));
         pair(r1, "Password",
              field("lotw/password", "", 110, true, this));
         pair(r1, "Station",
-             field("lotw/station", "N8EM", 90, false, this));
+             field("lotw/station", "TQSL station name", 130, false, this));
         r1->addStretch(1);
         box->addLayout(r1);
         auto* r2 = new QHBoxLayout;
@@ -139,7 +140,8 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
         svcName("eQSL.cc");
         grid_->addWidget(enableBox("eqsl"), row_, 1, Qt::AlignTop);
         auto* r = new QHBoxLayout;
-        pair(r, "User", field("eqsl/user", "n8em", 90, false, this));
+        pair(r, "User",
+             field("eqsl/user", "eQSL username", 110, false, this));
         pair(r, "Password", field("eqsl/password", "", 110, true, this));
         pair(r, "QTH nickname",
              field("eqsl/nickname", "optional", 100, false, this));
@@ -172,10 +174,11 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
         grid_->addWidget(enableBox("club"), row_, 1, Qt::AlignTop);
         auto* box = new QVBoxLayout;
         auto* r = new QHBoxLayout;
-        pair(r, "Callsign", field("club/call", "n8mus", 90, false, this));
+        pair(r, "Callsign",
+             field("club/call", "ClubLog callsign", 120, false, this));
         pair(r, "Password", field("club/password", "", 110, true, this));
         pair(r, "Email",
-             field("club/email", "n8mus@…", 170, false, this));
+             field("club/email", "account email", 170, false, this));
         r->addStretch(1);
         box->addLayout(r);
         auto* r2 = new QHBoxLayout;
@@ -208,7 +211,8 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
         svcName("HRDLOG.net");
         grid_->addWidget(enableBox("hrdlog"), row_, 1, Qt::AlignTop);
         auto* r = new QHBoxLayout;
-        pair(r, "Callsign", field("hrdlog/call", "n8em", 90, false, this));
+        pair(r, "Callsign",
+             field("hrdlog/call", "your callsign", 110, false, this));
         pair(r, "Upload code",
              field("hrdlog/code", "", 130, true, this));
         r->addStretch(1);
@@ -278,6 +282,9 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
 QLineEdit* OnlineLogsDialog::field(const QString& key,
                                    const QString& placeholder, int width,
                                    bool secret, QWidget* parent) {
+    // Placeholders are gray DESCRIPTIONS of what belongs in the field,
+    // never example values — a hint that looks like a filled-in answer
+    // reads as one (live confusion, 2026-09-01).
     auto* e = new QLineEdit(QSettings().value("up/" + key).toString(),
                             parent);
     e->setPlaceholderText(placeholder);
