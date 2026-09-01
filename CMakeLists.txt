@@ -150,6 +150,14 @@ if(TARGET Qt6::Multimedia)
     src/audio/AudioIo.cpp src/audio/AudioIo.h)
   target_compile_definitions(tentec-console PRIVATE HAVE_QTMULTIMEDIA)
   target_link_libraries(tentec-console PRIVATE Qt6::Multimedia)
+
+  # Headless capture smoke test (the audio sibling of sdr_probe).
+  add_executable(audio_probe EXCLUDE_FROM_ALL
+    tools/audio_probe.cpp
+    src/audio/AudioIo.cpp src/audio/AudioIo.h)
+  target_include_directories(audio_probe PRIVATE src)
+  target_compile_definitions(audio_probe PRIVATE HAVE_QTMULTIMEDIA)
+  target_link_libraries(audio_probe PRIVATE Qt6::Core Qt6::Multimedia)
 endif()
 if(OpenMP_CXX_FOUND)
   target_link_libraries(tentec-console PRIVATE OpenMP::OpenMP_CXX)

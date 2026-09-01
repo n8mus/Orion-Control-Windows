@@ -253,8 +253,16 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     for (const QString& a : audioSources()) audioDev_->addItem(a);
     audioDev_->setEditText(
         s.value("cw/audioDev",
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+                // Substring of the Windows device description; the
+                // SignaLink enumerates as "USB Audio CODEC" or plain
+                // "USB Audio Device" depending on the driver.
+                "USB Audio"
+#else
                 "alsa_input.usb-BurrBrown_from_Texas_Instruments_USB_AUDIO_"
-                "CODEC-00.analog-stereo").toString());
+                "CODEC-00.analog-stereo"
+#endif
+                ).toString());
     form->addRow("Radio audio in", audioDev_);
 
     form->addRow(section("DX CLUSTER", this));

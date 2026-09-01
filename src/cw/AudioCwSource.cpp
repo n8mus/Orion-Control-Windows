@@ -25,10 +25,13 @@ const char* kDefaultDev =
     "alsa_input.usb-BurrBrown_from_Texas_Instruments_USB_AUDIO_CODEC-00"
     ".analog-stereo";
 #if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
-// The same SignaLink on Windows: its USB descriptor reads "USB AUDIO
-// CODEC" there too. On this platform cw/audioDev is a case-insensitive
-// substring of the Windows device description (see AudioIo).
-const char* kDefaultDevWin = "USB AUDIO CODEC";
+// The same SignaLink on Windows. Depending on the driver it enumerates as
+// "USB Audio CODEC" or just "USB Audio Device" (live-found on the
+// all-in-one: Device, not CODEC — the CODEC-only default fell back to the
+// onboard mic and the RADIO ear went silent). "USB Audio" catches both.
+// cw/audioDev is a case-insensitive substring of the device description
+// on this platform (see AudioIo).
+const char* kDefaultDevWin = "USB Audio";
 #endif
 } // namespace
 
