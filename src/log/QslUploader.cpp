@@ -21,8 +21,13 @@
 namespace ttc {
 
 namespace {
+// An empty stored value means "use the default" — the setup dialog writes
+// live on every keystroke, so type-then-clear leaves an empty string
+// BEHIND the key and QSettings' own default kicks in only for absent
+// keys. (Live-found: Test TQSL launched "" and reported a bad path.)
 QString cfg(const QString& key, const QString& def = QString()) {
-    return QSettings().value("up/" + key, def).toString().trimmed();
+    const QString v = QSettings().value("up/" + key).toString().trimmed();
+    return v.isEmpty() ? def : v;
 }
 bool on(const QString& svc) {
     return QSettings().value("up/" + svc + "/enabled", false).toBool();
@@ -316,9 +321,15 @@ void QslUploader::testTqsl() {
         const QString err =
             QString::fromUtf8(p->readAllStandardError()).trimmed();
         p->deleteLater();
-        if (st != QProcess::NormalExit || code != 0)
+        // tqsl -q -v prints the version to stderr and exits NONZERO even
+        // when perfectly healthy (live-verified: 2.7.3 exits 255) — the
+        // version line is the success signal, not the exit code.
+        if (st != QProcess::NormalExit
+            || !err.contains("TQSL Version", Qt::CaseInsensitive))
             emit serviceResult("lotw-tqsl", false,
-                               QString("tqsl exit %1").arg(code));
+                               err.isEmpty()
+                                   ? QString("tqsl exit %1").arg(code)
+                                   : err.left(120));
         else {
             QString d = err.left(80);
             const QString pw = cfg("lotw/tqslPassword");

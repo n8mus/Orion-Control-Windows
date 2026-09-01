@@ -24,7 +24,8 @@ public:
 
 private:
     QLineEdit* field(const QString& key, const QString& placeholder,
-                     int width, bool secret, QWidget* parent);
+                     int width, bool secret, QWidget* parent,
+                     const QString& def = QString());
     QCheckBox* enableBox(const QString& svc);
     void onResult(const QString& svc, bool ok, const QString& detail);
 
