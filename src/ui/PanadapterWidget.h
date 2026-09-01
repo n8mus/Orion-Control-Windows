@@ -81,6 +81,9 @@ struct SpotLabel {
     // For the spot table (the band map itself never draws these).
     QString spotter;
     QString comment;
+    // Country/band/mode needed-status ('C' confirmed, 'W' worked, 'N'
+    // needed, '?' unknown) — drawn as a dot triplet beside the call.
+    char needC = '?', needB = '?', needM = '?';
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:

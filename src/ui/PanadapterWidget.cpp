@@ -1019,7 +1019,12 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
         const int wCall = fm.horizontalAdvance(v.s->call);
         const int wTag  = v.s->tag.isEmpty() ? 0
                         : fm.horizontalAdvance(v.s->tag) + 4;
-        const int w = wCall + wTag;
+        // The country/band/mode dot triplet (HRD's three checkboxes,
+        // living on the band map): only takes room once the log knows.
+        const bool dots = v.s->needC != '?' || v.s->needB != '?'
+                          || v.s->needM != '?';
+        const int wDots = dots ? 21 : 0;
+        const int w = wCall + wTag + wDots;
         int xt = v.lsb ? v.x - w - 5 : v.x + 5;
         xt = std::clamp(xt, 2, std::max(2, width() - w - 2));
         int row = -1;
@@ -1060,6 +1065,25 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
         if (wTag) {                                      // park ref, muted gray
             p.setPen(QColor(150, 162, 178, alpha));
             p.drawText(xt + wCall + 4, box.top() + fm.ascent(), v.s->tag);
+        }
+        if (dots) {
+            const auto needColor = [alpha](char st) {
+                QColor dc = st == 'C' ? QColor(130, 222, 140)
+                          : st == 'W' ? QColor(255, 190, 60)
+                          : st == 'N' ? QColor(255, 92, 70)
+                                      : QColor(95, 108, 124);
+                dc.setAlpha(alpha);
+                return dc;
+            };
+            const int dy = box.top() + box.height() / 2 - 2;
+            int dx = xt + wCall + wTag + 6;
+            p.setPen(Qt::NoPen);
+            for (const char st : {v.s->needC, v.s->needB, v.s->needM}) {
+                p.setBrush(needColor(st));
+                p.drawEllipse(QRect(dx, dy, 4, 4));
+                dx += 6;
+            }
+            p.setBrush(Qt::NoBrush);
         }
         spotHits_.push_back({box, v.s->hz, v.s->call, v.s->lat, v.s->lon,
                              v.s->kind, v.s->tag});

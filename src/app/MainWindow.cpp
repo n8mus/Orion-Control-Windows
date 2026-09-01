@@ -8,6 +8,7 @@
 #include "log/WsjtxListener.h"
 #include "ui/LogWindow.h"
 #include "ui/SpotTableWindow.h"
+#include "util/SpotMode.h"
 
 #include <QSettings>
 #include <QSlider>
@@ -775,7 +776,8 @@ MainWindow::MainWindow(QWidget* parent)
     spotsMenu->addSeparator();
     {   // Worked-before legend (colors fed from the cqrlog logbook).
         auto* legend = spotsMenu->addAction(
-            "Call colors: red new · amber new band · green worked · gray cfmd");
+            "Call colors: red new · amber new band · green worked · gray "
+            "cfmd  |  3 dots = country·band·mode");
         legend->setEnabled(false);
         legend->setToolTip(
             "Spot callsigns are colored from your cqrlog logbook:\n"
@@ -905,8 +907,19 @@ MainWindow::MainWindow(QWidget* parent)
         return logbook_.status(l.call, LogbookIndex::bandForHz(l.hz))
             .toLatin1();
     };
+    // The dot triplet beside each label: is this spot's COUNTRY / this
+    // band / this mode confirmed, worked, or needed (from the station
+    // log — all '?' until it has data, and the dots stay invisible).
+    const auto needFill = [this](SpotLabel& l) {
+        const LogbookIndex::Need nd = logbook_.need(
+            l.call, LogbookIndex::bandForHz(l.hz),
+            guessSpotMode(l.kind, l.comment, l.hz));
+        l.needC = nd.country.toLatin1();
+        l.needB = nd.band.toLatin1();
+        l.needM = nd.mode.toLatin1();
+    };
     auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, ctyPlace, logStatus,
-                      watchBeep] {
+                      needFill, watchBeep] {
         QVector<SpotLabel> labels;
         if (spotsOn->isChecked()) {
             QSet<QString> seen;                    // POTA API entry wins (has
@@ -920,6 +933,7 @@ MainWindow::MainWindow(QWidget* parent)
                     SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag,
                                 s.lat, s.lon};
                     l.status = logStatus(l);
+                    needFill(l);
                     labels.push_back(l);
                     seen.insert(s.call);
                 }
@@ -933,6 +947,7 @@ MainWindow::MainWindow(QWidget* parent)
                 l.status = logStatus(l);
                 l.spotter = s.spotter;
                 l.comment = s.comment;
+                needFill(l);
                 labels.push_back(l);
             }
         }
@@ -944,6 +959,7 @@ MainWindow::MainWindow(QWidget* parent)
                             s.wpm > 0 ? QString("%1w").arg(s.wpm) : QString()};
                 ctyPlace(l);
                 l.status = logStatus(l);
+                needFill(l);
                 labels.push_back(l);
             }
         // DX watch: flag hits, call out fresh ones (once per call per

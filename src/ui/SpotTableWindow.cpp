@@ -18,6 +18,7 @@
 #include "util/Bearing.h"
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
+#include "util/SpotMode.h"
 
 namespace ttc {
 
@@ -178,25 +179,7 @@ void SpotTableWindow::showEvent(QShowEvent* e) {
 }
 
 QString SpotTableWindow::modeGuess(const SpotLabel& l) const {
-    if (l.kind == 'F') return QStringLiteral("FT8");
-    if (l.kind == 'S') return QStringLiteral("CW");
-    const QString c = l.comment.toUpper();
-    if (c.contains("FT8") || c.contains("FT4")) return QStringLiteral("FT8");
-    if (c.contains("RTTY")) return QStringLiteral("RTTY");
-    if (c.contains("CW")) return QStringLiteral("CW");
-    if (c.contains("SSB") || c.contains("USB") || c.contains("LSB"))
-        return QStringLiteral("SSB");
-    // Fall back on the band plan: below the phone edge counts as CW.
-    struct Edge { qint64 lo, phone; };
-    static const Edge edges[] = {
-        {1800000, 1843000},  {3500000, 3600000},  {7000000, 7125000},
-        {10100000, 10150000}, {14000000, 14150000}, {18068000, 18110000},
-        {21000000, 21200000}, {24890000, 24930000}, {28000000, 28300000},
-        {50000000, 50100000},
-    };
-    for (const Edge& e : edges)
-        if (l.hz >= e.lo && l.hz < e.phone) return QStringLiteral("CW");
-    return QStringLiteral("SSB");
+    return guessSpotMode(l.kind, l.comment, l.hz);
 }
 
 void SpotTableWindow::rebuild() {
