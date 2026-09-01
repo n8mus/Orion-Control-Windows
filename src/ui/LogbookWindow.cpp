@@ -17,6 +17,7 @@
 #include <QVBoxLayout>
 
 #include "log/LogDb.h"
+#include "ui/OnlineLogsDialog.h"
 
 namespace ttc {
 
@@ -27,8 +28,9 @@ enum Col { ColId = 0, ColTs, ColCall, ColBand, ColFreq, ColMode, ColRstS,
            ColPota, ColComment, ColQsl, ColLotw, ColEqsl };
 } // namespace
 
-LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty, QWidget* parent)
-    : QDialog(parent), db_(db), cty_(cty) {
+LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
+                             QslUploader* uploader, QWidget* parent)
+    : QDialog(parent), db_(db), cty_(cty), uploader_(uploader) {
     setModal(false);
     setWindowTitle("Logbook — " +
                    QSettings().value("station/callsign", "N8EM").toString());
@@ -67,6 +69,16 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty, QWidget* parent)
     tools->addWidget(impBtn);
     auto* expBtn = new QPushButton("Export ADIF", this);
     tools->addWidget(expBtn);
+    auto* onlineBtn = new QPushButton("Online logs…", this);
+    onlineBtn->setToolTip("LoTW / eQSL / QRZ / ClubLog / HRDLOG uploads —\n"
+                          "per-service setup with Test buttons");
+    tools->addWidget(onlineBtn);
+    connect(onlineBtn, &QPushButton::clicked, this, [this] {
+        if (!onlineDlg_) onlineDlg_ = new OnlineLogsDialog(uploader_, this);
+        onlineDlg_->show();
+        onlineDlg_->raise();
+        onlineDlg_->activateWindow();
+    });
     v->addLayout(tools);
 
     model_ = new QSqlTableModel(this, db_->database());

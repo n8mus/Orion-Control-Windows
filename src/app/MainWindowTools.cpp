@@ -16,6 +16,7 @@
 #include "cw/WinKeyer.h"
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
+#include "log/QslUploader.h"
 #include "ui/LogWindow.h"
 #include "ui/LogbookWindow.h"
 #include "ui/SpotTableWindow.h"
@@ -159,9 +160,10 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
                                 toolWinParent(this));
         adoptToolWindow(logWin_);
         connect(logWin_, &LogWindow::qsoLogged, this,
-                [this](qint64, const QString& c) {
+                [this](qint64 id, const QString& c) {
                     statusBar()->showMessage("logged " + c, 3000);
                     if (cwWin_) cwWin_->setHisCall(QString());
+                    if (uploader_) uploader_->pushQso(id);
                 });
         // Dial and mode ride in once a second while the window is up — every
         // tune path (knob, band button, WSJT-X, click) funnels into
@@ -183,7 +185,8 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
 
 void MainWindow::openLogbookWindow() {
     if (!logbookWin_) {
-        logbookWin_ = new LogbookWindow(logDb_, &cty_, toolWinParent(this));
+        logbookWin_ = new LogbookWindow(logDb_, &cty_, uploader_,
+                                        toolWinParent(this));
         adoptToolWindow(logbookWin_);
     }
     logbookWin_->show();

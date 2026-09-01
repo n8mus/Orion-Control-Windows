@@ -12,13 +12,16 @@ namespace ttc {
 
 class CtyLookup;
 class LogDb;
+class OnlineLogsDialog;
+class QslUploader;
 
 // The station log as a table: search, inline edit, import/export ADIF.
 // cqrlog on the Linux box stays the award engine — this is the daily view.
 class LogbookWindow : public QDialog {
     Q_OBJECT
 public:
-    LogbookWindow(LogDb* db, const CtyLookup* cty, QWidget* parent = nullptr);
+    LogbookWindow(LogDb* db, const CtyLookup* cty, QslUploader* uploader,
+                  QWidget* parent = nullptr);
 
 private:
     void applyFilter();
@@ -29,6 +32,8 @@ private:
 
     LogDb* db_;
     const CtyLookup* cty_;
+    QslUploader* uploader_;
+    OnlineLogsDialog* onlineDlg_ = nullptr;
     QSqlTableModel* model_ = nullptr;
     QTableView* view_ = nullptr;
     QLineEdit* search_ = nullptr;

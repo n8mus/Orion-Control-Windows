@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+#include <QObject>
+#include <QString>
+
+class QNetworkAccessManager;
+class QNetworkReply;
+class QTimer;
+
+namespace ttc {
+
+class LogDb;
+struct Qso;
+
+// GridTracker-style instant uploads: the moment a QSO lands in the log it
+// is pushed to every enabled online service, fire-and-forget with a retry
+// sweep behind it. Per-QSO state rides in LogDb's up_* columns ('' pending,
+// 'Y' sent, 'E' failed — retried). Corrections re-send and the services
+// dedupe; deletes stay local by design (operator's accepted trade).
+//
+// Services (settings under up/<svc>/...):
+//   lotw    tqsl CLI:  -a all -l <station> [-p pw] -q -x -d -u <file>
+//           (batched: one temp ADIF per sweep; "Final Status: Success"
+//            or an all-duplicates report both count as delivered)
+//   eqsl    GET  eQSL.cc/qslcard/importADIF.cfm (creds as URL params)
+//   qrz     POST logbook.qrz.com/api  KEY/ACTION=INSERT/ADIF
+//           (POTA/SIG fields stripped — the API rejects them)
+//   club    POST clublog.org/realtime.php (needs an APPLICATION api key —
+//           ClubLog issues these per program on request; blank = disabled)
+//   hrdlog  POST hrdlog.net/NewEntry.aspx  Callsign/Code/App/ADIFData
+// Logger mirrors (no bookkeeping, fire-and-forget like GridTracker's):
+//   hrd     TCP "ver\rdb add {F=\"v\" ...}\rexit\r"  (HRD Logbook :7826)
+//   n1mm    UDP raw ADIF record                       (N1MM+ :2333)
+class QslUploader : public QObject {
+    Q_OBJECT
+public:
+    explicit QslUploader(LogDb* db, QObject* parent = nullptr);
+
+    void pushQso(qint64 id);           // called right after a QSO is logged
+    void sweepSoon(int delayMs = 3000);
+
+    // Setup-window Test buttons. Each answers via serviceResult(svc,...).
+    void testLotwDownload();
+    void testTqsl();
+    void testEqsl();
+    void testQrz();
+    void testHrdlogNet();
+    void testLoggerPush(const QString& svc);   // "hrd" | "n1mm"
+
+signals:
+    // ok=false always carries a human-readable reason; shown by the Setup
+    // window's Result column and (failures only) the status bar.
+    void serviceResult(const QString& svc, bool ok, const QString& detail);
+
+private:
+    void sweep();                      // retry everything pending
+    void pushHttp(const Qso& q, const QString& svc);
+    void runTqslBatch();
+    void mirrorToLoggers(const Qso& q);
+    QString adifFor(const Qso& q, const QString& svc) const;
+
+    LogDb* db_;
+    QNetworkAccessManager* net_;
+    QTimer* retry_;
+    bool tqslRunning_ = false;
+};
+
+} // namespace ttc

@@ -65,6 +65,12 @@ public:
     };
     QList<WorkedRow> workedRows() const;
 
+    // Online-log push bookkeeping. svc is one of "lotw", "eqsl", "qrz",
+    // "club", "hrdlog" (the up_* columns). State: ' ' pending, 'Y' sent,
+    // 'E' last attempt failed (retried later).
+    bool setUploadState(qint64 id, const QString& svc, QChar st);
+    QList<Qso> pendingUploads(const QString& svc, int limit = 50) const;
+
 signals:
     void changed();                        // any insert/update/delete/import
 

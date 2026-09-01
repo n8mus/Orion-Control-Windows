@@ -277,13 +277,16 @@ int LogDb::importAdif(QIODevice& in, const CtyLookup* cty, QString* err) {
         "SELECT id FROM qso WHERE call=:call AND band=:band AND mode=:mode"
         " AND ABS(strftime('%s', ts_utc) - :secs) < 300 LIMIT 1");
     QSqlQuery ins(db);
+    // Imported QSOs are HISTORY: stamp every upload column 'Y' so the
+    // online-log push never re-uploads a 13k-QSO archive to anyone.
     ins.prepare(
         "INSERT INTO qso (ts_utc, call, band, freq_hz, mode, rst_s, rst_r,"
         " name, qth, grid, country, cqz, ituz, pota, comment,"
-        " qsl_rcvd, lotw_rcvd, eqsl_rcvd) VALUES"
+        " qsl_rcvd, lotw_rcvd, eqsl_rcvd,"
+        " up_lotw, up_eqsl, up_qrz, up_club, up_hrdlog) VALUES"
         " (:ts, :call, :band, :freq, :mode, :rsts, :rstr,"
         "  :name, :qth, :grid, :country, :cqz, :ituz, :pota, :comment,"
-        "  :qsl, :lotw, :eqsl)");
+        "  :qsl, :lotw, :eqsl, 'Y', 'Y', 'Y', 'Y', 'Y')");
     int added = 0;
     for (const AdifRecord& r : recs) {
         Qso o = fromAdif(r);
@@ -317,6 +320,42 @@ bool LogDb::exportAdif(QIODevice& out) const {
     while (q.next())
         out.write(Adif::writeRecord(toAdif(qsoFromQuery(q))).toUtf8());
     return true;
+}
+
+namespace {
+// Whitelisted: svc names come from QslUploader's fixed table, but the
+// column name lands in SQL text, so map explicitly.
+QString upColumn(const QString& svc) {
+    if (svc == "lotw") return QStringLiteral("up_lotw");
+    if (svc == "eqsl") return QStringLiteral("up_eqsl");
+    if (svc == "qrz") return QStringLiteral("up_qrz");
+    if (svc == "club") return QStringLiteral("up_club");
+    if (svc == "hrdlog") return QStringLiteral("up_hrdlog");
+    return QString();
+}
+} // namespace
+
+bool LogDb::setUploadState(qint64 id, const QString& svc, QChar st) {
+    const QString col = upColumn(svc);
+    if (!isOpen() || col.isEmpty() || id < 0) return false;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare(QString("UPDATE qso SET %1=:st WHERE id=:id").arg(col));
+    q.bindValue(":st", st == ' ' ? QString() : QString(st));
+    q.bindValue(":id", id);
+    return q.exec();     // deliberately no changed(): bookkeeping, not data
+}
+
+QList<Qso> LogDb::pendingUploads(const QString& svc, int limit) const {
+    QList<Qso> out;
+    const QString col = upColumn(svc);
+    if (!isOpen() || col.isEmpty()) return out;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare(QString("SELECT * FROM qso WHERE %1='' OR %1='E'"
+                      " ORDER BY ts_utc LIMIT :n").arg(col));
+    q.bindValue(":n", limit);
+    if (q.exec())
+        while (q.next()) out.append(qsoFromQuery(q));
+    return out;
 }
 
 QList<LogDb::WorkedRow> LogDb::workedRows() const {

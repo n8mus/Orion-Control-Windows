@@ -3,6 +3,7 @@
 #include "app/Bands.h"
 #include "app/MainWindowInternal.h"
 #include "log/LogDb.h"
+#include "log/QslUploader.h"
 #include "ui/SpotTableWindow.h"
 
 #include <QSettings>
@@ -1008,6 +1009,16 @@ MainWindow::MainWindow(QWidget* parent)
     logbook_.attachCty(&cty_);
     logbook_.attachDb(logDb_);
     logbook_.start();
+    // Online-log push (GridTracker-style instant uploads + retry sweep).
+    // Successes stay quiet — the status columns are the record; failures
+    // get one status-bar line so a dead service doesn't fail silently.
+    uploader_ = new QslUploader(logDb_, this);
+    connect(uploader_, &QslUploader::serviceResult, this,
+            [this](const QString& svc, bool ok, const QString& detail) {
+                if (!ok)
+                    statusBar()->showMessage(
+                        svc + " upload: " + detail, 6000);
+            });
     connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
     connect(&spotClient_, &SpotClient::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });

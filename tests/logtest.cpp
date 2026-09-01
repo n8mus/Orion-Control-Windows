@@ -107,6 +107,16 @@ static void testLogDb(const QString& dir) {
     CHECK(db.exportAdif(out), "logdb: export runs");
     const auto recs = Adif::parseBytes(out.data());
     CHECK(recs.size() == 3, "logdb: export carries every QSO");
+
+    // Upload bookkeeping: live QSOs queue; imported HISTORY never does
+    // (imports are stamped sent, so a 13k archive can't trigger a storm).
+    auto pend = db.pendingUploads("eqsl");
+    CHECK(pend.size() == 1 && pend[0].call == "K8QBS",
+          "uploads: only the live QSO is pending");
+    CHECK(db.setUploadState(pend[0].id, "eqsl", 'Y'),
+          "uploads: state update");
+    CHECK(db.pendingUploads("eqsl").isEmpty(),
+          "uploads: sent leaves the queue");
 }
 
 static void testIndex(const QString& dir) {
