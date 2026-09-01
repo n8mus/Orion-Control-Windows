@@ -13,10 +13,16 @@ class LogDb;
 struct Qso;
 
 // GridTracker-style instant uploads: the moment a QSO lands in the log it
-// is pushed to every enabled online service, fire-and-forget with a retry
-// sweep behind it. Per-QSO state rides in LogDb's up_* columns ('' pending,
-// 'Y' sent, 'E' failed — retried). Corrections re-send and the services
-// dedupe; deletes stay local by design (operator's accepted trade).
+// is pushed to every enabled online service, and every outcome is
+// ANNOUNCED — accepted, duplicate, or failed (operator's call 2026-09-01:
+// confirmations must be visible, like GridTracker's traffic lines).
+// Per-QSO state rides in LogDb's up_* columns ('' pending, 'Y' delivered
+// — a duplicate counts as delivered and is never re-sent, 'E' failed).
+// There is NO periodic retry loop (operator's explicit dislike): one
+// catch-up sweep shortly after startup collects QSOs logged while a
+// service was down, and retryFailedNow() is wired to a button for the
+// rest. Corrections re-send and the services dedupe; deletes stay local
+// by design (operator's accepted trade).
 //
 // Services (settings under up/<svc>/...):
 //   lotw    tqsl CLI:  -a all -l <station> [-p pw] -q -x -d -u <file>
@@ -38,6 +44,7 @@ public:
 
     void pushQso(qint64 id);           // called right after a QSO is logged
     void sweepSoon(int delayMs = 3000);
+    void retryFailedNow() { sweep(); } // the Online Logs window's button
 
     // Setup-window Test buttons. Each answers via serviceResult(svc,...).
     void testLotwDownload();
@@ -61,7 +68,6 @@ private:
 
     LogDb* db_;
     QNetworkAccessManager* net_;
-    QTimer* retry_;
     bool tqslRunning_ = false;
 };
 

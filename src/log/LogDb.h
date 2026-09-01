@@ -51,6 +51,9 @@ public:
     QList<Qso> prevQsos(const QString& call, int limit = 8) const;
     int    count() const;
 
+    // Same call+band+mode within 5 minutes already in the log.
+    bool hasNearDuplicate(const Qso& q) const;
+
     // ADIF. Import skips near-duplicates (same call+band+mode within
     // 5 minutes) and stamps country/zones via cty when the record has none.
     int  importAdif(QIODevice& in, const CtyLookup* cty, QString* err = nullptr);

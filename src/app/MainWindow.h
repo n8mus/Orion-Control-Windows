@@ -61,6 +61,7 @@ class LogWindow;
 class LogbookWindow;
 class QslUploader;
 class SpotTableWindow;
+class WsjtxListener;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -395,6 +396,7 @@ private:
     CwWindow* cwWin_ = nullptr;                // WinKeyer CW sender (lazy)
     LogDb* logDb_ = nullptr;                   // the station's own SQLite log
     QslUploader* uploader_ = nullptr;          // online-log push engine
+    WsjtxListener* wsjtx_ = nullptr;           // FT8 QSOs into the log
     LogWindow* logWin_ = nullptr;              // New QSO entry (lazy)
     LogbookWindow* logbookWin_ = nullptr;      // logbook browser (lazy)
     SpotTableWindow* spotTable_ = nullptr;     // cluster feed as a table (lazy)

@@ -4,6 +4,7 @@
 #include "app/MainWindowInternal.h"
 #include "log/LogDb.h"
 #include "log/QslUploader.h"
+#include "log/WsjtxListener.h"
 #include "ui/SpotTableWindow.h"
 
 #include <QSettings>
@@ -1013,11 +1014,23 @@ MainWindow::MainWindow(QWidget* parent)
     // Successes stay quiet — the status columns are the record; failures
     // get one status-bar line so a dead service doesn't fail silently.
     uploader_ = new QslUploader(logDb_, this);
+    // Every upload outcome shows in the status bar, success included —
+    // the operator wants to SEE each QSO land (GridTracker's traffic
+    // lines were the model).
     connect(uploader_, &QslUploader::serviceResult, this,
             [this](const QString& svc, bool ok, const QString& detail) {
-                if (!ok)
-                    statusBar()->showMessage(
-                        svc + " upload: " + detail, 6000);
+                statusBar()->showMessage(svc + ": " + detail,
+                                         ok ? 4000 : 8000);
+            });
+    // WSJT-X QSOs flow in over its UDP broadcast (GridTracker keeps doing
+    // the online pushing for those unless log/wsjtxPush says otherwise).
+    wsjtx_ = new WsjtxListener(logDb_, &cty_, this);
+    wsjtx_->start();
+    connect(wsjtx_, &WsjtxListener::qsoLogged, this,
+            [this](qint64 id, const QString& call, bool pushWanted) {
+                statusBar()->showMessage("logged " + call + " (WSJT-X)",
+                                         4000);
+                if (pushWanted && uploader_) uploader_->pushQso(id);
             });
     connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
     connect(&spotClient_, &SpotClient::statusChanged, this,

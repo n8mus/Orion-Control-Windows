@@ -50,11 +50,10 @@ QByteArray enc(const QString& s) {
 QslUploader::QslUploader(LogDb* db, QObject* parent)
     : QObject(parent), db_(db) {
     net_ = new QNetworkAccessManager(this);
-    retry_ = new QTimer(this);
-    retry_->setInterval(2 * 60 * 1000);   // catch-up sweep while running
-    connect(retry_, &QTimer::timeout, this, [this] { sweep(); });
-    retry_->start();
-    sweepSoon(15000);                     // once after startup settles
+    // One catch-up sweep after startup (QSOs logged while a service was
+    // down); beyond that, failures wait for the Retry button — no
+    // periodic background retrying (operator's call).
+    sweepSoon(15000);
 }
 
 void QslUploader::pushQso(qint64 id) {
@@ -149,15 +148,18 @@ void QslUploader::pushHttp(const Qso& q, const QString& svc) {
     }
     if (!rep) return;
 
-    connect(rep, &QNetworkReply::finished, this, [this, rep, svc, id] {
+    const QString call = q.call;
+    connect(rep, &QNetworkReply::finished, this,
+            [this, rep, svc, id, call] {
         rep->deleteLater();
         const QString body = QString::fromUtf8(rep->readAll());
         bool ok = rep->error() == QNetworkReply::NoError;
+        bool dupe = false;
         QString why = ok ? QString() : rep->errorString();
         if (ok) {
             if (svc == "eqsl") {
                 if (body.contains("Duplicate", Qt::CaseInsensitive))
-                    ok = true;                    // already there = delivered
+                    dupe = true;                  // already there = delivered
                 else if (body.contains("Error", Qt::CaseInsensitive)
                          || body.contains("No such",  Qt::CaseInsensitive)) {
                     ok = false;
@@ -168,7 +170,7 @@ void QslUploader::pushHttp(const Qso& q, const QString& svc) {
             } else if (svc == "qrz") {
                 if (body.contains("STATUS=FAIL", Qt::CaseInsensitive)) {
                     if (body.contains("duplicate", Qt::CaseInsensitive))
-                        ok = true;
+                        dupe = true;
                     else {
                         ok = false;
                         why = "QRZ: " + body.left(120);
@@ -178,7 +180,12 @@ void QslUploader::pushHttp(const Qso& q, const QString& svc) {
             // club/hrdlog: HTTP success is the acknowledgment we get.
         }
         db_->setUploadState(id, svc, ok ? QChar('Y') : QChar('E'));
-        if (!ok) emit serviceResult(svc, false, why);
+        // Every outcome is announced — accepted, duplicate, or failed —
+        // GridTracker-style, so the operator sees each QSO land.
+        emit serviceResult(svc, ok,
+                           ok ? call + (dupe ? " — duplicate, already there"
+                                             : " accepted")
+                              : call + ": " + why);
     });
 }
 
@@ -218,13 +225,20 @@ void QslUploader::runTqslBatch() {
         p->deleteLater();
         tqslRunning_ = false;
         QFile::remove(path);
+        const bool dupes = err.contains("duplicate", Qt::CaseInsensitive);
         const bool ok = st == QProcess::NormalExit
-            && (err.contains("Final Status: Success")
-                || err.contains("duplicate", Qt::CaseInsensitive)
+            && (err.contains("Final Status: Success") || dupes
                 || code == 0);
         for (const qint64 id : ids)
             db_->setUploadState(id, "lotw", ok ? QChar('Y') : QChar('E'));
-        if (!ok)
+        if (ok)
+            emit serviceResult(
+                "lotw", true,
+                dupes ? QString("%1 QSO(s) — duplicates, already at LoTW")
+                            .arg(ids.size())
+                      : QString("%1 QSO(s) signed and uploaded")
+                            .arg(ids.size()));
+        else
             emit serviceResult(
                 "lotw", false,
                 err.isEmpty() ? QString("tqsl exit %1").arg(code)

@@ -266,6 +266,19 @@ Qso LogDb::fromAdif(const AdifRecord& r) {
     return o;
 }
 
+bool LogDb::hasNearDuplicate(const Qso& o) const {
+    if (!isOpen()) return false;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare(
+        "SELECT id FROM qso WHERE call=:call AND band=:band AND mode=:mode"
+        " AND ABS(strftime('%s', ts_utc) - :secs) < 300 LIMIT 1");
+    q.bindValue(":call", o.call.trimmed().toUpper());
+    q.bindValue(":band", o.band.trimmed().toUpper());
+    q.bindValue(":mode", o.mode.trimmed().toUpper());
+    q.bindValue(":secs", o.tsUtc.toUTC().toSecsSinceEpoch());
+    return q.exec() && q.next();
+}
+
 int LogDb::importAdif(QIODevice& in, const CtyLookup* cty, QString* err) {
     if (!isOpen()) { if (err) *err = "log database not open"; return -1; }
     const QList<AdifRecord> recs = Adif::parse(in);

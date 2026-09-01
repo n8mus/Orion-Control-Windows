@@ -282,11 +282,17 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
     foot->setStyleSheet("QLabel { color: #6d7b8c; font-size: 12px; }");
     v->addWidget(foot);
     v->addSpacing(8);
+    auto* retry = new QPushButton("Retry failed uploads", this);
+    retry->setToolTip("Re-send every QSO whose last push failed —\n"
+                      "nothing retries in the background on its own");
     auto* close = new QPushButton("Close", this);
     auto* fr = new QHBoxLayout;
+    fr->addWidget(retry);
     fr->addStretch(1);
     fr->addWidget(close);
     v->addLayout(fr);
+    connect(retry, &QPushButton::clicked, this,
+            [this] { up_->retryFailedNow(); });
     connect(close, &QPushButton::clicked, this, &QDialog::accept);
 
     if (up_)
