@@ -101,6 +101,16 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
         r1->addStretch(1);
         box->addLayout(r1);
         auto* r2 = new QHBoxLayout;
+        // Pre-seed the default so a working out-of-the-box path never
+        // shows as a red missing field (live confusion, 2026-09-01).
+        if (QSettings().value("up/lotw/tqslPath").toString().isEmpty())
+            QSettings().setValue("up/lotw/tqslPath",
+#ifdef Q_OS_WIN
+                "C:/Program Files (x86)/TrustedQSL/tqsl.exe"
+#else
+                "tqsl"
+#endif
+            );
         pair(r2, "TQSL path",
              field("lotw/tqslPath",
                    "C:/Program Files (x86)/TrustedQSL/tqsl.exe", 320,
