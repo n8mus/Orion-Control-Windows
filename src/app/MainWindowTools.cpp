@@ -16,6 +16,8 @@
 #include "cw/WinKeyer.h"
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
+#include "ui/LogWindow.h"
+#include "ui/LogbookWindow.h"
 #include "ui/SkimmerWindow.h"
 #include "ui/SkimViewWindow.h"
 #include "ui/WinKeyerPanel.h"
@@ -97,28 +99,31 @@ void MainWindow::setupLogUi() {
     logBtn->setStyleSheet(QString(kToolBtnStyle));
     // Label stays "LOG" (operator call 2026-07-31: relabeling "messes up the
     // button"); the hover text carries the truth instead.
-    logBtn->setToolTip("Opens a fresh New QSO page in cqrlog —\nclears its "
-                       "form and puts the cursor in the callsign field");
+    logBtn->setToolTip("New QSO — the console's log entry window\n"
+                       "(on Linux it also pops a fresh New QSO in cqrlog)\n"
+                       "Right-click: logbook browser — search, edit, ADIF");
     topLay2_->addWidget(logBtn);
     logUdp_ = new QUdpSocket(this);
     // Pre-bind so the first datagram isn't lost (an unbound socket auto-binds
     // on first write and can drop that very first send).
     logUdp_->bind(QHostAddress::LocalHost, 0);
-    // LOG -> fresh New QSO in cqrlog: clear its form, bring it forward, put
-    // the cursor in its callsign field. The console is the SDR/spotting
-    // front end; the QSO is typed and worked in cqrlog. This replaces the
-    // old console logging form (and all its focus/sync friction) — spot
-    // clicks and CW double-clicks feed calls to cqrlog the same way.
+    // LOG -> the console's own New QSO window (SQLite station log), and the
+    // same nudge to cqrlog as always — on the Linux box both stay in step,
+    // on Windows the datagram lands on deaf ears by design (fire-and-forget).
     connect(logBtn, &QToolButton::clicked, this, [this] {
+        openLogWindow();
         logUdp_->writeDatagram("CQRNEWQSO", QHostAddress::LocalHost,
             quint16(QSettings().value("log/port", 2334).toInt()));
         // "Fresh QSO" has to mean fresh on BOTH sides: cqrlog's form goes
         // blank, so the console's DX box can't keep pointing at the
         // station just worked (operator had to clear it by hand).
         if (cwWin_) cwWin_->setHisCall(QString());
-        statusBar()->showMessage("new QSO in cqrlog", 2500);
     });
-    // Spot click -> send the call (and POTA park/grid) to cqrlog's New QSO.
+    logBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(logBtn, &QToolButton::customContextMenuRequested, this,
+            [this](const QPoint&) { openLogbookWindow(); });
+    // Spot click -> send the call (and POTA park/grid) to cqrlog's New QSO,
+    // and pre-fill the console's own entry window when it's open.
     connect(pan_, &PanadapterWidget::spotClicked, this,
             [this](const QString& call, QChar kind, const QString& tg) {
                 if (cwWin_) cwWin_->setHisCall(call);
@@ -133,10 +138,65 @@ void MainWindow::setupLogUi() {
 
 }
 
+namespace {
+// The rig's mode as the ADIF mode the logbook stores.
+QString adifModeText(Mode m) {
+    switch (m) {
+        case Mode::CWU: case Mode::CWL: return QStringLiteral("CW");
+        case Mode::USB: case Mode::LSB: return QStringLiteral("SSB");
+        case Mode::AM:  return QStringLiteral("AM");
+        case Mode::FM:  return QStringLiteral("FM");
+    }
+    return QStringLiteral("SSB");
+}
+} // namespace
+
+void MainWindow::openLogWindow(const QString& call, const QString& park,
+                               const QString& grid) {
+    if (!logWin_) {
+        logWin_ = new LogWindow(logDb_, &logbook_, &cty_, &rotor_,
+                                toolWinParent(this));
+        adoptToolWindow(logWin_);
+        connect(logWin_, &LogWindow::qsoLogged, this,
+                [this](qint64, const QString& c) {
+                    statusBar()->showMessage("logged " + c, 3000);
+                    if (cwWin_) cwWin_->setHisCall(QString());
+                });
+        // Dial and mode ride in once a second while the window is up — every
+        // tune path (knob, band button, WSJT-X, click) funnels into
+        // centerHz_/rigMode_, so polling beats hooking each one.
+        auto* feed = new QTimer(logWin_);
+        feed->setInterval(1000);
+        connect(feed, &QTimer::timeout, logWin_, [this] {
+            if (logWin_->isVisible())
+                logWin_->setRig(qint64(centerHz_), adifModeText(rigMode_));
+        });
+        feed->start();
+    }
+    logWin_->setRig(qint64(centerHz_), adifModeText(rigMode_));
+    if (!call.isEmpty()) logWin_->prefill(call, park, grid);
+    logWin_->show();
+    logWin_->raise();
+    logWin_->activateWindow();
+}
+
+void MainWindow::openLogbookWindow() {
+    if (!logbookWin_) {
+        logbookWin_ = new LogbookWindow(logDb_, &cty_, toolWinParent(this));
+        adoptToolWindow(logbookWin_);
+    }
+    logbookWin_->show();
+    logbookWin_->raise();
+    logbookWin_->activateWindow();
+}
+
 void MainWindow::sendCqrLookup(const QString& call, const QString& park,
                                const QString& grid) {
     const QString c = call.trimmed().toUpper();
     if (c.isEmpty() || !logUdp_) return;
+    // Every path that feeds a call here (spot click, CW decode double-click,
+    // skimmer windows) also pre-fills the console's own entry window.
+    if (logWin_ && logWin_->isVisible()) logWin_->prefill(c, park, grid);
     QString msg = "CQRLOOKUP:" + c;
     if (!park.isEmpty()) msg += ";PARK:" + park.trimmed().toUpper();
     if (!grid.isEmpty()) msg += ";GRID:" + grid.trimmed();

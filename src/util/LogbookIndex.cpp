@@ -9,6 +9,9 @@
 #include <QTextStream>
 #include <QTimer>
 
+#include "log/LogDb.h"
+#include "util/CtyLookup.h"
+
 namespace ttc {
 
 namespace {
@@ -101,11 +104,96 @@ void LogbookIndex::parseRows(const QString& tsv) {
         }
     }
     if (wc.isEmpty() && pk.isEmpty()) return;      // don't wipe on bad read
-    workedCall_ = std::move(wc);
-    workedCallBand_ = std::move(wcb);
-    confCallBand_ = std::move(ccb);
-    parks_ = std::move(pk);
-    haveData_ = true;
+    cqrWorkedCall_ = std::move(wc);
+    cqrWorkedCallBand_ = std::move(wcb);
+    cqrConfCallBand_ = std::move(ccb);
+    cqrParks_ = std::move(pk);
+    rebuildMerged();
+}
+
+void LogbookIndex::attachDb(LogDb* db) {
+    db_ = db;
+    if (!db_) return;
+    connect(db_, &LogDb::changed, this, [this] { refreshDb(); });
+    refreshDb();
+}
+
+void LogbookIndex::attachCty(const CtyLookup* cty) {
+    cty_ = cty;
+    ctyMemo_.clear();
+}
+
+QString LogbookIndex::countryOf(const QString& call) const {
+    const QString c = call.trimmed().toUpper();
+    if (c.isEmpty()) return QString();
+    // A logged call's stored country beats prefix guessing.
+    if (const auto it = dbCallCountry_.constFind(c);
+        it != dbCallCountry_.constEnd())
+        return *it;
+    if (const auto it = ctyMemo_.constFind(c); it != ctyMemo_.constEnd())
+        return *it;
+    QString name;
+    if (cty_) {
+        CtyInfo ci;
+        if (cty_->info(c, ci)) name = ci.country;
+    }
+    ctyMemo_.insert(c, name);
+    return name;
+}
+
+void LogbookIndex::refreshDb() {
+    if (!db_) return;
+    dbCallCountry_.clear();
+    ctyMemo_.clear();
+    dbWorkedCall_.clear();
+    dbWorkedCallBand_.clear();
+    dbConfCallBand_.clear();
+    dbParks_.clear();
+    workedCountry_.clear();
+    confCountry_.clear();
+    workedCountryBand_.clear();
+    confCountryBand_.clear();
+    workedCountryMode_.clear();
+    confCountryMode_.clear();
+    haveDbData_ = false;
+    const auto rows = db_->workedRows();
+    for (const LogDb::WorkedRow& r : rows) {
+        const QString call = r.call.trimmed().toUpper();
+        if (call.isEmpty()) continue;
+        haveDbData_ = true;
+        const QString band = r.band.trimmed().toUpper();
+        dbWorkedCall_.insert(call);
+        dbWorkedCallBand_.insert(call + '|' + band);
+        if (r.conf) dbConfCallBand_.insert(call + '|' + band);
+        if (!r.park.isEmpty())
+            for (const QString& p : r.park.split(',', Qt::SkipEmptyParts))
+                dbParks_.insert(p.trimmed().toUpper());
+        // Country dimensions: stored country wins; resolve via cty.dat for
+        // rows imported before the country column was stamped.
+        QString ctry = r.country.trimmed();
+        if (!ctry.isEmpty()) dbCallCountry_.insert(call, ctry);
+        else ctry = countryOf(call);
+        if (ctry.isEmpty()) continue;
+        const QString mode = r.mode.trimmed().toUpper();
+        workedCountry_.insert(ctry);
+        workedCountryBand_.insert(ctry + '|' + band);
+        workedCountryMode_.insert(ctry + '|' + mode);
+        if (r.conf) {
+            confCountry_.insert(ctry);
+            confCountryBand_.insert(ctry + '|' + band);
+            confCountryMode_.insert(ctry + '|' + mode);
+        }
+    }
+    rebuildMerged();
+    emit updated();
+}
+
+void LogbookIndex::rebuildMerged() {
+    workedCall_ = cqrWorkedCall_ + dbWorkedCall_;
+    workedCallBand_ = cqrWorkedCallBand_ + dbWorkedCallBand_;
+    confCallBand_ = cqrConfCallBand_ + dbConfCallBand_;
+    parks_ = cqrParks_ + dbParks_;
+    haveData_ = !workedCall_.isEmpty() || !parks_.isEmpty();
 }
 
 QChar LogbookIndex::status(const QString& call, const QString& band) const {
@@ -116,6 +204,28 @@ QChar LogbookIndex::status(const QString& call, const QString& band) const {
     if (confCallBand_.contains(key)) return QChar('C');
     if (workedCallBand_.contains(key)) return QChar('W');
     return QChar('B');
+}
+
+LogbookIndex::Need LogbookIndex::need(const QString& call, const QString& band,
+                                      const QString& mode) const {
+    Need out;
+    if (!haveDbData_) return out;
+    const QString ctry = countryOf(call);
+    if (ctry.isEmpty()) return out;
+    const auto dim = [](const QSet<QString>& conf, const QSet<QString>& worked,
+                        const QString& key) {
+        if (conf.contains(key)) return QChar('C');
+        if (worked.contains(key)) return QChar('W');
+        return QChar('N');
+    };
+    out.country = dim(confCountry_, workedCountry_, ctry);
+    const QString b = band.trimmed().toUpper();
+    if (!b.isEmpty())
+        out.band = dim(confCountryBand_, workedCountryBand_, ctry + '|' + b);
+    const QString m = mode.trimmed().toUpper();
+    if (!m.isEmpty())
+        out.mode = dim(confCountryMode_, workedCountryMode_, ctry + '|' + m);
+    return out;
 }
 
 bool LogbookIndex::parkHunted(const QString& park) const {

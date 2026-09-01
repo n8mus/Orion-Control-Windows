@@ -13,9 +13,9 @@ namespace ttc {
 bool CtyLookup::load(const QString& path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+    countries_.clear();
     prefixes_.clear();
     exact_.clear();
-    float lat = 0.0f, lon = 0.0f;
     bool haveCountry = false;
     while (!f.atEnd()) {
         const QString line = QString::fromLatin1(f.readLine());
@@ -23,13 +23,19 @@ bool CtyLookup::load(const QString& path) {
         if (!line.startsWith(' ') && line.contains(':')) {   // country header
             const QStringList fields = line.split(':');
             if (fields.size() >= 7) {
-                lat = fields[4].trimmed().toFloat();
-                lon = -fields[5].trimmed().toFloat();        // west-positive -> east
+                Country c;
+                c.name = fields[0].trimmed();
+                c.cq   = fields[1].trimmed().toInt();
+                c.itu  = fields[2].trimmed().toInt();
+                c.lat  = fields[4].trimmed().toFloat();
+                c.lon  = -fields[5].trimmed().toFloat();     // west-positive -> east
+                countries_.push_back(c);
                 haveCountry = true;
             }
             continue;
         }
         if (!haveCountry) continue;
+        const auto ci = quint16(countries_.size() - 1);
         for (QString tok : line.trimmed().remove(';').split(',', Qt::SkipEmptyParts)) {
             // Strip per-alias override decorations.
             for (const QChar cut : {QChar('('), QChar('['), QChar('<'),
@@ -39,30 +45,44 @@ bool CtyLookup::load(const QString& path) {
             }
             tok = tok.trimmed().toUpper();
             if (tok.isEmpty()) continue;
-            if (tok.startsWith('=')) exact_.insert(tok.mid(1), {lat, lon});
-            else                     prefixes_.push_back({tok, lat, lon});
+            if (tok.startsWith('=')) exact_.insert(tok.mid(1), ci);
+            else                     prefixes_.push_back({tok, ci});
         }
     }
     return !prefixes_.empty();
 }
 
-bool CtyLookup::lookup(const QString& call, double& lat, double& lon) const {
-    const QString c = call.toUpper();
-    if (const auto it = exact_.constFind(c); it != exact_.constEnd()) {
-        lat = it->first;
-        lon = it->second;
-        return true;
-    }
-    int bestLen = 0;
-    const Ent* best = nullptr;
+int CtyLookup::find(const QString& call) const {
+    const QString c = call.trimmed().toUpper();
+    if (c.isEmpty()) return -1;
+    if (const auto it = exact_.constFind(c); it != exact_.constEnd())
+        return *it;
+    int bestLen = 0, best = -1;
     for (const Ent& e : prefixes_)
         if (e.pfx.size() > bestLen && c.startsWith(e.pfx)) {
-            best = &e;
+            best = e.ci;
             bestLen = e.pfx.size();
         }
-    if (!best) return false;
-    lat = best->lat;
-    lon = best->lon;
+    return best;
+}
+
+bool CtyLookup::lookup(const QString& call, double& lat, double& lon) const {
+    const int ci = find(call);
+    if (ci < 0) return false;
+    lat = countries_[size_t(ci)].lat;
+    lon = countries_[size_t(ci)].lon;
+    return true;
+}
+
+bool CtyLookup::info(const QString& call, CtyInfo& out) const {
+    const int ci = find(call);
+    if (ci < 0) return false;
+    const Country& c = countries_[size_t(ci)];
+    out.country = c.name;
+    out.cq  = c.cq;
+    out.itu = c.itu;
+    out.lat = c.lat;
+    out.lon = c.lon;
     return true;
 }
 

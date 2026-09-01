@@ -2,6 +2,7 @@
 #include "app/MainWindow.h"
 #include "app/Bands.h"
 #include "app/MainWindowInternal.h"
+#include "log/LogDb.h"
 
 #include <QSettings>
 #include <QSlider>
@@ -987,6 +988,13 @@ MainWindow::MainWindow(QWidget* parent)
             quint16(QSettings().value("skim/telnetPort", 7300).toUInt()));
     // Recolor live when the logbook loads or a bridged QSO lands in it.
     connect(&logbook_, &LogbookIndex::updated, this, pushSpots);
+    // The console's own log (SQLite) is the second worked-before source —
+    // and the only one for the country/band/mode needed-status dimensions.
+    logDb_ = new LogDb(this);
+    if (!logDb_->open())
+        statusBar()->showMessage("station log: cannot open database", 6000);
+    logbook_.attachCty(&cty_);
+    logbook_.attachDb(logDb_);
     logbook_.start();
     connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
     connect(&spotClient_, &SpotClient::statusChanged, this,

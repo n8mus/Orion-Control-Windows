@@ -34,7 +34,7 @@ if(CCACHE_PROGRAM)
   message(STATUS "ccache: enabled")
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort Sql)
 
 # Qt Multimedia backs the Windows audio endpoints (src/audio/AudioIo) —
 # capture/playback where the PipeWire CLI tools don't exist. Required there;
@@ -100,6 +100,10 @@ add_executable(tentec-console
   src/net/RotorServer.cpp       src/net/RotorServer.h
   src/net/RotorLink.cpp         src/net/RotorLink.h
   src/ui/DigiWindow.cpp         src/ui/DigiWindow.h
+  src/log/Adif.cpp              src/log/Adif.h
+  src/log/LogDb.cpp             src/log/LogDb.h
+  src/ui/LogWindow.cpp          src/ui/LogWindow.h
+  src/ui/LogbookWindow.cpp      src/ui/LogbookWindow.h
   src/util/CtyLookup.cpp        src/util/CtyLookup.h
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
   src/util/WatchList.cpp        src/util/WatchList.h
@@ -137,7 +141,7 @@ add_executable(tentec-console
   resources/resources.qrc
 )
 target_include_directories(tentec-console PRIVATE src)
-target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort rnnoise)
+target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort Qt6::Sql rnnoise)
 if(WIN32)
   # GUI subsystem: no stray console window on double-click. stderr then has
   # no tty, so main.cpp's session-log redirect engages — same behavior as a
@@ -219,6 +223,15 @@ add_executable(pmtest EXCLUDE_FROM_ALL
   src/radio/PmMeter.cpp src/radio/SerialPort.cpp src/radio/TxMeter.h)
 target_include_directories(pmtest PRIVATE src)
 target_link_libraries(pmtest PRIVATE Qt6::Core Qt6::SerialPort)
+
+# Station log: ADIF round-trip, SQLite insert/dupe-import, the worked-before
+# index's merged view + country/band/mode needed-status, bearing math.
+add_executable(logtest EXCLUDE_FROM_ALL
+  tests/logtest.cpp
+  src/log/Adif.cpp src/log/LogDb.cpp
+  src/util/LogbookIndex.cpp src/util/CtyLookup.cpp)
+target_include_directories(logtest PRIVATE src)
+target_link_libraries(logtest PRIVATE Qt6::Core Qt6::Sql)
 
 # Smith-chart render harness: draws a band's stored sweep runs to a PNG
 # (offscreen), for eyeballing the chart against real captured data.

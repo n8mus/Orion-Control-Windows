@@ -56,6 +56,10 @@ class QThread;
 
 namespace ttc {
 
+class LogDb;
+class LogWindow;
+class LogbookWindow;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -75,6 +79,9 @@ private:
     // on the same bridge port): cqrlog runs its callbook lookup and shows
     // SP/LP rotor buttons; park+grid ride along from POTA spots so the
     // azimuth points at the park, not the activator's home QTH.
+    void openLogWindow(const QString& call = {}, const QString& park = {},
+                       const QString& grid = {});
+    void openLogbookWindow();
     void sendCqrLookup(const QString& call, const QString& park = {},
                        const QString& grid = {});
     void setupCwUi();
@@ -383,6 +390,9 @@ private:
     QThread* replayThread_ = nullptr;          // TTC_IQFILE feeder
     std::atomic<bool> replayStop_{false};
     CwWindow* cwWin_ = nullptr;                // WinKeyer CW sender (lazy)
+    LogDb* logDb_ = nullptr;                   // the station's own SQLite log
+    LogWindow* logWin_ = nullptr;              // New QSO entry (lazy)
+    LogbookWindow* logbookWin_ = nullptr;      // logbook browser (lazy)
     CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
     CwDecoder* audioDec_ = nullptr;            // radio-audio CW reader (lazy)
     AudioCwSource* audioSrc_ = nullptr;        // SignaLink capture for it
