@@ -1032,6 +1032,7 @@ MainWindow::MainWindow(QWidget* parent)
                 statusBar()->showMessage("logged " + call + " (WSJT-X)",
                                          4000);
                 if (pushWanted && uploader_) uploader_->pushQso(id);
+                enrichQso(id, call);
             });
     // Clicking a decode (or starting a transmission) in WSJT-X rides the
     // same rails as a spot click: New QSO window pre-fills, cqrlog is
@@ -1041,6 +1042,34 @@ MainWindow::MainWindow(QWidget* parent)
                 sendCqrLookup(call, {}, grid);
             });
     qrz_ = new QrzLookup(this);
+    // cqrlog's habit, kept: every logged QSO gets its callbook lookup and
+    // the name/QTH/grid written into the log (only fields still empty).
+    connect(qrz_, &QrzLookup::result, this,
+            [this](const QString& call, bool ok, const QString& name,
+                   const QString& qth, const QString& grid,
+                   const QString&) {
+                const auto ids = enrichPending_.values(call);
+                enrichPending_.remove(call);
+                if (!ok || !logDb_) return;
+                for (const qint64 id : ids) {
+                    Qso q = logDb_->qso(id);
+                    if (q.id < 0) continue;
+                    bool ch = false;
+                    if (q.name.isEmpty() && !name.isEmpty()) {
+                        q.name = name;
+                        ch = true;
+                    }
+                    if (q.qth.isEmpty() && !qth.isEmpty()) {
+                        q.qth = qth;
+                        ch = true;
+                    }
+                    if (q.grid.isEmpty() && !grid.isEmpty()) {
+                        q.grid = grid;
+                        ch = true;
+                    }
+                    if (ch) logDb_->updateQso(q);
+                }
+            });
     connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
     connect(&spotClient_, &SpotClient::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });

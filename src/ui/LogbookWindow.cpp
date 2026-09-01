@@ -106,17 +106,17 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     head(ColCountry, "COUNTRY");
     head(ColPota, "POTA");
     head(ColComment, "COMMENT");
-    // One upload column only — LoTW, the award tracker (operator: five
-    // columns "would be a bit much"; the rest live in the traffic print
-    // below). Y sent · E failed · blank pending.
-    head(ColUpLotw, "LoTW");
+    // One award column only — LoTW CONFIRMED (lotw_rcvd, fed by the QSL
+    // download sync). Upload traffic scrolls in the print below; five
+    // sent-state columns were "a bit much" (operator).
+    head(ColLotw, "LoTW");
 
     view_ = new QTableView(this);
     view_->setModel(model_);
-    for (int c : {ColId, ColCqz, ColItuz, ColQsl, ColLotw, ColEqsl,
+    for (int c : {ColId, ColCqz, ColItuz, ColQsl, ColEqsl, ColUpLotw,
                   ColUpEqsl, ColUpQrz, ColUpClub, ColUpHrdlog})
         view_->setColumnHidden(c, true);
-    view_->setColumnWidth(ColUpLotw, 44);
+    view_->setColumnWidth(ColLotw, 44);
     // COMMENT soaks the slack; the upload columns keep their width.
     view_->horizontalHeader()->setStretchLastSection(false);
     view_->horizontalHeader()->setSectionResizeMode(ColComment,

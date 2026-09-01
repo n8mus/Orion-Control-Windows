@@ -66,6 +66,54 @@ QslUploader::QslUploader(LogDb* db, QObject* parent)
     // down); beyond that, failures wait for the Retry button — no
     // periodic background retrying (operator's call).
     sweepSoon(15000);
+    // And one QSL download, cqrlog-style, once the startup dust settles.
+    QTimer::singleShot(25000, this, [this] {
+        if (on("lotw")) syncLotwQsls();
+    });
+}
+
+void QslUploader::syncLotwQsls() {
+    const QString user = cfg("lotw/login"), pass = cfg("lotw/password");
+    if (user.isEmpty() || pass.isEmpty()) {
+        emit serviceResult("lotw", false,
+                           "QSL sync needs the LoTW login + password");
+        return;
+    }
+    const QString since =
+        cfg("lotw/qslSince", QStringLiteral("1900-01-01"));
+    QUrl url("https://lotw.arrl.org/lotwuser/lotwreport.adi");
+    url.setQuery(QString::fromLatin1(
+                     "login=" + enc(user) + "&password=" + enc(pass)
+                     + "&qso_query=1&qso_qsl=yes&qso_qslsince="
+                     + enc(since)),
+                 QUrl::StrictMode);
+    QNetworkReply* rep = net_->get(QNetworkRequest(url));
+    connect(rep, &QNetworkReply::finished, this, [this, rep] {
+        rep->deleteLater();
+        const QByteArray body = rep->readAll();
+        if (rep->error() != QNetworkReply::NoError) {
+            emit serviceResult("lotw", false,
+                               "QSL sync: " + rep->errorString());
+            return;
+        }
+        if (body.contains("password incorrect")
+            || body.contains("Username/password")) {
+            emit serviceResult("lotw", false,
+                               "QSL sync: LoTW rejected the login");
+            return;
+        }
+        const auto recs = Adif::parseBytes(body);
+        const int n = db_ ? db_->applyLotwConfirmations(recs) : 0;
+        // Watermark a day back so a slow LoTW batch is never skipped.
+        QSettings().setValue(
+            "up/lotw/qslSince",
+            QDate::currentDate().addDays(-1).toString("yyyy-MM-dd"));
+        emit serviceResult(
+            "lotw", true,
+            n > 0 ? QString("QSL sync: %1 new confirmation(s)").arg(n)
+                  : QString("QSL sync: no new confirmations (%1 in the"
+                            " report)").arg(recs.size()));
+    });
 }
 
 void QslUploader::pushQso(qint64 id) {

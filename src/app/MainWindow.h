@@ -51,6 +51,7 @@ namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
 #include "sdr/IqRecorder.h"
 #include "dsp/PitchTrim.h"
 #include "sdr/AutoGain.h"
+#include <QMultiHash>
 #include <atomic>
 class QThread;
 
@@ -399,6 +400,8 @@ private:
     QslUploader* uploader_ = nullptr;          // online-log push engine
     WsjtxListener* wsjtx_ = nullptr;           // FT8 QSOs into the log
     QrzLookup* qrz_ = nullptr;                 // callbook for the LOG window
+    QMultiHash<QString, qint64> enrichPending_;  // call -> QSO awaiting QRZ
+    void enrichQso(qint64 id, const QString& call);
     LogWindow* logWin_ = nullptr;              // New QSO entry (lazy)
     LogbookWindow* logbookWin_ = nullptr;      // logbook browser (lazy)
     SpotTableWindow* spotTable_ = nullptr;     // cluster feed as a table (lazy)

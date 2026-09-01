@@ -54,6 +54,11 @@ public:
     // Same call+band+mode within 5 minutes already in the log.
     bool hasNearDuplicate(const Qso& q) const;
 
+    // LoTW QSL-report records (QSL_RCVD=Y) matched against the log on
+    // call+band+mode+date (±1 day for UTC edges) and marked confirmed.
+    // Returns how many QSOs newly flipped; one changed() for the batch.
+    int applyLotwConfirmations(const QList<AdifRecord>& recs);
+
     // ADIF. Import skips near-duplicates (same call+band+mode within
     // 5 minutes) and stamps country/zones via cty when the record has none.
     int  importAdif(QIODevice& in, const CtyLookup* cty, QString* err = nullptr);

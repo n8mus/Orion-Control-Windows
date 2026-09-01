@@ -16,6 +16,7 @@
 #include "cw/WinKeyer.h"
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
+#include "log/QrzLookup.h"
 #include "log/QslUploader.h"
 #include "ui/LogWindow.h"
 #include "ui/LogbookWindow.h"
@@ -172,6 +173,7 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
                     statusBar()->showMessage("logged " + c, 3000);
                     if (cwWin_) cwWin_->setHisCall(QString());
                     if (uploader_) uploader_->pushQso(id);
+                    enrichQso(id, c);
                 });
         // Dial and mode ride in once a second while the window is up — every
         // tune path (knob, band button, WSJT-X, click) funnels into
@@ -200,6 +202,14 @@ void MainWindow::openLogbookWindow() {
     logbookWin_->show();
     logbookWin_->raise();
     logbookWin_->activateWindow();
+}
+
+void MainWindow::enrichQso(qint64 id, const QString& call) {
+    if (!qrz_ || id < 0) return;
+    if (QSettings().value("up/qrzweb/user").toString().trimmed().isEmpty())
+        return;                            // no callbook login configured
+    enrichPending_.insert(call.trimmed().toUpper(), id);
+    qrz_->lookup(call);
 }
 
 void MainWindow::openSpotTable() {

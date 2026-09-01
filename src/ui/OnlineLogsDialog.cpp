@@ -158,12 +158,18 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
              field("lotw/tqslPassword", "usually empty", 120, true, this));
         auto* t1 = testBtn("Test Download");
         auto* t2 = testBtn("Test TQSL");
-        testCol({t1, t2});
+        auto* t3 = testBtn("Sync QSLs");
+        t3->setToolTip("Download LoTW's confirmations now and mark the "
+                       "matching QSOs\n(also runs by itself shortly after "
+                       "every console start)");
+        testCol({t1, t2, t3});
         resultLabel("lotw");
         connect(t1, &QPushButton::clicked, this,
                 [this] { up_->testLotwDownload(); });
         connect(t2, &QPushButton::clicked, this,
                 [this] { up_->testTqsl(); });
+        connect(t3, &QPushButton::clicked, this,
+                [this] { up_->syncLotwQsls(); });
         ++row_;
     }
     // ---- eQSL ---------------------------------------------------------

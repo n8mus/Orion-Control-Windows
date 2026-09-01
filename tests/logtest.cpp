@@ -161,6 +161,22 @@ static void testIndex(const QString& dir) {
     // A new QSO flips the sets live (LogDb::changed -> refreshDb).
     add("ZL1XYZ", "20M", "CW", "New Zealand", "");
     CHECK(idx.status("ZL1XYZ", "20M") == 'W', "index: follows live inserts");
+
+    // The LoTW QSL download marks matching QSOs confirmed — call, band,
+    // mode and the QSO date (with the ±1 day UTC tolerance).
+    AdifRecord qsl;
+    qsl.insert("CALL", "SA6LKX");
+    qsl.insert("BAND", "20M");
+    qsl.insert("MODE", "CW");
+    qsl.insert("QSO_DATE", QDateTime::currentDateTimeUtc()
+                               .addDays(1).toString("yyyyMMdd"));
+    qsl.insert("QSL_RCVD", "Y");
+    CHECK(db.applyLotwConfirmations({qsl}) == 1,
+          "lotw sync: report record marks the QSO");
+    CHECK(idx.status("SA6LKX", "20M") == 'C',
+          "lotw sync: confirmation reaches the worked-before view");
+    CHECK(db.applyLotwConfirmations({qsl}) == 0,
+          "lotw sync: already-confirmed QSOs don't count again");
 }
 
 static void testBearing() {

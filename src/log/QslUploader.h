@@ -47,6 +47,12 @@ public:
     void sweepSoon(int delayMs = 3000);
     void retryFailedNow() { sweep(); } // the Online Logs window's button
 
+    // cqrlog's "auto down": pull LoTW's QSL report (since the stored
+    // watermark) and mark matching QSOs confirmed. Runs by itself a
+    // little after startup when LoTW is enabled; the Online Logs window
+    // has a Sync QSLs button for on-demand runs.
+    void syncLotwQsls();
+
     // Setup-window Test buttons. Each answers via serviceResult(svc,...).
     void testLotwDownload();
     void testTqsl();

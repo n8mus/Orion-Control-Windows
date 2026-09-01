@@ -266,6 +266,43 @@ Qso LogDb::fromAdif(const AdifRecord& r) {
     return o;
 }
 
+int LogDb::applyLotwConfirmations(const QList<AdifRecord>& recs) {
+    if (!isOpen() || recs.isEmpty()) return 0;
+    QSqlDatabase db = QSqlDatabase::database(conn_);
+    db.transaction();
+    QSqlQuery q(db);
+    q.prepare(
+        "UPDATE qso SET lotw_rcvd='Y' WHERE call=:call AND band=:band"
+        " AND mode=:mode AND date(ts_utc)=:day AND lotw_rcvd<>'Y'");
+    int n = 0;
+    for (const AdifRecord& r : recs) {
+        if (!r.value("QSL_RCVD").startsWith('Y', Qt::CaseInsensitive))
+            continue;
+        const QString call = r.value("CALL").toUpper();
+        QString mode = r.value("MODE").toUpper();
+        if (mode == "MFSK" && !r.value("SUBMODE").isEmpty())
+            mode = r.value("SUBMODE").toUpper();
+        const QString band = r.value("BAND").toUpper();
+        const QDate day =
+            QDate::fromString(r.value("QSO_DATE"), "yyyyMMdd");
+        if (call.isEmpty() || band.isEmpty() || !day.isValid()) continue;
+        // Exact day first; a QSO logged around 0000Z can sit a day off.
+        for (int dd : {0, -1, 1}) {
+            q.bindValue(":call", call);
+            q.bindValue(":band", band);
+            q.bindValue(":mode", mode);
+            q.bindValue(":day", day.addDays(dd).toString("yyyy-MM-dd"));
+            if (q.exec() && q.numRowsAffected() > 0) {
+                n += q.numRowsAffected();
+                break;
+            }
+        }
+    }
+    db.commit();
+    if (n > 0) emit changed();
+    return n;
+}
+
 bool LogDb::hasNearDuplicate(const Qso& o) const {
     if (!isOpen()) return false;
     QSqlQuery q(QSqlDatabase::database(conn_));
