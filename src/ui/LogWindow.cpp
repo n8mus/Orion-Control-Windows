@@ -222,6 +222,8 @@ LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
     v->addLayout(foot);
 
     connect(call_, &QLineEdit::textEdited, this, [this] { onCallEdited(); });
+    connect(call_, &QLineEdit::editingFinished, this,
+            [this] { autoLookup(); });
     connect(mode_, &QLineEdit::textEdited, this, [this] {
         // Mode typed by hand: refresh RST defaults + badges.
         const bool cw = mode_->text().trimmed().compare("CW",
@@ -262,12 +264,32 @@ LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
 
 void LogWindow::prefill(const QString& call, const QString& park,
                         const QString& grid) {
-    call_->setText(call.trimmed().toUpper());
+    const QString c = call.trimmed().toUpper();
+    const bool fresh = c != call_->text().trimmed().toUpper();
+    call_->setText(c);
+    if (fresh) {                          // new station: old details go
+        name_->clear();
+        qth_->clear();
+        grid_->clear();
+        pota_->clear();
+    }
     if (!park.isEmpty()) pota_->setText(park.trimmed().toUpper());
     if (!grid.isEmpty()) grid_->setText(grid.trimmed().toUpper());
     onCallEdited();
+    if (fresh) autoLookup();              // cqrlog's reflex: name/QTH fill
     call_->setFocus();
     call_->deselect();
+}
+
+// A call in the box means a callbook question — cqrlog asks it without
+// being told to, so this window does too. Quiet when no login is set (the
+// QRZ button still explains what's missing when pressed by hand).
+void LogWindow::autoLookup() {
+    if (!qrz_) return;
+    if (QSettings().value("up/qrzweb/user").toString().trimmed().isEmpty())
+        return;
+    const QString c = call_->text().trimmed();
+    if (c.size() >= 3) qrz_->lookup(c);
 }
 
 void LogWindow::setRig(qint64 freqHz, const QString& mode) {

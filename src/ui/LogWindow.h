@@ -47,6 +47,7 @@ private:
     void updateRotor();
     void tickClock();
     void openBrowserGlobe();
+    void autoLookup();                     // callbook fill on call arrival
 
     LogDb* db_;
     LogbookIndex* idx_;
