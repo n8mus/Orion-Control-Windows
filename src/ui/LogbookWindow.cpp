@@ -25,7 +25,8 @@ namespace {
 // Column order in the qso table (see LogDb's schema).
 enum Col { ColId = 0, ColTs, ColCall, ColBand, ColFreq, ColMode, ColRstS,
            ColRstR, ColName, ColQth, ColGrid, ColCountry, ColCqz, ColItuz,
-           ColPota, ColComment, ColQsl, ColLotw, ColEqsl };
+           ColPota, ColComment, ColQsl, ColLotw, ColEqsl,
+           ColUpLotw, ColUpEqsl, ColUpQrz, ColUpClub, ColUpHrdlog };
 } // namespace
 
 LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
@@ -102,15 +103,25 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     head(ColCountry, "COUNTRY");
     head(ColPota, "POTA");
     head(ColComment, "COMMENT");
+    // The upload record, permanently visible per QSO — the status bar's
+    // announcements scroll away, these don't (operator: "i see no
+    // information on any uploads"). Y sent · E failed · blank pending.
+    head(ColUpLotw, "LoTW");
+    head(ColUpEqsl, "eQSL");
+    head(ColUpQrz, "QRZ");
+    head(ColUpClub, "CLUB");
+    head(ColUpHrdlog, "HRD");
 
     view_ = new QTableView(this);
     view_->setModel(model_);
     for (int c : {ColId, ColCqz, ColItuz, ColQsl, ColLotw, ColEqsl})
         view_->setColumnHidden(c, true);
-    // Upload bookkeeping columns (v2) stay hidden too.
-    for (int c = ColEqsl + 1; c < model_->columnCount(); ++c)
-        view_->setColumnHidden(c, true);
-    view_->horizontalHeader()->setStretchLastSection(true);
+    for (int c : {ColUpLotw, ColUpEqsl, ColUpQrz, ColUpClub, ColUpHrdlog})
+        view_->setColumnWidth(c, 44);
+    // COMMENT soaks the slack; the upload columns keep their width.
+    view_->horizontalHeader()->setStretchLastSection(false);
+    view_->horizontalHeader()->setSectionResizeMode(ColComment,
+                                                    QHeaderView::Stretch);
     view_->verticalHeader()->setVisible(false);
     view_->setSelectionBehavior(QAbstractItemView::SelectRows);
     view_->setAlternatingRowColors(false);
