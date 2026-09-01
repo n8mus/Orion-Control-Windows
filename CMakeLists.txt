@@ -144,6 +144,10 @@ if(WIN32)
   # Linux desktop-icon launch. Explicit redirects (selftest harness) still
   # capture stderr; only the auto-console goes away.
   set_target_properties(tentec-console PROPERTIES WIN32_EXECUTABLE ON)
+  # Explorer/taskbar icon, embedded the Windows way (the in-window icon
+  # still comes from resources.qrc via setWindowIcon).
+  enable_language(RC)
+  target_sources(tentec-console PRIVATE packaging/tentec-console.rc)
 endif()
 if(TARGET Qt6::Multimedia)
   target_sources(tentec-console PRIVATE
