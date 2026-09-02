@@ -30,7 +30,9 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
     : QDialog(parent), up_(up) {
     setModal(false);
     setWindowTitle("Setup — Online Logs");
-    setMinimumWidth(1010);
+    // No hard pixel width: the row contents set the size, so the dialog
+    // fits whatever font metrics the platform brings (a 1010 px pin tuned
+    // on Windows squeezed every label on Linux until they clipped).
     setStyleSheet(
         "QDialog { background: #141b24; color: #dde7f0; font-size: 14px; }"
         "QLabel { color: #b8c8d8; font-size: 13px; }"
@@ -51,10 +53,13 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
     grid_->setColumnMinimumWidth(1, 40);       // enable
     grid_->setColumnStretch(2, 1);             // details
     grid_->setColumnMinimumWidth(4, 210);      // result
+    // No letter-spacing in these label styles: QSS spacing is invisible to
+    // QFontMetrics, so the size hint under-measures and the painted text
+    // clips at the right edge ("QTH NICKNA" — live-found on Linux).
     const auto header = [this](int col, const char* t) {
         auto* l = new QLabel(QLatin1String(t), this);
         l->setStyleSheet("QLabel { color: #77869a; font-size: 11px;"
-                         " letter-spacing: 1px; font-weight: 600; }");
+                         " font-weight: 600; }");
         grid_->addWidget(l, 0, col);
     };
     header(0, "SERVICE");
@@ -104,8 +109,7 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
     const auto pair = [this](QHBoxLayout* lay, const char* label,
                              QLineEdit* e) {
         auto* l = new QLabel(QLatin1String(label), this);
-        l->setStyleSheet("QLabel { color: #77869a; font-size: 10px;"
-                         " letter-spacing: 0.5px; }");
+        l->setStyleSheet("QLabel { color: #77869a; font-size: 10px; }");
         const int at = lay->count() - 1;       // before the stretch
         lay->insertWidget(at, l);
         lay->insertWidget(at + 1, e);
@@ -290,8 +294,9 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
     v->addLayout(grid_);
     v->addSpacing(12);
     auto* foot = new QLabel(
-        "Uploads fire the moment LOG QSO is pressed; failures queue and "
-        "retry every two minutes. Corrections re-send (the services "
+        "Uploads fire the moment LOG QSO is pressed; failures park locally "
+        "and go out on the next console start or the Retry button — nothing "
+        "retries in the background. Corrections re-send (the services "
         "dedupe). Deletes stay local, by design.", this);
     foot->setWordWrap(true);
     foot->setStyleSheet("QLabel { color: #6d7b8c; font-size: 12px; }");
