@@ -556,8 +556,12 @@ CwWindow::CwWindow(RadioController* radio, QWidget* parent)
     // localhost so a contest logger (Not1MM's CW-decode dock) can mirror
     // the readout inside its own window — no window hopping, no focus
     // steal, console free to sit minimized. Send-only, no listener needed.
+    // A second port so Not1MM's dock and cqrlog's CW reader can both be open:
+    // these are plain unicast datagrams with no SO_REUSEPORT, so whichever
+    // process binds a port first owns it and the other silently gets nothing.
     feed_ = new QUdpSocket(this);
     feedPort_ = quint16(QSettings().value("cw/feedPort", 2336).toInt());
+    feedPort2_ = quint16(QSettings().value("cw/feedPort2", 2337).toInt());
 
     // cwdaemon-protocol server: cqrlog (CW interface set to cwdaemon,
     // localhost:6789) keys through us; the one WinKeyer serves both.
@@ -632,9 +636,13 @@ void CwWindow::hideEvent(QHideEvent* e) {
 }
 
 void CwWindow::appendRx(const QString& text) {
-    if (feed_)                            // mirror to the contest logger
-        feed_->writeDatagram(text.toUtf8(), QHostAddress::LocalHost,
-                             feedPort_);
+    if (feed_) {                          // mirror to the contest logger(s)
+        const QByteArray d = text.toUtf8();
+        if (feedPort_)
+            feed_->writeDatagram(d, QHostAddress::LocalHost, feedPort_);
+        if (feedPort2_ && feedPort2_ != feedPort_)
+            feed_->writeDatagram(d, QHostAddress::LocalHost, feedPort2_);
+    }
     rx_->moveCursor(QTextCursor::End);
     rx_->insertPlainText(text);
     rx_->moveCursor(QTextCursor::End);

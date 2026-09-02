@@ -129,6 +129,7 @@ private:
     QUdpSocket* daemon_ = nullptr;       // cwdaemon-protocol server
     QUdpSocket* feed_ = nullptr;         // decode-text feed (localhost UDP)
     quint16 feedPort_ = 2336;            // cw/feedPort — Not1MM dock listens
+    quint16 feedPort2_ = 2337;           // cw/feedPort2 — cqrlog reader; 0 = off
     QLineEdit* line_ = nullptr;
     QLineEdit* dxCall_ = nullptr;        // the station being worked (%c)
     QLabel* status_ = nullptr;
