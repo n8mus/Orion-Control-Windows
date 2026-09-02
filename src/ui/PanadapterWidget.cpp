@@ -1994,17 +1994,9 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
                    "panadapter — no IQ source (build with -DBUILD_SDRPLAY=ON)");
     }
 
-    // Span readout (the scale band draws its own separators). Sets its own
-    // font like every other overlay: it used to inherit whichever size the
-    // last helper that ran happened to leave on the shared painter.
-    QFont spanFont = p.font();
-    spanFont.setPixelSize(10);
-    spanFont.setBold(true);
-    p.setFont(spanFont);
-    p.setPen(QColor(200, 200, 200, 160));
-    p.drawText(6, 14, QString("span %1 kHz   wheel: tune (shift fine)  drag: tune  "
-                              "edge: bw  shift+edge: cut  ctrl+body: pbt  rclick: VFO B")
-                          .arg(viewSpanHz_ / 1000.0, 0, 'f', viewSpanHz_ < 20000 ? 1 : 0));
+    // (No top-left span/gesture cheat-sheet: the span is on the zoom slider
+    // and the gestures are muscle memory by now — removed 2026-08-26 at the
+    // operator's request, it only ate spectrum.)
 }
 
 void PanadapterWidget::wheelEvent(QWheelEvent* e) {
