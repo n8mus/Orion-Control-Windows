@@ -138,5 +138,18 @@ See the porting plan. In dependency order:
    `QSerialPortInfo` and degrades cleanly.
 6. **Optional Linux integrations** — cqrlog / voacapl self-disable; guard the
    hardcoded `~/.config` paths.
-7. **Packaging** — `windeployqt` + an installer (Inno/NSIS); SDRplay stays a
-   separate install.
+7. **Packaging** — `packaging\make-windows-release.ps1` builds the release
+   zip on this box and attaches it to the tag's GitHub Release (CI cuts the
+   Linux AppImage, this box cuts Windows — so every shipped exe was built
+   where it gets tested). With HEAD on the release tag, from the x64 Native
+   Tools prompt:
+
+   ```bat
+   powershell -ExecutionPolicy Bypass -File packaging\make-windows-release.ps1
+   ```
+
+   It refuses a dirty tree or an untagged HEAD, stages the Qt runtime with
+   `windeployqt`, hard-stops if any `sdrplay_api*` file lands in the stage
+   (never redistribute it), and uploads with `gh`. `-NoUpload` for a dry
+   run; `-QtDir`/`-RnnoiseDir` if the installs move. An Inno/NSIS installer
+   can come later; the zip is the alpha-tester deliverable.
