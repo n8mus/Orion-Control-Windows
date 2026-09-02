@@ -126,25 +126,27 @@ void LogbookIndex::attachCty(const CtyLookup* cty) {
 QString LogbookIndex::countryOf(const QString& call) const {
     const QString c = call.trimmed().toUpper();
     if (c.isEmpty()) return QString();
-    // A logged call's stored country beats prefix guessing.
-    if (const auto it = dbCallCountry_.constFind(c);
-        it != dbCallCountry_.constEnd())
-        return *it;
+    // cty.dat is the ONE country vocabulary — every ADIF source spells
+    // entities its own way ("Fed. Rep. of Germany" vs "Fed. Republic of
+    // Germany" vs "Federal Republic of Germany", all in one real log),
+    // so both the log side and the spot side canonicalize through the
+    // callsign prefix. The stored ADIF name is only the fallback for a
+    // call cty.dat can't place. Memo persists across refreshes (a
+    // prefix's country doesn't change under us).
     if (const auto it = ctyMemo_.constFind(c); it != ctyMemo_.constEnd())
-        return *it;
+        return it->isEmpty() ? dbCallCountry_.value(c) : *it;
     QString name;
     if (cty_) {
         CtyInfo ci;
         if (cty_->info(c, ci)) name = ci.country;
     }
     ctyMemo_.insert(c, name);
-    return name;
+    return name.isEmpty() ? dbCallCountry_.value(c) : name;
 }
 
 void LogbookIndex::refreshDb() {
     if (!db_) return;
     dbCallCountry_.clear();
-    ctyMemo_.clear();
     dbWorkedCall_.clear();
     dbWorkedCallBand_.clear();
     dbConfCallBand_.clear();
@@ -168,11 +170,11 @@ void LogbookIndex::refreshDb() {
         if (!r.park.isEmpty())
             for (const QString& p : r.park.split(',', Qt::SkipEmptyParts))
                 dbParks_.insert(p.trimmed().toUpper());
-        // Country dimensions: stored country wins; resolve via cty.dat for
-        // rows imported before the country column was stamped.
-        QString ctry = r.country.trimmed();
-        if (!ctry.isEmpty()) dbCallCountry_.insert(call, ctry);
-        else ctry = countryOf(call);
+        // Country dimensions in cty.dat's vocabulary (see countryOf) —
+        // the stored ADIF name only backs up calls cty.dat can't place.
+        if (!r.country.trimmed().isEmpty())
+            dbCallCountry_.insert(call, r.country.trimmed());
+        const QString ctry = countryOf(call);
         if (ctry.isEmpty()) continue;
         const QString mode = r.mode.trimmed().toUpper();
         workedCountry_.insert(ctry);

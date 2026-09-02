@@ -10,9 +10,12 @@
 #include <cmath>
 #include <cstdio>
 
+#include <QFile>
+
 #include "log/Adif.h"
 #include "log/LogDb.h"
 #include "util/Bearing.h"
+#include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
 
 using namespace ttc;
@@ -179,6 +182,45 @@ static void testIndex(const QString& dir) {
           "lotw sync: already-confirmed QSOs don't count again");
 }
 
+static void testCountryVocabulary(const QString& dir) {
+    // The live bug: cty.dat says "Fed. Rep. of Germany", the imported log
+    // said "Fed. Republic of Germany", and every German spot showed as
+    // needed. Both sides must canonicalize through cty.dat by callsign.
+    const QString ctyPath = dir + "/mini-cty.dat";
+    {
+        QFile f(ctyPath);
+        f.open(QIODevice::WriteOnly | QIODevice::Text);
+        f.write("Fed. Rep. of Germany:     14:  28:  EU:   51.00:"
+                "   -10.00:    -1.0:  DL:\n"
+                "    DA,DB,DC,DD,DE,DF,DG,DH,DJ,DK,DL,DM;\n");
+    }
+    CtyLookup cty;
+    CHECK(cty.load(ctyPath), "cty: mini file loads");
+
+    LogDb db;
+    db.open(dir + "/vocab.sqlite");
+    Qso q;
+    q.call = "DL1ABC";
+    q.band = "20M";
+    q.mode = "CW";
+    q.country = "Fed. Republic of Germany";     // the ADIF spelling
+    q.lotwRcvd = "Y";
+    q.freqHz = 14020000;
+    q.tsUtc = QDateTime::currentDateTimeUtc();
+    db.addQso(q);
+
+    LogbookIndex idx;
+    idx.attachCty(&cty);
+    idx.attachDb(&db);
+    // A DIFFERENT German call, never worked: the country dim must still
+    // say confirmed — same entity, whatever the log's export called it.
+    const auto nd = idx.need("DK5XYZ", "20M", "CW");
+    CHECK(nd.country == 'C',
+          "vocabulary: spelling mismatch can't hide a confirmed country");
+    CHECK(nd.band == 'C' && nd.mode == 'C',
+          "vocabulary: band and mode dims ride the same canonical name");
+}
+
 static void testBearing() {
     // Toledo (EN83) to Antigua (FK97): south-east, ~3300 km.
     const double az = bearing::initialDeg(41.6, -83.7, 17.1, -61.8);
@@ -199,6 +241,7 @@ int main(int argc, char** argv) {
     testAdif();
     testLogDb(tmp.path());
     testIndex(tmp.path());
+    testCountryVocabulary(tmp.path());
     testBearing();
     std::printf(fails ? "LOGTEST: FAIL (%d)\n" : "LOGTEST: PASS\n", fails);
     return fails ? 1 : 0;
