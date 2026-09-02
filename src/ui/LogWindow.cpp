@@ -508,6 +508,7 @@ void LogWindow::clearForNext() {
     updateBadges();
     updateRotor();
     call_->setFocus();
+    emit cleared();
 }
 
 } // namespace ttc

@@ -16,6 +16,7 @@
 #include "cw/WinKeyer.h"
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
+#include "log/LogDb.h"
 #include "log/QrzLookup.h"
 #include "log/QslUploader.h"
 #include "ui/LogWindow.h"
@@ -168,11 +169,68 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
                 [this](double lat, double lon, const QString& call) {
                     pan_->pointRoseAt(lat, lon, call);
                 });
+        // Clear (and the post-log wipe) rides to cqrlog too — its bridge
+        // treats CQRCLEAR as the New QSO action, so both forms blank
+        // together instead of cqrlog sitting on the last QSO's data.
+        connect(logWin_, &LogWindow::cleared, this, [this] {
+            if (logUdp_)
+                logUdp_->writeDatagram(
+                    "CQRCLEAR", QHostAddress::LocalHost,
+                    quint16(QSettings().value("log/port", 2334).toInt()));
+        });
         connect(logWin_, &LogWindow::qsoLogged, this,
                 [this](qint64 id, const QString& c) {
                     statusBar()->showMessage("logged " + c, 3000);
                     if (cwWin_) cwWin_->setHisCall(QString());
                     if (uploader_) uploader_->pushQso(id);
+                    // Mirror the finished QSO to cqrlog's always-on console
+                    // bridge as one headerless ADIF datagram (fill-form-then-
+                    // save on its side) so both logs stay in step. Only from
+                    // THIS window: WSJT-X QSOs reach cqrlog on its own 2237
+                    // ear, mirroring those would double-log them. The bridge
+                    // ignores anything that doesn't START with <CALL, and
+                    // AdifRecord is a QHash, so the record is assembled by
+                    // hand rather than through writeRecord's arbitrary order.
+                    if (logUdp_ && logDb_
+                        && QSettings().value("log/mirrorCqrlog", true).toBool()) {
+                        const Qso q = logDb_->qso(id);
+                        if (q.id >= 0) {
+                            QByteArray d;
+                            const auto tag = [&d](const char* n,
+                                                  const QString& v) {
+                                const QByteArray b = v.trimmed().toUtf8();
+                                if (!b.isEmpty())
+                                    d += '<' + QByteArray(n) + ':'
+                                       + QByteArray::number(b.size()) + '>'
+                                       + b + ' ';
+                            };
+                            const QDateTime ts = q.tsUtc.toUTC();
+                            tag("CALL", q.call.toUpper());
+                            tag("QSO_DATE", ts.toString("yyyyMMdd"));
+                            tag("TIME_ON", ts.toString("HHmmss"));
+                            tag("BAND", q.band);
+                            if (q.freqHz > 0)
+                                tag("FREQ",
+                                    QString::number(q.freqHz / 1e6, 'f', 6));
+                            tag("MODE", q.mode);
+                            tag("RST_SENT", q.rstS);
+                            tag("RST_RCVD", q.rstR);
+                            tag("NAME", q.name);
+                            tag("QTH", q.qth);
+                            tag("GRIDSQUARE", q.grid);
+                            if (!q.pota.trimmed().isEmpty()) {
+                                tag("SIG", "POTA");
+                                tag("SIG_INFO", q.pota);
+                            }
+                            tag("COMMENT", q.comment);
+                            d += "<EOR>";
+                            logUdp_->writeDatagram(
+                                d, QHostAddress::LocalHost,
+                                quint16(QSettings()
+                                            .value("log/port", 2334)
+                                            .toInt()));
+                        }
+                    }
                     enrichQso(id, c);
                 });
         // Dial and mode ride in once a second while the window is up — every

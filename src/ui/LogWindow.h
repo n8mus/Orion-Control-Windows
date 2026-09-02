@@ -41,6 +41,8 @@ signals:
     void qsoLogged(qint64 id, const QString& call);
     // The DX in the window has a location — the compass rose follows.
     void dxLocated(double lat, double lon, const QString& call);
+    // Form wiped (Clear button or post-log) — cqrlog's New QSO mirrors it.
+    void cleared();
 
 private:
     void onCallEdited();
