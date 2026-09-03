@@ -104,8 +104,8 @@ the $tag tag)
 
 SDRplay panadapter: this build uses the SDRplay API but does NOT bundle
 it (not redistributable). Install the SDRplay API/HW driver from
-https://www.sdrplay.com/api/ - its service provides sdrplay_api.dll at
-runtime. Without it the console runs radio-only (no panadapter).
+https://www.sdrplay.com/api/ - the console finds the installed API by
+itself. Without it the console runs radio-only (no panadapter).
 
 Run tentec-console.exe. Settings live per-user in the registry
 (HKCU\Software\n8mus\tentec-console).

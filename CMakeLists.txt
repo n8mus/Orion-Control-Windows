@@ -320,6 +320,17 @@ if(BUILD_SDRPLAY)
     foreach(t tentec-console sdr_probe)
       target_include_directories(${t} PRIVATE "${SDRPLAY_ROOT}/inc")
       target_link_directories(${t} PRIVATE "${SDRPLAY_ROOT}/x64")
+      if(MSVC)
+        # Delay-load the vendor DLL: the release zip ships without it (never
+        # redistributable) and the API installer's folder is not on the DLL
+        # search path, so a load-time import dies before main() even on a
+        # machine with the API correctly installed (live-found v0.1.6 at the
+        # operator's own station: "instantly fails"). SdrPlaySource resolves
+        # the DLL from the installer's registry breadcrumb before the first
+        # API call.
+        target_link_options(${t} PRIVATE "/DELAYLOAD:sdrplay_api.dll")
+        target_link_libraries(${t} PRIVATE delayimp)
+      endif()
     endforeach()
   endif()
 else()

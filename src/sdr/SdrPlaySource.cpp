@@ -4,9 +4,50 @@
 #include <chrono>
 #include <cstdio>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 namespace ttc {
 
+#ifdef _WIN32
+// The Windows release ships without sdrplay_api.dll (proprietary, never
+// redistributed) and the API installer's folder is not on the DLL search
+// path, so a normal load-time import dies before main() even with the API
+// correctly installed — live-found v0.1.6 at the operator's own station.
+// The exe therefore delay-loads the DLL (see CMakeLists) and this resolver
+// finds the operator's install through the service installer's breadcrumb:
+// HKLM\SOFTWARE\SDRplay\Service\API @ Install_Dir, DLL under x64\.
+// On failure nothing may touch the API — an unresolved delay-loaded call
+// raises instead of returning an error — so the constructor funnels into
+// the existing "no IQ source" path.
+static bool resolveSdrplayDll() {
+    if (GetModuleHandleW(L"sdrplay_api.dll")) return true;
+    if (LoadLibraryW(L"sdrplay_api.dll")) return true;  // beside the exe (dev tree) or PATH
+    wchar_t dir[MAX_PATH];
+    DWORD sz = sizeof(dir);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\SDRplay\\Service\\API",
+                     L"Install_Dir", RRF_RT_REG_SZ, nullptr, dir, &sz)
+        != ERROR_SUCCESS) {
+        if (!GetEnvironmentVariableW(L"ProgramFiles", dir, MAX_PATH))
+            return false;
+        wcscat_s(dir, L"\\SDRplay\\API");
+    }
+    wchar_t dll[MAX_PATH + 32];
+    _snwprintf_s(dll, _TRUNCATE, L"%s\\x64\\sdrplay_api.dll", dir);
+    return LoadLibraryW(dll) != nullptr;
+}
+#endif
+
 SdrPlaySource::SdrPlaySource() {
+#ifdef _WIN32
+    if (!resolveSdrplayDll()) {
+        err_ = "sdrplay_api.dll not found - install the SDRplay API "
+               "(sdrplay.com/api)";
+        return;
+    }
+#endif
     if (sdrplay_api_Open() == sdrplay_api_Success) {
         apiOpen_ = true;
         float ver = 0.0f;
