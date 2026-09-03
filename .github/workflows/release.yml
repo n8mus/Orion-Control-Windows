@@ -55,7 +55,13 @@ jobs:
       - name: Install SDRplay API (build-time only)
         run: |
           VER=3.15.2
-          curl -fSL "https://www.sdrplay.com/software/SDRplay_RSP_API-Linux-${VER}.run" -o sdr.run
+          # SDRplay withdrew every standalone API .run from /software/ in the
+          # SDRconnect era (live-found 2026-09-03: all versions 404, and their
+          # new install.sh ships no API at all). Vendor URL first in case it
+          # returns, else the Internet Archive's snapshot of the exact bytes
+          # this job used while the URL lived (id_ = original payload).
+          curl -fSL "https://www.sdrplay.com/software/SDRplay_RSP_API-Linux-${VER}.run" -o sdr.run \
+            || curl -fSL "https://web.archive.org/web/20260805142854id_/https://www.sdrplay.com/software/SDRplay_RSP_API-Linux-${VER}.run" -o sdr.run
           sh sdr.run --noexec --target sdr_api || sh sdr.run --tar xf || true
           sudo mkdir -p /usr/local/include /usr/local/lib
           sudo cp $(find sdr_api -name '*.h') /usr/local/include/ 2>/dev/null || true
