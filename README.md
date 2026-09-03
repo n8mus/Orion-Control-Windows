@@ -19,7 +19,7 @@ unchanged** — one serial port, no flrig.
 > everything. The Omni VII personality exists in the code but is currently
 > untested — stay on the Orion for now.
 
-## Install (easiest — one line)
+## Install on Linux (easiest — one line)
 
 New to Linux? This script does everything for you: installs the libraries,
 sets up the SDRplay API and serial-port access, downloads the latest
@@ -32,6 +32,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/orion3-sdr-console/mas
 Log out and back in once after the first run (for serial access), then
 launch **Orion Control** from your menu. Re-run any time to update.
 Prefer to build from source? See [Build and run](#build-and-run) below.
+
+## Install on Windows
+
+1. **Install the SDRplay API first** — download the Windows API/HW driver
+   from [sdrplay.com/api](https://www.sdrplay.com/api/) and run its
+   installer. It's proprietary, so it is never bundled here; the console
+   finds your install by itself. Skip this step and the console runs
+   radio-only with a dark panadapter.
+2. Download the latest `tentec-console-…-win64.zip` from
+   [Releases](https://github.com/n8mus/Orion-Control/releases), unzip it
+   anywhere, and run `tentec-console.exe`. The same Station setup dialog
+   opens on first run; settings live per-user in the registry.
 
 ## What you need
 
@@ -120,7 +132,8 @@ SDR, or both were connected. Screenshots welcome.
 - **US band plan** assumptions (60 m channels, CW skimmer windows,
   band-plan shading).
 - Orion-only until an Omni VII CAT path is re-established and tested.
-- Linux-only today; a Windows port is planned after the alpha settles.
+- The native Windows build is new (v0.1.7-alpha): Linux has months of
+  daily driving behind it, Windows days — expect the rougher edges there.
 - One console instance at a time (exclusive serial + single-tuner SDR).
 
 ## License
