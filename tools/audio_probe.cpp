@@ -20,6 +20,9 @@ int main(int argc, char** argv) {
     printf("inputs Qt sees:\n");
     for (const QString& d : ttc::AudioCapture::inputDescriptions())
         printf("  \"%s\"\n", qPrintable(d));
+    printf("outputs Qt sees:\n");
+    for (const QString& d : ttc::AudioPlayback::outputDescriptions())
+        printf("  \"%s\"\n", qPrintable(d));
 
     ttc::AudioCapture cap;
     QObject::connect(&cap, &ttc::AudioCapture::errorText,
