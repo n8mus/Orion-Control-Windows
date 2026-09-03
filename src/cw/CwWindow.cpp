@@ -58,6 +58,13 @@ const QRegularExpression& callRe() {
 CwWindow::CwWindow(RadioController* radio, QWidget* parent)
     : QDialog(parent), radio_(radio) {
     setModal(false);
+    // On Windows the tool windows are parentless top-levels (N1MM-style),
+    // so clicking the console buries this one behind the maximized main
+    // window — mid-QSO, with text half-typed (operator report 2026-09-03:
+    // fine on the second monitor, vanishes on the console's). Same cure as
+    // the LOG window: stay on top when parentless. Linux keeps normal
+    // transient-for stacking via the parent.
+    if (!parent) setWindowFlag(Qt::WindowStaysOnTopHint);
     // Every control sets an explicit text color: widgets with a styled
     // background otherwise keep the SYSTEM palette's text — dark-on-dark
     // on some themes (live report: "panel is very difficult to read").
