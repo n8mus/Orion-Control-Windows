@@ -17,6 +17,11 @@ param(
     # Qt and rnnoise installs, as documented in docs/windows-build.md.
     [string]$QtDir      = "C:\Qt\6.8.3\msvc2022_64",
     [string]$RnnoiseDir = "C:\Users\jon55\third_party\rnnoise-install",
+    # voacapl.exe (statically linked, no MinGW DLLs) plus its itshfbc data
+    # tree, built once per docs/windows-build.md. The AppImage workflow
+    # builds these inside CI; on Windows they are prebuilt on this box.
+    # Public-domain NTIA/ITS core, so bundling is legal and deliberate.
+    [string]$VoacapDir  = "C:\Users\jon55\third_party\voacapl-win",
     # Build with the SDR source (needs the SDRplay API SDK installed).
     [bool]$Sdrplay      = $true,
     # Build + zip but skip the GitHub upload (dry run / no network).
@@ -42,6 +47,16 @@ foreach ($tool in "git", "cmake", "ninja") {
 $windeployqt = Join-Path $QtDir "bin\windeployqt.exe"
 if (-not (Test-Path $windeployqt)) {
     Fail "windeployqt not at $windeployqt - pass -QtDir for your Qt install"
+}
+# Fail here rather than shipping a zip whose VOACAP overlay is dead: that
+# is exactly how the Windows build went out without an engine at all.
+$voacapExe  = Join-Path $VoacapDir "voacapl.exe"
+$voacapData = Join-Path $VoacapDir "itshfbc"
+if (-not (Test-Path $voacapExe)) {
+    Fail "voacapl.exe not at $voacapExe - build it (docs/windows-build.md) or pass -VoacapDir"
+}
+if (-not (Test-Path (Join-Path $voacapData "run"))) {
+    Fail "itshfbc tree not at $voacapData - build it (docs/windows-build.md) or pass -VoacapDir"
 }
 
 $dirty = git status --porcelain
@@ -88,6 +103,21 @@ Copy-Item "$bld\tentec-console.exe" $stage
 & $windeployqt --release --no-translations (Join-Path $stage "tentec-console.exe")
 if ($LASTEXITCODE -ne 0) { Fail "windeployqt failed" }
 
+# VOACAP engine + data, flat beside the exe - Voacap.cpp looks for
+# <exe>/voacapl.exe and seeds a writable copy of <exe>/itshfbc into
+# AppData on first use (voacapl writes its decks into <root>/run, so the
+# unpacked zip itself must not be the root).
+Step "Stage VOACAP engine"
+Copy-Item $voacapExe $stage
+Copy-Item $voacapData (Join-Path $stage "itshfbc") -Recurse
+$coeffs = (Get-ChildItem (Join-Path $stage "itshfbc\coeffs") -File).Count
+if ($coeffs -lt 40) {
+    # The AppImage hit this once: makeitshfbc symlinks the coefficients
+    # back to the build prefix, and a link-preserving copy shipped 1 of 45.
+    Fail "itshfbc/coeffs has only $coeffs files - expected 45; the tree was copied without dereferencing"
+}
+Write-Host "voacapl.exe + itshfbc staged ($coeffs coefficient files)"
+
 # The one non-negotiable: the proprietary SDRplay runtime must not ship.
 # windeployqt only stages Qt, but belt and braces - if it ever lands in
 # the stage by any route, the release stops rather than ships it.
@@ -106,6 +136,13 @@ SDRplay panadapter: this build uses the SDRplay API but does NOT bundle
 it (not redistributable). Install the SDRplay API/HW driver from
 https://www.sdrplay.com/api/ - the console finds the installed API by
 itself. Without it the console runs radio-only (no panadapter).
+
+VOACAP propagation overlay: voacapl.exe and the itshfbc data tree ARE
+bundled (public-domain NTIA/ITS core, so redistribution is fine). Keep
+them beside tentec-console.exe - unpack the whole zip, not just the exe.
+The console copies the data tree into your AppData on first use, because
+voacapl writes its working files into it. Turn the overlay on in
+Setup > Display; it draws on the world-map backdrops.
 
 Run tentec-console.exe. Settings live per-user in the registry
 (HKCU\Software\n8mus\tentec-console).

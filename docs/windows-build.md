@@ -136,8 +136,9 @@ See the porting plan. In dependency order:
 4. **CMake** — SDRplay + rnnoise + Qt Multimedia find/link for Windows.
 5. **Device defaults** — `/dev/*` hints → `COMx`; enumeration already uses
    `QSerialPortInfo` and degrades cleanly.
-6. **Optional Linux integrations** — cqrlog / voacapl self-disable; guard the
-   hardcoded `~/.config` paths.
+6. **Optional Linux integrations** — cqrlog self-disables; guard the
+   hardcoded `~/.config` paths. **voacapl no longer self-disables** — the
+   VOACAP overlay is a shipped Windows feature (see below).
 7. **Packaging** — `packaging\make-windows-release.ps1` builds the release
    zip on this box and attaches it to the tag's GitHub Release (CI cuts the
    Linux AppImage, this box cuts Windows — so every shipped exe was built
@@ -151,5 +152,50 @@ See the porting plan. In dependency order:
    It refuses a dirty tree or an untagged HEAD, stages the Qt runtime with
    `windeployqt`, hard-stops if any `sdrplay_api*` file lands in the stage
    (never redistribute it), and uploads with `gh`. `-NoUpload` for a dry
-   run; `-QtDir`/`-RnnoiseDir` if the installs move. An Inno/NSIS installer
-   can come later; the zip is the alpha-tester deliverable.
+   run; `-QtDir`/`-RnnoiseDir`/`-VoacapDir` if the installs move. An
+   Inno/NSIS installer can come later; the zip is the alpha-tester
+   deliverable.
+
+## VOACAP engine for Windows (voacapl.exe + itshfbc)
+
+The AppImage workflow builds voacapl inside CI; on Windows it is prebuilt
+**once** on this box and the release script copies it in. Rebuild it only
+when voacapl itself changes. Default location — override with `-VoacapDir`:
+
+    C:\Users\jon55\third_party\voacapl-win\
+      voacapl.exe        statically linked, so the zip needs no MinGW DLLs
+      itshfbc\           45 coefficient files, no symlinks
+
+voacapl is Fortran, which MSVC cannot build, so this needs MSYS2's MinGW
+gfortran (`winget install MSYS2.MSYS2`, then
+`pacman -S --needed mingw-w64-x86_64-gcc-fortran autoconf automake libtool make git`).
+From the **MINGW64** shell:
+
+```sh
+git clone --depth 1 https://github.com/jawatson/voacapl /tmp/voacapl
+cd /tmp/voacapl && autoreconf -i
+./configure --prefix=/tmp/voa LDFLAGS="-static"
+make -j$(nproc)
+# Upstream's hooks write $(DESTDIR)/$(bindir); with DESTDIR empty that is
+# "//tmp/voa/bin", which MSYS resolves as a UNC host and the install dies
+# mid-way (leaving NO coefficient files behind). Drop the stray slash:
+sed -i 's|$(DESTDIR)/$(bindir)|$(DESTDIR)$(bindir)|g;
+        s|$(DESTDIR)/$(datadir)|$(DESTDIR)$(datadir)|g' Makefile
+make install
+HOME=/tmp/voahome /tmp/voa/bin/makeitshfbc
+DEST=/c/Users/jon55/third_party/voacapl-win
+mkdir -p $DEST && cp /tmp/voa/bin/voacapl.exe $DEST/
+cp -rL /tmp/voahome/itshfbc $DEST/itshfbc      # -L: never ship symlinks
+```
+
+`ls $DEST/itshfbc/coeffs | wc -l` must print **45**. The release script
+enforces that too — the AppImage once shipped 1 of 45 because the copy
+preserved makeitshfbc's symlinks back to the build prefix, and the engine
+crashed. On MSYS2 `makeitshfbc` copies rather than links, but `-L` keeps
+that from mattering.
+
+Note the ITSHFBC tree that a **VOACAP/ICEPAC for Windows** installer drops
+in `C:\itshfbc` is *not* interchangeable: an ICEPAC install carries only the
+`*W.BIN` coefficient variants, so `itshfbcDir()` deliberately never looks
+there — it uses the bundled tree, seeded into `%APPDATA%\n8mus\tentec-console\itshfbc`
+on first run because voacapl writes its decks into `<root>\run`.

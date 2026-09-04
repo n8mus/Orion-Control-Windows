@@ -24,17 +24,21 @@ constexpr int kDistKm[] = {250,  500,  750,  1000, 1250, 1500, 1750, 2000,
                            12000};
 constexpr int kDistCount = int(sizeof(kDistKm) / sizeof(kDistKm[0]));
 
-// The AppImage bundles voacapl (US-government public-domain core, so
-// unlike the SDRplay lib it MAY be redistributed) plus a ready itshfbc
-// tree. An operator's own installation always wins over the bundle.
+// Both bundles carry voacapl (US-government public-domain core, so unlike
+// the SDRplay lib it MAY be redistributed) plus a ready itshfbc tree: the
+// AppImage under share/, the Windows zip flat beside the exe. An
+// operator's own installation always wins over the bundle.
 QString voacaplPath() {
     QString p = QStandardPaths::findExecutable("voacapl");
     if (!p.isEmpty()) return p;
-    for (const QString& c : {QDir::homePath() + "/.local/bin/voacapl",
-                             QCoreApplication::applicationDirPath()
-                                 + "/voacapl"})
-        if (QFile::exists(c)) return c;
-    return {};
+    // findExecutable() appends the platform's executable suffix, so this
+    // one call matches "voacapl" on Linux and "voacapl.exe" in the Windows
+    // zip. The old QFile::exists() probe of a bare "voacapl" could never
+    // match the bundled Windows engine — the overlay was dead there.
+    return QStandardPaths::findExecutable(
+        QStringLiteral("voacapl"),
+        {QCoreApplication::applicationDirPath(),
+         QDir::homePath() + "/.local/bin"});
 }
 
 bool copyTree(const QString& src, const QString& dst) {
@@ -56,19 +60,23 @@ bool copyTree(const QString& src, const QString& dst) {
 
 QString itshfbcDir() {
     // 1) the operator's own tree; 2) our writable working copy; 3) seed
-    // that copy from the read-only tree bundled in the AppImage (voacapl
-    // writes decks and results into <root>/run, so a mounted AppImage
-    // can't be the root itself).
+    // that copy from the read-only tree in the bundle (voacapl writes
+    // decks and results into <root>/run, so neither a mounted AppImage
+    // nor a zip unpacked under Program Files can be the root itself).
     const QString own = QDir::homePath() + "/itshfbc";
     if (QDir(own + "/run").exists()) return own;
     const QString mine = QStandardPaths::writableLocation(
                              QStandardPaths::AppDataLocation) + "/itshfbc";
     if (QDir(mine + "/run").exists()) return mine;
-    const QString bundled = QCoreApplication::applicationDirPath()
-                            + "/../share/tentec-console/itshfbc";
-    if (QDir(bundled + "/run").exists() && copyTree(bundled, mine)
-        && QDir(mine + "/run").exists())
-        return mine;
+    // The AppImage keeps the read-only tree under share/; the Windows zip
+    // is flat, with itshfbc sitting beside tentec-console.exe.
+    for (const QString& bundled :
+         {QCoreApplication::applicationDirPath()
+              + "/../share/tentec-console/itshfbc",
+          QCoreApplication::applicationDirPath() + "/itshfbc"})
+        if (QDir(bundled + "/run").exists() && copyTree(bundled, mine)
+            && QDir(mine + "/run").exists())
+            return mine;
     return {};
 }
 
@@ -103,6 +111,18 @@ QString circuitCard(double la1, double lo1, double la2, double lo2) {
 Voacap::Voacap(QObject* parent) : QObject(parent) {}
 
 QString Voacap::engineMissing() {
+    // Say something the operator on THIS platform can act on: quoting
+    // ./configure at a Windows user is worse than saying nothing.
+#ifdef Q_OS_WIN
+    if (voacaplPath().isEmpty())
+        return QStringLiteral(
+            "voacapl.exe not found — it ships beside tentec-console.exe in "
+            "the release zip; unpack the whole zip, not just the exe");
+    if (itshfbcDir().isEmpty())
+        return QStringLiteral(
+            "itshfbc data tree missing — it ships beside tentec-console.exe "
+            "in the release zip; unpack the whole zip, not just the exe");
+#else
     if (voacaplPath().isEmpty())
         return QStringLiteral(
             "voacapl not found (the AppImage bundles it; source builds: "
@@ -111,6 +131,7 @@ QString Voacap::engineMissing() {
     if (itshfbcDir().isEmpty())
         return QStringLiteral(
             "itshfbc data tree missing — run makeitshfbc once");
+#endif
     return {};
 }
 
