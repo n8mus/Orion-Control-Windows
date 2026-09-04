@@ -202,6 +202,16 @@ bool MainWindow::meterSwrReady() const {
            && QSettings().value("swr/source", "meter").toString() != "radio";
 }
 
+// The operator's meter is configured and its port opened, but it has never
+// delivered a frame — powered down, unplugged, or the shared DB9 cable is
+// on the other wattmeter. This is the case a bare "reading the radio"
+// hides, and the one that makes a radio curve look like a meter curve.
+// Choosing the radio deliberately (swr/source=radio) is not a fault.
+bool MainWindow::meterConfiguredButSilent() const {
+    return txMeter_ && !txMeter_->isAlive()
+           && QSettings().value("swr/source", "meter").toString() != "radio";
+}
+
 void MainWindow::showSwrMenu(const QPoint& globalPos) {
     auto* m = new QMenu(this);
     m->setAttribute(Qt::WA_DeleteOnClose);
@@ -409,6 +419,15 @@ void MainWindow::startSwrSweep(bool wholeBand) {
     swrTick_->start();
     // Step count and duration both vary with span now, so say them: the
     // operator is about to hold a carrier up and should know for how long.
+    // Name the REASON when a configured meter isn't being used. Bare
+    // "reading the radio" reads like a setting the operator chose, so a
+    // dead meter looks identical to not owning one.
+    const QString src =
+        swrUsedMeter_ ? QStringLiteral("the wattmeter")
+      : meterConfiguredButSilent()
+            ? QString("the radio (%1 NOT ANSWERING on %2)")
+                  .arg(meterName_, meterDevUsed_)
+            : QStringLiteral("the radio");
     statusBar()->showMessage(
         QString("SWR sweep: %1-%2 MHz, %3 steps (%4 kHz each, ~%5 s) at "
                 "%6 W, reading %7 — any click aborts")
@@ -418,7 +437,7 @@ void MainWindow::startSwrSweep(bool wholeBand) {
                      / std::max(1, swrStepCount_ - 1), 0, 'f', 1)
             .arg(sweepEstMs / 1000)
             .arg(txBar_->tuneLevel())
-            .arg(swrUsedMeter_ ? "the wattmeter" : "the radio"));
+            .arg(src));
 }
 
 void MainWindow::swrTickStep() {
@@ -562,6 +581,14 @@ void MainWindow::stopSwrSweep(bool completed) {
         else if (swrUsedMeter_ && swrMeterPts_ < swrPts_.size())
             msg += QString(" (%1 of %2 points from the wattmeter)")
                        .arg(swrMeterPts_).arg(swrPts_.size());
+        // The sibling trap, and the one that actually bit: the meter is
+        // enabled in Setup but never answered, so the run never even
+        // wanted it. Saying nothing here let a radio curve be filed under
+        // the antenna as if the meter had measured it.
+        else if (meterConfiguredButSilent())
+            msg += QString(" — %1 NOT ANSWERING on %2; curve is the radio's "
+                           "own reading, not the meter's")
+                       .arg(meterName_, meterDevUsed_);
         statusBar()->showMessage(msg, 15000);
     } else {
         statusBar()->showMessage(

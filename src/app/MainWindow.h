@@ -380,9 +380,13 @@ private:
     // unless enabled and its port opened.
     TxMeter* txMeter_ = nullptr;
     QString  meterDevUsed_;
+    QString  meterName_;                   // "LP-100A" / "PowerMaster"
     // True when the sweep should believe the meter: enabled, configured as
     // the source, and actually answering right now.
     bool     meterSwrReady() const;
+    // Configured and its port open, but never a frame — a dead meter, not
+    // a deliberate radio reading. Kept distinct so the sweep can say which.
+    bool     meterConfiguredButSilent() const;
     bool     radioUp_ = false;             // ...and whether the open succeeded
     int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns
     unsigned lastOverloads_ = 0;

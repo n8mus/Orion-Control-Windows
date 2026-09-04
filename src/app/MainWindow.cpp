@@ -3497,6 +3497,7 @@ MainWindow::MainWindow(QWidget* parent)
                 : s.value("meter/device", s.value("lp100a/device")).toString();
             const QString name = model == "powermaster"
                 ? QStringLiteral("PowerMaster") : QStringLiteral("LP-100A");
+            meterName_ = name;
             if (model == "powermaster")
                 txMeter_ = new ttc::PmMeter(this);
             else
@@ -3521,9 +3522,30 @@ MainWindow::MainWindow(QWidget* parent)
                 txMeter_->deleteLater();
                 txMeter_ = nullptr;
                 meterDevUsed_.clear();
+                meterName_.clear();
                 statusBar()->showMessage(
                     name + ": could not open its serial port — the SWR "
                            "sweep will read the radio instead", 10000);
+            } else {
+                // A USB serial port OPENS whether or not the instrument is
+                // powered at the far end, so start() succeeding proves
+                // nothing — only a parsed frame does (live-found: the
+                // FT4232H channel opened happily with the LP-100A silent,
+                // and the SWR sweep drew the radio's curve while Setup
+                // still said the meter was enabled). Give it a few polls,
+                // then say so once. Without this a configured-but-dead
+                // meter is indistinguishable from no meter at all.
+                QTimer::singleShot(6000, this, [this, name] {
+                    if (!txMeter_ || txMeter_->isAlive()) return;
+                    statusBar()->showMessage(
+                        name + " is enabled on " + meterDevUsed_
+                            + " but is not answering — check that it is "
+                              "powered and cabled; SWR sweeps will read the "
+                              "radio instead", 15000);
+                    fprintf(stderr, "[meter] %s SILENT on %s\n",
+                            name.toLocal8Bit().constData(),
+                            meterDevUsed_.toLocal8Bit().constData());
+                });
             }
         }
     }
