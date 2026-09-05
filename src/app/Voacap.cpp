@@ -35,10 +35,13 @@ QString voacaplPath() {
     // one call matches "voacapl" on Linux and "voacapl.exe" in the Windows
     // zip. The old QFile::exists() probe of a bare "voacapl" could never
     // match the bundled Windows engine — the overlay was dead there.
+    // ORDER IS THE CONTRACT above: ~/.local/bin (the operator's own build)
+    // is searched BEFORE the bundle beside the executable, or an AppImage
+    // would start overriding a hand-built engine that is not on PATH.
     return QStandardPaths::findExecutable(
         QStringLiteral("voacapl"),
-        {QCoreApplication::applicationDirPath(),
-         QDir::homePath() + "/.local/bin"});
+        {QDir::homePath() + "/.local/bin",
+         QCoreApplication::applicationDirPath()});
 }
 
 bool copyTree(const QString& src, const QString& dst) {
