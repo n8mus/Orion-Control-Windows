@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Windows resources: the application icon Explorer/taskbar show for the
+// exe. The .ico is a PNG-in-ICO wrap of resources/icon.png (256 px).
+IDI_ICON1 ICON "tentec-console.ico"

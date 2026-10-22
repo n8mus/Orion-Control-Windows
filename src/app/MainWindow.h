@@ -1,0 +1,674 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+#include <QSettings>
+#include <memory>
+#include <QMainWindow>
+#include <QElapsedTimer>
+#include <QDateTime>
+#include <cmath>
+#include <condition_variable>
+#include <QtGlobal>
+#include <deque>
+#include <functional>
+#include <mutex>
+#include <vector>
+class QTimer;
+class QChronoTimer;
+class QSlider;
+class QLabel;
+class QToolButton;
+class QLineEdit;
+class QUdpSocket;
+class QAction;
+class QDialog;
+class QBoxLayout;
+class QHBoxLayout;
+class QVBoxLayout;
+#include "radio/TenTecOrion.h"
+#include "radio/LpMeter.h"
+#include "net/RigctldServer.h"
+#include "net/SpotClient.h"
+#include "log/Not1mmLog.h"
+#include "net/FreeDvReporter.h"
+#include "net/PatMonitor.h"
+#include "net/PskReporter.h"
+#include "net/PotaClient.h"
+#include "net/SolarClient.h"
+#include "app/Voacap.h"
+#include "net/RotorLink.h"
+#include "util/CtyLookup.h"
+#include "util/LogbookIndex.h"
+#include "util/WatchList.h"
+#include "util/TuneTable.h"
+#include "audio/VoiceEq.h"
+#include <QHash>
+#include <QPointer>
+#include "cw/CwWindow.h"
+namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
+                class AudioCwSource;
+                class DigiWindow; class SkimServer; class SkimmerWindow;
+                class SkimStft; class SkimViewWindow; }
+#include "ui/PanadapterWidget.h"
+#include "ui/CompassRoseWidget.h"
+#include "ui/SolarWidget.h"
+#include "ui/TuneBoxWidget.h"
+#include "ui/SMeterWidget.h"
+#include "ui/MeterHost.h"
+#include "ui/ControlPanel.h"
+#include "ui/FrequencyDisplay.h"
+#include "app/LayoutHost.h"
+#include "ui/VfoBlock.h"
+#include "ui/ZoomBlock.h"
+#include "ui/RoutingPanel.h"
+#include "ui/AudioPanel.h"
+#include "ui/TxBar.h"
+#include "audio/ClipDeck.h"
+#include "radio/TenTecOmni7.h"
+#ifdef HAVE_SDRPLAY
+#include "sdr/SdrPlaySource.h"
+#include "dsp/SpectrumComputer.h"
+#endif
+#include "sdr/IqRecorder.h"
+#include "dsp/PitchTrim.h"
+#include "sdr/AutoGain.h"
+#include <QMultiHash>
+#include <atomic>
+class QThread;
+class QMenu;
+class QProcess;
+
+namespace ttc {
+
+class CompassRoseWidget;
+class ContestDb;
+class DisplayPanel;
+class QsoContext;
+class SolarWidget;
+class TuneBoxWidget;
+class ContestDeck;
+class ContestWindow;
+class CqrlogSync;
+class LogDb;
+class LogWindow;
+class LogbookWindow;
+class QrzLookup;
+class QslUploader;
+class SpotTableWindow;
+class TuneEntryDialog;
+class VoiceEqDialog;
+class LiveVoice;
+class SdrRx;
+class SdrRxDialog;
+class AsrEngine;
+class CopyAssistWindow;
+class FreeDvWindow;
+struct VoiceEqSettings;
+struct VoiceRenderStats;
+class TuneTableDialog;
+class WsjtxListener;
+struct Qso;
+
+class MainWindow : public QMainWindow {
+    Q_OBJECT
+public:
+    explicit MainWindow(QWidget* parent = nullptr);
+    ~MainWindow() override;
+
+private slots:
+    void onTuneRequested(int offsetHz, bool exact);
+    void onPassbandChanged(int loHz, int hiHz);
+
+private:
+    // Second-deck tool builders (MainWindowTools.cpp) — one per feature,
+    // called once from the constructor. New tools: add a function there
+    // and a call in the constructor; buttons go on topLay2_.
+    void setupLogUi();
+    // Populate-only nudge to cqrlog's New QSO window ("CQRLOOKUP:CALL..."
+    // on the same bridge port): cqrlog runs its callbook lookup and shows
+    // SP/LP rotor buttons; park+grid ride along from POTA spots so the
+    // azimuth points at the park, not the activator's home QTH.
+    void openLogWindow(const QString& call = {}, const QString& park = {},
+                       const QString& grid = {});
+    void openLogbookWindow();
+    void openContestWindow();          // contest manager window (lazy)
+    void toggleContestMode(bool on);   // CONTEST button: deck <-> waterfall
+    void walkContestSpot(int dir);     // ←/→ from the deck's empty call box
+    bool eventFilter(QObject* obj, QEvent* ev) override;  // pan arrows
+    void applyCwRxRouting();           // decode enables incl. contest feed
+    bool contestDeckVisible() const;
+    char contestClassify(const QString& call, qint64 hz) const;
+    void openDigiWindow();             // fldigi link (now on LOG right-click)
+    void ensureCwWindow();             // build (not show) the CW window —
+                                       // contest keying needs the keyer
+                                       // path with the window closed
+    void openSpotTable();
+    void sendCqrLookup(const QString& call, const QString& park = {},
+                       const QString& grid = {});
+    // One finished QSO -> cqrlog's bridge as a headerless ADIF datagram.
+    // delayMs paces batch mirrors (contest pushes) so the bridge's
+    // fill-form-then-save keeps up; honors log/mirrorCqrlog.
+    void mirrorToCqrlog(const Qso& q, int delayMs = 0);
+    void setupCwUi();
+    void wireRigCwPanel();             // rig's CW settings <-> CW window
+    void applyCwPitch(int hz);         // the radio's sidetone pitch is truth
+    void setupSkimUi(const QString& stationCall);
+    void openSkimView();               // lazy CW-Skimmer-style waterfall
+    void setupDigiUi();
+    void setupRotorUi();
+    void setupSdrRxUi(QMenu* sdrMenu); // SDR ▾ → Receive audio (WDSP)
+    void updateSdrRxDemod();           // mode / filter / pitch -> SdrRx
+    int  snapToCwPeak(int offsetHz, int windowHz) const; // CW zap peak finder
+    void zeroBeat();                   // Z: zap strongest signal in the passband
+    void zeroBeatPass();               // refinement passes (fresh FFT each time)
+    void armPitchTrim();               // final stage: land the NOTE on cw/pitchHz
+    void pitchTrimFeed(double hz);     // every pitch sample drives the servo
+    void flipCwSideband();             // X: CW<->CWR aural zero-beat check
+    void refreshPassbandOverlay();     // radio state -> mode-sided on-screen passband
+    void refreshNotchOverlay();        // radio notch (audio Hz) -> RF-offset marker
+    void syncNotchUi();                // notch/SAF state -> marker + sidebar buttons
+    void sendPendingFilter();          // coalesced drag-to-filter serial writes
+    void sendPendingNotch();           // coalesced drag-to-notch serial writes
+    void tuneAbsolute(uint64_t hz);    // every tune path funnels through here
+    void applyMode(Mode m);            // user mode change (button or band memory)
+    void startManualTune();            // steady carrier for amp/external tuner
+    void stopManualTune();
+    void showSwrMenu(const QPoint& globalPos);  // right-click TUNE
+    // Vector-meter runs on a Smith chart for one antenna+band. The
+    // right-click path passes curAntenna_+the current band; the history
+    // dialog passes an arbitrary past pair so an old sweep can be
+    // inspected without retuning.
+    void showSmithChart(const QString& ant, const QString& band);
+    // Step a range reading SWR. Default = the visible span; wholeBand
+    // sweeps band edge to edge regardless of the view (the pan can only
+    // frame 480 kHz, but the dial and the Smith chart have no such limit
+    // — matters on 10 m, 1.7 MHz wide).
+    void startSwrSweep(bool wholeBand = false);
+    void stopSwrSweep(bool completed); // unkey, restore dial, maybe save
+    void swrTickStep();                // sweep state machine (150 ms timer)
+    void refreshSwrOverlay();          // push current antenna+band's runs to the pan
+    void showSwrHistory();             // browse/delete every saved sweep
+    void fillAntennaMenu(QMenu* m);    // the SWR antenna picker (shared)
+    // Tuner/amp box (238C + Titan III settings by antenna/band/frequency).
+    uint64_t txDialHz() const { return txVfo_ == 'B' ? vfoBHz_ : centerHz_; }
+    void refreshTuneBox();             // nearest saved point -> the pan's box
+    void openTuneEntry(const QString& ant, const TunePoint& start,
+                       qint64 replacesHz);
+    void openTuneEntryHere();          // box click: edit/add at the TX dial
+    void showTuneTable();
+    void showTuneBoxMenu(const QPoint& globalPos);
+    void saveTuneTable();              // JSON in AppDataLocation/tuning.json
+    void loadTuneTable();
+    void saveSwrRuns() const;          // JSON in AppDataLocation/swr.json
+    void loadSwrRuns();
+    static QString swrKey(const QString& ant, const QString& band);  // composite hash key
+    QVector<PanadapterWidget::SwrRun> allSwrRuns() const;  // flattened for the history dialog
+    void setDigitalMode(bool on);      // line-in for digital vs mic for voice
+    // WSJT-X (FT8 button, MainWindowTools.cpp): launch/raise/close WSJT-X +
+    // GridTracker2; while WSJT-X is heard the console holds DIG and LIVE
+    // stands down, while it transmits MOX/VK/over-air replay are refused.
+    void setupWsjtxUi();
+    void onWsjtxState(bool alive, bool transmitting);
+    bool wsjtxAlive() const;
+    bool wsjtxTransmitting() const;
+    void applyTxProfile(int slot);     // recall a stored TX-audio bundle
+    void openSetup();                  // station-setup dialog (first run + SDR menu)
+    void applyClusterSettings();       // point the spot feed at the saved node, live
+    void saveTxProfile(int slot);      // store current TX BW/PROC/MIC/PWR
+    void pushVfoB();                   // VFO B dial+filter+TX state -> panadapter
+    void saveBandMemory();             // stash freq/mode/filter in curBand_/curReg_
+    void syncBandRegister();           // mirror any dial move into the band stack
+    void recallStack(int band, int reg); // recall a band-stack register
+    void recall60m(int chan);          // locked US 60 m channel (CH1..CH5)
+    void dvrStopped();                 // clip deck went idle: lights off, PTT down
+    void dvrPlayOverAir(const QString& wav, int slot); // line-in + PTT + play
+    QString dvrDir() const;            // ~/.local/share/n8mus/tentec-console/dvr
+    QString vkPath(int slot) const;    // voice keyer message file for a slot
+    bool playVoiceSlot(int slot);      // VK play path; false = nothing out
+    void previewVoiceSlot(int slot);   // Shift+click: VK on the speakers, no TX
+    bool vkHasMessage(int slot) const; // real audio in the slot (not silence)
+    void refreshVkLoaded();            // dim/undim the VK buttons
+    // The mic a VK take records from, resolved at record time so a USB mic
+    // plugged in after launch is found. Empty = none; *why says so.
+    QString vkMicSource(QString* why) const;
+    QString vkTakePath(int slot) const;
+    // Voice keyer EQ: each slot keeps its untouched take (vkN.raw.wav) and
+    // the message that plays/transmits (vkN.wav) is rendered from it.
+    QString vkRawPath(int slot) const;
+    bool renderVkSlot(int slot, const VoiceEqSettings& eq, QString* err,
+                      struct VoiceRenderStats* stats = nullptr);
+    // -> messages rendered; a one-line talk-power summary into *summary
+    int  rerenderVk(const VoiceEqSettings& eq, QString* summary = nullptr);
+    void showVoiceEq();
+    void startVkRender(const VoiceEqSettings& s);  // background re-render
+    void finishVkRender(int n, const QString& summary, const QString& error);
+    void setLiveMic(bool on);          // LIVE: PC mic chain -> SignaLink
+    bool stopVoicePlayback();          // true = something got aborted
+    void saveMarkers();                // persist + repaint pinned freq markers
+    void scheduleIqRecordingDialog();  // arm/cancel a timed IQ recording
+    RadioController* radio_;                  // owned (QObject child); see makeRadio
+    RigctldServer    rigctld_;
+    SpotClient       spotClient_;                  // DX-cluster telnet feed
+    QAction*         spotSrcAct_ = nullptr;        // SPOT menu "source:" line
+    QAction*         spotsOnAct_ = nullptr;        // SPOT menu "Show spots"
+    PotaClient       potaClient_;                  // POTA activator API feed
+    FreeDvReporter   freedv_;                      // qso.freedv.org, view-only
+    Not1mmLog        not1mm_;                      // Not1MM's contest dupes (read-only)
+    bool             not1mmShownActive_ = false;   // status-bar edge only
+    SolarClient      solarClient_;                 // NOAA space-weather poller
+    // VOACAP overlay driver: recomputed on solar data, band crossings and
+    // a slow timer; keyed so identical inputs never rerun the engine.
+    Voacap   voacap_;
+    QTimer*  voacapTimer_ = nullptr;
+    quint64  voacapKey_ = 0;
+    bool     voacapEnabled_ = true;
+    bool     voacapWarned_ = false;
+    bool     voacapSsnWarned_ = false;     // one-time "waiting for SSN" note
+    void maybeRunVoacap();
+    QStringList      parkFilter_;                  // POTA park countries in area
+    CtyLookup        cty_;                         // callsign -> country coords
+    LogbookIndex     logbook_;                     // cqrlog worked-before data
+    QHash<QString, QPair<double, double>> ctyMemo_; // per-call resolution cache
+    PanadapterWidget* pan_ = nullptr;
+    // Sidebar boxes (were painted in the waterfall's corners until
+    // 2026-10-18): compass rose, tuner/amp card, space weather.
+    CompassRoseWidget* rose_      = nullptr;
+    TuneBoxWidget*     tuneCard_  = nullptr;
+    SolarWidget*       solarBox_  = nullptr;
+    DisplayPanel*      dispPanel_ = nullptr;   // DISPLAY ▾ (sidebar picker)
+    QWidget*     topStrip_ = nullptr;          // top bar (tool buttons' parent)
+    QBoxLayout*  topLay2_  = nullptr;          // second menu deck (new buttons!)
+    SMeterWidget*     smeter_ = nullptr;
+    ControlPanel*     panel_  = nullptr;
+    FrequencyDisplay* freqDisp_  = nullptr;   // VFO A (main RX, the panadapter dial)
+    FrequencyDisplay* freqDispB_ = nullptr;   // VFO B (sub RX), display + direct set
+    RoutingPanel*     routing_   = nullptr;   // VFO/antenna matrix + A/B transfers
+    AudioPanel*       audioPanel_ = nullptr;  // output-routing popup
+    // Per-VFO volume + mute, living under the frequency readouts — the
+    // widgets are owned by the VFO blocks (ui/VfoBlock).
+    VfoBlock*    vfoBlock_[2] = {};
+    ZoomBlock*   zoomBlock_ = nullptr;          // ui/ZoomBlock (top strip)
+    QSlider*     volSl_[2]   = {};            // [0]=A/main, [1]=B/sub
+    QLabel*      volLbl_[2]  = {};
+    QToolButton* muteBtn_[2] = {};
+    QTimer*      volTx_[2]   = {};            // coalesced *UM/*US streams
+    int  pendVol_[2] = {0, 0};
+    bool muted_[2]   = {false, false};
+    int  vol_[2]     = {50, 50};              // last known volumes (A, B)
+    int  preMute_[2] = {50, 50};              // levels to restore on unmute
+    uint64_t vfoBHz_ = 7000000;               // last known VFO B dial
+    Mode     subMode_ = Mode::LSB;            // sub RX mode (rides with VFO B)
+    int      subBwHz_ = 2500, subPbtHz_ = 0;  // sub RX filter (B's overlay width)
+    char     txVfo_  = 'A';                   // from ?KV; 'B' = split active
+    char     rxVfo_  = 'A';                   // main RX assignment (for B-engage)
+    QTimer*  bfTx_ = nullptr;                 // coalesced *BF stream for B drags
+    uint64_t pendBHz_ = 0;
+    bool     bfDirty_ = false;
+    QToolButton* bViewBtn_ = nullptr;         // show/hide B on the panadapter
+    QToolButton* lockBtn_[2] = {};            // per-VFO tune locks (*AL/*BL)
+    bool vfoLockA_ = false, vfoLockB_ = false;
+    // CTUN (PowerSDR click-tune): hold the SDR capture (and the screen)
+    // still while VFO A tunes — the A marker floats like B's, and the LO
+    // only re-centers when the dial nears the capture edge. Off = classic
+    // dial-pinned-at-center. loOffHz_ = LO minus dial RIGHT NOW (the fixed
+    // kLoOffsetHz in classic mode, varying under CTUN); every runtime
+    // spectrum-bin mapping must use it, never the constant.
+    QToolButton* ctunBtn_ = nullptr;
+    bool     ctun_ = false;
+    int      loOffHz_ = 260000;               // = kLoOffsetHz at startup (keep in sync)
+    uint64_t sdrLoHz_ = 0;                    // absolute capture LO (0 = not running)
+    // Band-overview landing (band buttons): the view frames the whole band
+    // while the dial floats; clicks/wheel/registers move the marker inside
+    // the standing frame. 0 = inactive. See frameBand() in MainWindowTuning.cpp.
+    uint64_t frameCenterHz_ = 0;
+    int      frameSpanHz_   = 0;
+    // SWR sweep (right-click TUNE): rides the manual-tune carrier and the
+    // @STF metering; curves per band overlay the pan. MainWindowOps.cpp.
+    QTimer*  swrTick_ = nullptr;
+    bool     swrSweeping_ = false;
+    int      swrStepIdx_ = 0;
+    bool     swrStepTuned_ = false;            // this step's tune sent
+    qint64   swrF0_ = 0, swrF1_ = 0;           // sweep range, absolute Hz
+    int      swrStepCount_ = 0;
+    uint64_t swrPrevDial_ = 0;
+    qint64   swrStepArmedMs_ = 0;              // accept samples after this
+    QVector<PanadapterWidget::SwrRun::Pt> swrPts_;   // this sweep's points
+    double   lastSwr_ = 0.0;                   // newest @STF SWR reading
+    qint64   lastSwrMs_ = 0;
+    bool     swrQuietTune_ = false;            // sweep tunes bypass plan-mode
+    bool     swrUsedMeter_ = false;            // this run wanted the wattmeter
+    int      swrMeterPts_ = 0;                 // points that actually came from it
+    QString  curAntenna_;                      // "" = unlabeled; tags the next sweep
+    // Keyed by swrKey(antenna, band) — a composite key, not band alone, so
+    // multiple antennas on the same band keep separate histories. History
+    // is unbounded (kept forever, pruned only by hand via SwrHistoryDialog);
+    // display call sites (refreshSwrOverlay, showSmithChart) trim to the
+    // newest couple of runs themselves.
+    QHash<QString, QVector<PanadapterWidget::SwrRun>> swrRuns_;
+    QPointer<QDialog> smithDlg_;               // non-modal Smith chart
+    QPointer<QDialog> swrHistDlg_;             // non-modal SWR history browser
+    QPointer<QDialog> wkPanel_;                // non-modal WinKeyer control box
+    TuneTable tuneTable_;                      // operator's tuner/amp settings
+    QPointer<TuneEntryDialog> tuneEntryDlg_;   // one entry form at a time
+    QPointer<TuneTableDialog> tuneTableDlg_;   // non-modal table editor
+    QPointer<VoiceEqDialog> vkEqDlg_;          // non-modal voice keyer EQ
+    LiveVoice* live_ = nullptr;          // live mic chain (LIVE button)
+    SdrRx* sdrRx_ = nullptr;             // SDR receive audio (null = no WDSP)
+    QPointer<SdrRxDialog> sdrRxDlg_;     // its controls window
+    std::shared_ptr<AsrEngine> asr_;     // Copy Assist (null = no whisper);
+                                         // shared with SdrRx's DSP-thread tap
+    QPointer<CopyAssistWindow> caWin_;
+    void setupCopyAssistUi(QMenu* sdrMenu);
+    // Winlink (AUDIO ▾ → Winlink): Pat drives the rig through :4532; the
+    // console watches Pat's session and hands it the SignaLink.
+    void setupWinlinkUi(QMenu* menu);    // SDR ▾ → Winlink (Pat + ARDOP)
+    void setupEqUi();                    // EQ: the voice keyer EQ window
+    // Sidebar buttons that light while a feature is on (SPOTS, SDR, SKIM,
+    // ROT): re-read on the 1 s UI tick and whenever their menu closes.
+    void lightWhile(QToolButton* b, QMenu* m, std::function<bool()> on);
+    void refreshLights();
+    QVector<QPair<QPointer<QToolButton>, std::function<bool()>>> lights_;
+    QToolButton* logBtn_ = nullptr;      // lit while the log window is up
+    QToolButton* cwBtn_  = nullptr;      // ... the CW window
+    QToolButton* eqBtn_  = nullptr;      // ... the voice keyer EQ
+    void onWinlinkSession(bool active, const QString& remote);
+    PatMonitor pat_;
+    // FreeDV reporting (FreeDV window → Report my station): FreeDV
+    // Reporter role "report" + PSK Reporter, only in the FreeDV mode.
+    // updateFreedvLink() owns freedv_.setEnabled.
+    PskReporter psk_;
+    QAction* fdvSpotsAct_ = nullptr;
+    bool fdvReportingNow_ = false;
+    void updateFreedvLink();
+    // FreeDV mode (MODE panel → FreeDV): one switch for RADE receive +
+    // transmit + the FreeDV window, everything restored when it ends.
+    void setFdvMode(bool on, bool keepMode = false);
+    void openFreeDvWindow();
+    void applySdrRxSettings();                     // stored settings + FDV overrides
+    bool fdvMode_ = false, fdvAnalog_ = false;
+    // FreeDV's calling-frequency convention (qso.freedv.org → Calling
+    // Frequencies): LSB on 160/80/40 m, USB on 60 m and up.
+    static Mode fdvSideband(uint64_t hz);
+    // Our own call (with or without /P etc.): never "heard" — the RSP2
+    // decodes our own transmission (live-found: we reported hearing N8EM).
+    static bool isOwnCall(const QString& c) {
+        const QString me = QSettings().value("station/callsign", "").toString().toUpper();
+        const QString base = c.toUpper().section('/', 0, 0);
+        return !me.isEmpty() && (base == me || c.toUpper() == me);
+    }
+    Mode fdvSb_ = Mode::USB;                       // the sideband FDV last set
+    struct FdvSaved {
+        Mode mode = Mode::USB;
+        int bw = 2400, pbt = 0, txBw = 2850;
+        bool sdrOn = false, live = false;
+    } fdvSaved_;
+    QPointer<FreeDvWindow> fdvWin_;
+    std::function<bool(bool)> sdrRxSetOn_;         // SDR receive audio on/off
+    bool winlinkActive_ = false, winlinkOwnsDig_ = false, winlinkStoppedLive_ = false;
+    bool wsjtxOwnsDig_ = false;
+    QPointer<QProcess> wsjtxProc_, gridTrackerProc_;
+    QLabel* wlLabel_ = nullptr;
+    QProcess* ardop_ = nullptr;
+    bool liveMic_ = false;
+    bool liveOwnsLineIn_ = false;              // LIVE turned DIG on (restore)
+    // FreeDV RADE transmit (AUDIO ▾): LIVE in RADE mode; MOX-off waits for
+    // the end-of-over to play out before PTT drops.
+    QAction* radeTxAct_ = nullptr;
+    bool radeTxOn_ = false, radeOwnsLive_ = false, radeUnkeyPending_ = false;
+    void setRadeTx(bool on);
+    bool vkRenderBusy_ = false;                // a background VK render runs
+    bool vkRenderHasPending_ = false;          // edits arrived meanwhile
+    VoiceEqSettings vkRenderPending_;
+    int  vkPreviewAfter_ = -1;                 // Listen waiting on the render
+    // SignaLink pickup finder (EQ window): a rising tone into the SignaLink.
+    QPointer<QProcess> calProc_;
+    QElapsedTimer calClock_;
+    void stopPickupCal(const QString& text);
+    void setLoOff(int off);                   // pan + CW decoder follow
+    void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
+    void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing
+    bool zoomToBandFrame(int spanHz);         // zoom-out terminal = band view
+    int  bandFrameSpanHz() const;             // overview span; -1 = no band
+    void applyFrame(int64_t centerAbsHz, int spanHz);     // hold view on a range
+    void exitBandFrame(int reapplySpanHz);    // 0 = leave view to the caller
+    QTimer* sfTx_ = nullptr;                  // coalesced sub-filter drag stream
+    int  pendSubBw_ = 0, pendSubPbt_ = 0;
+    bool subFilterDirty_ = false;
+    QElapsedTimer sinceSubFilterEdit_;        // suppress poll snap-back after a drag
+    int anchorSubLoHz_ = 0, anchorSubHiHz_ = 0;   // B overlay edges at drag start
+    int anchorSubBwHz_ = 2500, anchorSubPbtHz_ = 0; // sub radio state at drag start
+    QTimer*  afTx_ = nullptr;                 // coalesced tune stream for A drags
+    uint64_t pendAHz_ = 0;
+    bool     afDirty_ = false;
+    QElapsedTimer sinceVfoBEdit_;             // suppress poll snap-back after an edit
+    TxBar*            txBar_ = nullptr;
+
+    // DVR: off-air record/playback + voice keyer, audio over the SignaLink.
+    ClipDeck* dvr_ = nullptr;
+    bool dvrTxPlayback_ = false;       // this playback keyed the radio (drop PTT)
+    bool dvrAutoDig_ = false;          // we engaged line-in for it (restore voice)
+    QString dvrTripSrcSave_;           // remote clip: operator's TRIP source to restore
+    int antBand_ = -1;                 // last band seen; changes re-query *C1V
+    QString dvrLastRx_;                // newest off-air take this session
+    QString dvrJustRecorded_;          // take to peak-normalize when it lands
+    QString radioSink_, radioSource_;  // SignaLink playback/capture node names
+    QString radioAudioMatch_;          // node-name match for the SignaLink codec
+    int     vkTakeSlot_ = -1;          // VK slot whose take is landing (-1 = none)
+    int curBand_ = -1;                         // index into kBands, -1 = none
+    int curReg_  = 0;                          // active stack register (0..3 = A..D)
+    int lastBandPress_ = -1;                   // band button last pressed (for cycling)
+    QTimer* bandStamp_ = nullptr;              // debounced stack-register stamping
+    QElapsedTimer sinceEnforce_;               // rate-limit amp drive-limit corrections
+
+    // Manual tune carrier (TUNE with the internal tuner disabled).
+    bool tuning_      = false;
+    bool tunerOn_     = false;                 // internal tuner enable, from polling
+    int  lastTxPwr_   = 50;                    // radio's PWR, for restore after tune
+    Mode preTuneMode_ = Mode::USB;
+    int  preTunePwr_  = 50;
+    QTimer* tuneTimeout_ = nullptr;            // safety: carrier auto-drops
+    QTimer* moxFailsafe_ = nullptr;            // safety: MOX voice-key auto-drops
+
+    // SAM pseudo-mode (ECSS): USB zero-beaten on an AM carrier, fine
+    // wheel steps while active; previous mode/filter restored on exit.
+    bool samActive_   = false;
+    Mode samEngine_   = Mode::USB;            // click the lit button to flip U/L
+    Mode preSamMode_  = Mode::AM;
+    int  preSamBw_    = 6000;
+
+    // Digital/voice audio switching. Voice settings are learned
+    // from the radio when entering digital, and persisted (defaults 51/2).
+    bool digital_       = false;
+    int  lastMicGain_   = 51;                  // learned VOICE values (never 0 —
+    int  lastSpeechProc_ = 2;                  // see the poisoning guards)
+    int  micNow_        = 0;                   // radio's mic as last reported
+    int  txBwHz_        = 2850;                // TX filter, from polling (?TF)
+    uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
+    bool awaitingFreq_ = false;                // one ?AF in flight at a time
+    QElapsedTimer freqQueryAge_;
+    uint64_t pendingHz_ = 0;                   // change must be seen twice (glitch filter)
+    int pollTick_ = 0;                         // schedules mode/filter queries between ?AF
+    QElapsedTimer sinceTune_;                  // suppress dial-follow right after a click
+    QElapsedTimer sinceDialMove_;              // radio-knob activity -> burst the ?AF poll
+    QElapsedTimer sinceFilterEdit_;            // suppress overlay refresh right after a drag
+
+    // Radio filter state (from polling) and mode-aware passband mapping.
+    Mode rigMode_  = Mode::USB;
+    // Last polled mode that differed from rigMode_. A polled change must
+    // arrive twice in a row before it's believed: one torn serial read
+    // parsing as LSB got adopted and band-stamped onto CW registers
+    // (live-observed on 20 m — every recall then flipped the radio to LSB).
+    Mode pendingPolledMode_ = Mode::USB;
+    int  rigBwHz_  = 2400;
+    int  rigPbtHz_ = 0;
+
+    // Delta-anchored drag: on edge grab, snapshot the radio's real polled state;
+    // drags send anchor + delta, so no assumed nominal placement can cause jumps.
+    int anchorLoHz_ = 0, anchorHiHz_ = 0;      // overlay edges at drag start
+    int anchorBwHz_ = 2400, anchorPbtHz_ = 0;  // radio state at drag start
+
+    // Manual notch state (audio Hz, from polling; see refreshNotchOverlay).
+    // safOn_ = the shared DSP engine is in SAF (peak) flavor, not reject.
+    bool notchOn_      = false;
+    bool safOn_        = false;
+    int  notchCenter_  = 550;
+    int  notchWidth_   = 30;
+    QElapsedTimer sinceNotchEdit_;             // suppress poll snap-back after a drag
+
+    // Coalesced drag-to-filter: keep only the latest values, send ~25x/sec.
+    QTimer* filterTx_ = nullptr;
+    int  pendBwHz_ = 0, pendPbtHz_ = 0;
+    bool filterDirty_ = false;
+    QTimer* notchTx_ = nullptr;                // same pattern for notch drags
+    int  pendNotchHz_ = 0;
+    bool notchDirty_ = false;
+    // SDR-source S-meter calibration: dbS9 = passband power + gain
+    // compensation + sdrCalDb_. The offset is set once by "Calibrate SDR to
+    // radio" (matching the radio's reading while its RF gain is full up) and
+    // survives every SDRplay gain change — the gRdB/LNA compensation is exact.
+    double sdrCalDb_      = 0.0;
+    double lastRadioDbS9_ = NAN;               // radio's latest RX reading
+    double lastSdrMeasDb_ = NAN;               // SDR measurement, pre-offset
+    // CW zap: click in CW snaps the dial onto the true carrier peak found in
+    // the averaged spectrum (both Ten-Tecs read the carrier on the dial in
+    // CW, so this alone puts the note on the sidetone pitch).
+    std::vector<float> lastSpectrum_;          // latest averaged FFT frame
+    int  sdrSpanHz_ = 0;                       // capture span of that frame
+    bool cwZap_     = true;                    // DISPLAY "CW zap" checkbox
+    int      zbPassesLeft_ = 0;                // 0-beat refinement passes pending
+    uint64_t zbExpectHz_   = 0;                // abort if anything else retunes
+    // LOG panel: one-click QSO -> cqrlog via the fork's always-on UDP ADIF
+    // bridge (127.0.0.1:2334). Call/park prefill from the last clicked spot.
+    QUdpSocket* logUdp_ = nullptr;
+    QDateTime qsoStartUtc_;                    // when the call landed in the field
+    AutoGain autoLna_;                         // RF AGC policy (skimmer)
+    std::atomic<float> iqPeak_{0.0f};          // wideband |peak| since last read
+    std::atomic<uint64_t> iqSampleCount_{0};   // delivery meter (SDR thread)
+    // TX monitor (Option A): gain slam while transmitting; see the
+    // txTick timer in MainWindow.cpp. Ant-B coupler switch lands here
+    // when the RF sampler hardware arrives (Option C).
+    QAction* txMonAct_ = nullptr;
+    QAction* txFlipAct_ = nullptr;         // hop to the other antenna on TX
+    bool     txAntFlipped_ = false;        // RSP2 currently on the TX-side port
+    bool     txMonOn_ = false;
+    bool     radioTx_ = false;
+    int      txSaveGr_ = 45, txSaveLna_ = 3;
+    qint64   lastTxMs_ = 0;
+    qint64   txPredictMs_ = 0;             // console is about to key (CW win)
+    // 0-beat final stage: damped stepped servo on the SignaLink pitch
+    // measurement (the radio's own audio frame). Policy in dsp/PitchTrim.h;
+    // fed from the pitchMeasured stream in setupCwUi. The latest reading
+    // is kept so zeroBeat() can go pitch-first: an audible note near the
+    // target skips the FFT peak hunt entirely.
+    PitchTrim pitchTrim_;
+    double   lastPitchHz_ = -1.0;
+    qint64   lastPitchMs_ = 0;
+    bool     panicked_ = false;            // event-callback slam may be live
+    std::atomic<bool> txMonEnabled_{true}; // checkbox mirror (SDR thread reads)
+    std::atomic<qint64> txCtxMs_{0};       // last TX-context ms (SDR thread reads)
+    QString  radioDevUsed_;                // serial path this instance opened
+    // External RF wattmeter (LP-100A or PowerMaster per meter/model), null
+    // unless enabled and its port opened.
+    TxMeter* txMeter_ = nullptr;
+    QString  meterDevUsed_;
+    QString  meterName_;                   // "LP-100A" / "PowerMaster"
+    // True when the sweep should believe the meter: enabled, configured as
+    // the source, and actually answering right now.
+    bool     meterSwrReady() const;
+    // Configured and its port open, but never a frame — a dead meter, not
+    // a deliberate radio reading. Kept distinct so the sweep can say which.
+    bool     meterConfiguredButSilent() const;
+    bool     radioUp_ = false;             // ...and whether the open succeeded
+    int      txMonHangMs_ = 1000;          // QSK hang before RX gain returns
+    unsigned lastOverloads_ = 0;
+    IqRecorder* iqRec_ = nullptr;              // band recorder (.tciq)
+    QAction* recIqAct_ = nullptr;              // SDR-menu toggle
+    QAction* schedIqAct_ = nullptr;            // SDR-menu schedule/cancel entry
+    QTimer*  schedStartTmr_ = nullptr;         // armed: fire = tune + record
+    uint64_t schedHz_ = 0;                     // scheduled dial frequency
+    int      schedSecs_ = 0;                   // scheduled recording length
+    QVector<FreqMarker> markers_;              // pinned panadapter frequencies
+    QThread* replayThread_ = nullptr;          // TTC_IQFILE feeder
+    std::atomic<bool> replayStop_{false};
+    CwWindow* cwWin_ = nullptr;                // WinKeyer CW sender (lazy)
+    LogDb* logDb_ = nullptr;                   // the station's own SQLite log
+    // The station being worked right now, shared by the LOG and CW
+    // windows (log/QsoContext): a call or report typed in either one is
+    // what the other sees, and what the CW macros spend.
+    QsoContext* qsoCtx_ = nullptr;
+    QsoContext* qsoContext();                  // created on first use
+    CqrlogSync* cqrSync_ = nullptr;            // cqrlog -> console mirror
+    QslUploader* uploader_ = nullptr;          // online-log push engine
+    WsjtxListener* wsjtx_ = nullptr;           // FT8 QSOs into the log
+    QrzLookup* qrz_ = nullptr;                 // callbook for the LOG window
+    QMultiHash<QString, qint64> enrichPending_;  // call -> QSO awaiting QRZ
+    void enrichQso(qint64 id, const QString& call);
+    LogWindow* logWin_ = nullptr;              // New QSO entry (lazy)
+    LogbookWindow* logbookWin_ = nullptr;      // logbook browser (lazy)
+    ContestDb* contestDb_ = nullptr;           // contest.db (lazy, own file)
+    ContestWindow* contestWin_ = nullptr;      // contest manager (lazy)
+    ContestDeck* contestDeck_ = nullptr;       // in-console deck (lazy)
+    QToolButton* contestBtn_ = nullptr;        // CNTST toggle (old DIGI slot)
+    MeterHost*   meterHost_ = nullptr;         // Panel layout's meter box
+    MeterHost*   meterBox_  = nullptr;         // Original view's METER sidebar box
+    std::unique_ptr<LayoutHost> layout_;          // where things go (app/LayoutHost)
+    QVector<SpotLabel> shownSpots_;            // last push, for the walk
+    QVector<Spot> parkedSpots_;                // knob-QSY memories (local)
+    std::function<void()> pushSpots_;          // re-push (contest recolor)
+    float savedSplit_ = 0.42f;                 // waterfall split to restore
+    bool contestRx_ = false;                   // deck wants the CW decoder
+    SpotTableWindow* spotTable_ = nullptr;     // cluster feed as a table (lazy)
+    CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
+    CwDecoder* audioDec_ = nullptr;            // radio-audio CW reader (lazy)
+    AudioCwSource* audioSrc_ = nullptr;        // SignaLink capture for it
+    QPushButton* cwAudioWarn_ = nullptr;           // status bar: RADIO ear on the wrong device
+    bool rxWanted_ = false;                    // CW window wants decode
+    bool rxRadio_ = false;                     // source: radio audio vs SDR
+    SkimmerEngine* skim_ = nullptr;            // CW skimmer decoder bank
+    QAction* skimEnable_ = nullptr;            // SKIM menu on/off toggle
+    void     applySkimGate();                  // decoders follow the SKIM toggle
+    QLabel*  skimStatus_ = nullptr;            // live channel readout (menu)
+    SkimServer* skimSrv_ = nullptr;            // local RBN telnet (:7300)
+    SkimmerWindow* skimWin_ = nullptr;         // band map (lazy)
+    SkimStft* skimStft_ = nullptr;             // SKIM view's fast STFT
+    SkimViewWindow* skimView_ = nullptr;       // CW-Skimmer waterfall (lazy)
+    FldigiClient* fldigi_ = nullptr;           // XML-RPC link (lazy)
+    DigiWindow*   digiWin_ = nullptr;          // fldigi companion (lazy)
+    RotorLink   rotor_;                        // DCU-3 direct, or rotctld
+    double  lastRoseBearing_ = -1.0;           // rose target for TURN
+    QString lastRoseLabel_;
+    WatchList watch_;                          // DX-watch alert patterns
+    QHash<QString, qint64> watchNotified_;     // call -> epoch (renotify gap)
+#ifdef HAVE_SDRPLAY
+    SdrPlaySource    sdr_;
+    SpectrumComputer spectrum_{16384};  // 61 Hz/bin at 1 MHz capture — survives deep zoom
+    // Spectrum frame pacer: the FFT emits on the SAMPLE clock (the IQ comes in
+    // ~43 ms USB bursts), and the GUI presents one frame per frame period on
+    // its own clock — 60 fps is then 60 evenly spaced frames, not 23 clumps.
+    std::mutex specQMux_;
+    std::deque<std::vector<float>> specQ_;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    using SpecPacerTimer = QChronoTimer;
+#else
+    using SpecPacerTimer = QTimer;
+#endif
+    SpecPacerTimer* specPacer_ = nullptr;
+    void setPacerInterval(double ms);
+    std::function<void(std::vector<float>&)> specPresent_;
+    void startSpecPacer();
+    // IQ fan-out worker: the USB callback only enqueues into iqRing_;
+    // this thread runs the FFT/decoders/recorder with ~1 s of elastic
+    // buffer. Running the consumers inside the callback let ordinary
+    // CPU load starve the SDRplay stream to 37% delivery — randomly
+    // spliced time that garbled every decode brain at once while the
+    // radio-audio path read clean (live-found 2026-08-07).
+    QThread* iqWorker_ = nullptr;
+    std::atomic<bool> iqWorkerStop_{false};
+    std::mutex iqRingMux_;
+    std::condition_variable iqRingCv_;
+    std::deque<IqBlock> iqRing_;
+    size_t iqRingSamples_ = 0;         // guarded by iqRingMux_
+    std::atomic<uint64_t> iqProcessedCount_{0};
+#endif
+};
+
+} // namespace ttc

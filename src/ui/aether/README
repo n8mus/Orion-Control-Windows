@@ -1,0 +1,18 @@
+AetherSDR's meters (https://github.com/ten9876/AetherSDR, GPL-3.0), used by
+the Panel layout's meter box (src/ui/MeterHost: ARC / NEEDLE / LP-100A faces).
+
+Every file here except core/{ThemeManager,LogManager,AppSettings,
+KiwiSdrProtocol,AetherShims} is AetherSDR's own, unchanged but for the
+three-line header; core/LpMeterProtocol.* is theirs too. The core/ files
+are small stand-ins for what their meters include:
+
+  ThemeManager   color(token) / {{token}} style templates, resolved from
+                 their Default Dark theme (resources/aether/default-dark.json)
+  AppSettings    their keys -> our QSettings under aether/
+  LogManager     the lcMeters / lcGui logging categories
+  KiwiSdrProtocol the meter-reading types their S-meter's KiwiSDR overload
+                 names (we have no KiwiSDR; nothing feeds it)
+
+Face geometry/themes: resources/meterfaces/*.json (theirs), compiled into the
+app via resources/aether.qrc. Built only with Qt >= 6.7. To pull a newer
+upstream copy, replace the files and keep the headers.

@@ -1,0 +1,19 @@
+# Panel layout: Tune split / BAND flyout / float-dock / hide. No MOX/TUNE.
+wait 1500
+freq 0 7030000
+freq 1 7031500
+click Tune_split
+wait 600
+click TX_back_to_A
+wait 600
+click BAND
+wait 400
+click 20
+wait 600
+tip Pop out into a floating window
+wait 800
+tip Return to panel
+wait 600
+click RX
+wait 400
+click RX

@@ -1,0 +1,906 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "ui/SetupDialog.h"
+
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QFormLayout>
+#include <QHostAddress>
+#include <QInputDialog>
+#include <QMultiMap>
+#include <QLabel>
+#include <QLineEdit>
+#include <QProcess>
+#include <QPushButton>
+#include <QSerialPort>
+#include <QSerialPortInfo>
+#include <QSettings>
+#include <QUdpSocket>
+#include <QSpinBox>
+#include <QThread>
+#include <QAbstractSpinBox>
+#include <QEvent>
+#include <QGuiApplication>
+#include <QPushButton>
+#include <QScreen>
+#include <QScrollArea>
+#include <QVBoxLayout>
+#include <algorithm>
+
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+#include "audio/AudioIo.h"
+#endif
+#include "audio/ClipDeck.h"
+
+namespace ttc {
+
+namespace {
+QLabel* section(const QString& text, QWidget* parent) {
+    auto* l = new QLabel(text, parent);
+    l->setStyleSheet(
+        "color: #6aa5d8; font-weight: bold; padding-top: 10px;");
+    return l;
+}
+
+// Capture sources by name — the CW window's RADIO source (the radio's
+// line-out into a USB codec). Listed so a tester picks their interface
+// instead of inheriting this station's SignaLink node. PipeWire node
+// names on Linux (via pactl); Windows device descriptions via the
+// ClipDeck's Qt Multimedia listing — cw/audioDev matches by substring on
+// both, so either kind of name works as typed.
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+QStringList audioSources() { return ttc::AudioCapture::inputDescriptions(); }
+#else
+QStringList audioSources() {
+    QProcess p;
+    p.start("pactl", {"list", "short", "sources"});
+    if (!p.waitForFinished(2000)) return {};
+    QStringList out;
+    for (const QString& line :
+         QString::fromUtf8(p.readAllStandardOutput()).split('\n'))
+        if (line.contains("alsa_input"))
+            out << line.section('\t', 1, 1);
+    return out;
+}
+#endif
+} // namespace
+
+SetupDialog::SetupDialog(const QString& liveRadioDev,
+                         const QString& liveKeyerDev,
+                         const QString& liveMeterDev, bool radioConnected,
+                         QWidget* parent)
+    : QDialog(parent), liveRadioDev_(liveRadioDev),
+      liveKeyerDev_(liveKeyerDev), liveMeterDev_(liveMeterDev),
+      radioConnected_(radioConnected) {
+    setWindowTitle("Station setup");
+    setStyleSheet(
+        "QDialog { background: #141b24; }"
+        // The scrolled page is a plain QWidget, not the QDialog, so the
+        // rule above misses it and it falls back to the light system
+        // palette — light-gray labels on white (live-found). Name it and
+        // paint it, and dress the scrollbar to match while we are here.
+        "#setupPage { background: #141b24; }"
+        "QScrollArea { background: #141b24; border: none; }"
+        "QScrollBar:vertical { background: #141b24; width: 12px;"
+        " margin: 0; }"
+        "QScrollBar::handle:vertical { background: #2a3644;"
+        " border-radius: 5px; min-height: 28px; }"
+        "QScrollBar::handle:vertical:hover { background: #3a4a5e; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+        " height: 0; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+        " background: #141b24; }"
+        "QLabel { color: #c8d4e0; font-size: 14px; }"
+        "QLineEdit, QComboBox, QSpinBox { background: #1c2430; color: #c8d4e0;"
+        " border: 1px solid #2a3644; border-radius: 3px; padding: 4px 8px; }"
+        "QComboBox QAbstractItemView { background: #1c2430; color: #c8d4e0;"
+        " selection-background-color: #2a3644; }"
+        "QCheckBox { color: #c8d4e0; spacing: 8px; }"
+        "QPushButton { background: #1c2430; color: #c8d4e0; border: 1px solid"
+        " #2a3644; border-radius: 3px; padding: 5px 14px; }"
+        "QPushButton:hover { background: #2a3644; }");
+
+    QSettings s;
+    // The form is taller than a 1080p screen once every section is in it,
+    // and a QDialog does not scroll: OK ended up BELOW the desktop panel
+    // where it could not be clicked at all, so every change was silently
+    // discarded (live-found — the operator could not switch keyers and
+    // there was no symptom except "nothing happened"). Scroll the form and
+    // keep the buttons outside it, always reachable.
+    auto* outer = new QVBoxLayout(this);
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* page = new QWidget(scroll);
+    page->setObjectName("setupPage");
+    scroll->setWidget(page);
+    outer->addWidget(scroll, 1);
+    auto* lay = new QVBoxLayout(page);
+    auto* form = new QFormLayout;
+    form->setLabelAlignment(Qt::AlignRight);
+    lay->addLayout(form);
+
+    form->addRow(section("STATION", this));
+    call_ = new QLineEdit(s.value("station/callsign", "").toString(), this);
+    call_->setMaxLength(12);
+    form->addRow("Callsign", call_);
+    grid_ = new QLineEdit(s.value("station/grid", "").toString(), this);
+    grid_->setMaxLength(6);
+    grid_->setToolTip("Maidenhead grid square (4 or 6 chars) — centers the "
+                      "compass rose and bearing math");
+    form->addRow("Grid square", grid_);
+    // What the CW macros' [my name] / [my QTH] send.
+    opName_ = new QLineEdit(s.value("station/name").toString(), this);
+    opName_->setMaxLength(20);
+    opName_->setToolTip("Your name as you send it on the air — the CW "
+                        "window's [my name] field");
+    form->addRow("Operator name", opName_);
+    opQth_ = new QLineEdit(s.value("station/qth").toString(), this);
+    opQth_->setMaxLength(32);
+    opQth_->setToolTip("Your town/state as you send it — the CW window's "
+                       "[my QTH] field");
+    form->addRow("QTH", opQth_);
+    units_ = new QComboBox(this);
+    units_->addItem("Auto (locale)", "auto");
+    units_->addItem("Miles", "mi");
+    units_->addItem("Kilometers", "km");
+    units_->setToolTip("Distances in the LOG window's bearing readout.\n"
+                       "Auto follows the system locale (US = miles).");
+    const QString up = s.value("station/units", "auto").toString();
+    units_->setCurrentIndex(qMax(0, units_->findData(up)));
+    form->addRow("Distance", units_);
+
+    form->addRow(section("WINDOW  (takes effect on next launch)", this));
+    layout_ = new QComboBox(this);
+    layout_->addItem("Original  (today's console)", "classic");
+    layout_->addItem("Panel  (sidebar of boxes, AetherSDR style)", "panel");
+    layout_->setToolTip("Original: the top strip of meter, VFOs and routing over the\n"
+                        "panadapter. Panel: a sidebar of boxes you can hide, pop out\n"
+                        "into their own windows and dock back. Switch back any time.");
+    layout_->setCurrentIndex(s.value("ui/layout", "classic").toString() == "panel" ? 1 : 0);
+    form->addRow("Layout", layout_);
+
+    form->addRow(section("RADIO  (takes effect on next launch)", this));
+    model_ = new QComboBox(this);
+    model_->addItem("USS Orion  (Ten-Tec 565)", "orion");
+    model_->addItem("USS Orion II  (Ten-Tec 566)", "orion2");
+    model_->addItem("USS Omni VII  (Ten-Tec 588)", "omni8");
+    const QString m = s.value("radio/model", "orion").toString();
+    model_->setCurrentIndex(m == "omni8" || m == "omni7" ? 2
+                            : m == "orion2"              ? 1
+                                                         : 0);
+    form->addRow("Model", model_);
+
+    // Per-radio device profiles: the Orion's serial port (deviceOrion), the
+    // Omni VII's serial port (deviceSerial) and the Omni VII's Ethernet
+    // address (deviceRemote) are three separate remembered values — switching
+    // radios or Omni serial<->remote never stomps another radio's device.
+    // The Connection selector applies to the Omni only (the Orion is
+    // serial-only).
+    // Unset means "not configured yet" — the port combos list what this
+    // machine actually has. Defaults naming one developer's hardware only
+    // preselect a path that exists on a single station.
+    const QString legacyDev = s.value("radio/device").toString();
+    const bool legacyRemote = legacyDev.startsWith("udp:");
+    const bool legacyOrion =
+        s.value("radio/model", "orion").toString().startsWith("orion");
+    devSerial_ = s.value("radio/deviceSerial",
+                         legacyRemote || legacyOrion ? QString() : legacyDev)
+                     .toString();
+    devRemote_ = s.value("radio/deviceRemote",
+                         legacyRemote ? legacyDev : QString())
+                     .toString();
+    devOrion_ = s.value("radio/deviceOrion",
+                        legacyOrion && !legacyRemote ? legacyDev : QString())
+                    .toString();
+    connMode_ = s.value("radio/connection",
+                        legacyRemote ? "remote" : "serial").toString();
+
+    conn_ = new QComboBox(this);
+    conn_->addItem("At the radio — serial (CAT cable)", "serial");
+    conn_->addItem("Remote — Ethernet (One Plug / laptop)", "remote");
+    conn_->setCurrentIndex(connMode_ == "remote" ? 1 : 0);
+    conn_->setToolTip("Serial for operating at the desk; Remote streams CAT\n"
+                      "and RX audio over Ethernet (radio in REMOTE mode).\n"
+                      "Applies to the Omni VII — the Orion is serial-only.");
+    form->addRow("Connection", conn_);
+
+    radioDev_ = new QComboBox(this);
+    radioDev_->setEditable(true);          // paths / udp: strings beyond enum
+    form->addRow("CAT serial port", radioDev_);
+    devLabel_ = qobject_cast<QLabel*>(form->labelForField(radioDev_));
+    connect(conn_, &QComboBox::currentTextChanged, this,
+            [this] { applyConnMode(activeProfile()); });
+    connect(model_, &QComboBox::currentTextChanged, this,
+            [this] { applyConnMode(activeProfile()); });
+    auto* rtest = new QPushButton("Test", this);
+    radioTest_ = new QLabel(this);
+    auto* rrow = new QHBoxLayout;
+    rrow->addWidget(rtest);
+    rrow->addWidget(radioTest_, 1);
+    form->addRow("", rrow);
+    connect(rtest, &QPushButton::clicked, this, &SetupDialog::testRadio);
+
+    form->addRow(section("CW KEYER", this));
+    // Which engine makes the CW. "Auto" is what a public-build user gets:
+    // a WinKeyer if one is configured below, otherwise the radio's own
+    // keyer if it can key over CAT, otherwise nothing. Auto never picks
+    // the radio while a WinKeyer port is set — enabling the internal
+    // keyer turns the KEY jack into a paddle input, and a WinKeyer still
+    // plugged in there reads as a held dit.
+    keyerSel_ = new QComboBox(this);
+    keyerSel_->addItem("Auto — WinKeyer if set up, else the radio", "auto");
+    keyerSel_->addItem("WinKeyer (USB)", "winkeyer");
+    keyerSel_->addItem("Radio's internal keyer (over CAT) — see note", "radio");
+    keyerSel_->addItem("None", "none");
+    keyerSel_->setToolTip(
+        "The radio's internal keyer needs NOTHING plugged in — good if you\n"
+        "have no WinKeyer — but it claims the KEY jack as a paddle input,\n"
+        "so unplug a WinKeyer from there before selecting it. It cannot\n"
+        "follow a speed knob and cannot tell the console when you touch\n"
+        "the paddle.\n\n"
+        "Two limits of keying over CAT, both in the radio:\n"
+        "  • letter spacing runs about 1.5x wide (measured: 4.2 dit units\n"
+        "    between characters where 3 is correct, plus ~39 ms per\n"
+        "    character). Word spacing is right. It reads fine but sounds\n"
+        "    a little spaced out.\n"
+        "  • it sometimes DROPS part of a long macro. The radio gives no\n"
+        "    handshake and no way to ask how full its buffer is, so a lost\n"
+        "    character cannot be detected or resent.\n"
+        "A WinKeyer has neither problem.");
+    form->addRow("Keyer", keyerSel_);
+    // The tooltip carries the detail; this line makes sure nobody selects
+    // the radio keyer and files its spacing as a console bug.
+    auto* keyerNote = new QLabel(
+        "Radio keyer: letter spacing ~1.5x wide and can drop part of a "
+        "long macro — both are limits of\nkeying over CAT, not of the "
+        "console. A WinKeyer has neither.", this);
+    keyerNote->setWordWrap(true);
+    keyerNote->setStyleSheet("color: #7f93a8; font-size: 12px;");
+    form->addRow("", keyerNote);
+    keyerDev_ = new QComboBox(this);
+    keyerDev_->setEditable(true);
+    // Nothing is preconfigured, so an unset field is blank — and a blank dark
+    // box does not look clickable. Say what it is and that leaving it alone
+    // is a valid choice (operator-reported: "I don't see drop downs").
+    keyerDev_->lineEdit()->setPlaceholderText(
+        "click to choose a port — leave empty if you have no WinKeyer");
+    form->addRow("WinKeyer port", keyerDev_);
+    auto* ktest = new QPushButton("Test", this);
+    keyerTest_ = new QLabel(this);
+    auto* krow = new QHBoxLayout;
+    krow->addWidget(ktest);
+    krow->addWidget(keyerTest_, 1);
+    form->addRow("", krow);
+    connect(ktest, &QPushButton::clicked, this, &SetupDialog::testKeyer);
+    audioDev_ = new QComboBox(this);
+    audioDev_->setEditable(true);
+    audioDev_->setToolTip(
+        "Capture device carrying the radio's RX audio (SignaLink or any\n"
+        "USB codec) — feeds the CW window's RADIO source and pitch meter");
+    for (const QString& a : audioSources()) audioDev_->addItem(a);
+    audioDev_->setEditText(
+        s.value("cw/audioDev",
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+                // Substring of the Windows device description; the
+                // SignaLink enumerates as "USB Audio CODEC" or plain
+                // "USB Audio Device" depending on the driver.
+                "USB Audio"
+#else
+                "alsa_input.usb-BurrBrown_from_Texas_Instruments_USB_AUDIO_"
+                "CODEC-00.analog-stereo"
+#endif
+                ).toString());
+    form->addRow("Radio audio in", audioDev_);
+
+    // Voice keyer mic: the operator's station mic is on the RADIO, so the
+    // PC only hears him through a mic of its own. Auto picks the first USB
+    // input that isn't the radio codec, at record time (a mic plugged in
+    // after launch is found); naming one pins it.
+    vkMic_ = new QComboBox(this);
+    vkMic_->addItem("Auto — first USB mic that isn't the radio", QString());
+    const QString curMic = s.value("dvr/micSource").toString();
+    bool curListed = curMic.isEmpty();
+    for (const ttc::ClipDeck::Source& src : ttc::ClipDeck::sources()) {
+        vkMic_->addItem(ttc::ClipDeck::friendlyLabel(src), src.node);
+        curListed |= src.node == curMic;
+    }
+    if (!curListed)                                // chosen mic unplugged now
+        vkMic_->addItem(curMic + "  (not plugged in)", curMic);
+    vkMic_->setCurrentIndex(std::max(0, vkMic_->findData(curMic)));
+    vkMic_->setToolTip("Where VK1-VK4 messages are recorded from (right-click\n"
+                       "a VK button). Takes effect on the next recording.");
+    // Name…: the operator's own label for the selected device, saved at
+    // once (audio/names/<node>) — it is a label, not a setting to cancel.
+    auto* nameBtn = new QPushButton("Name…", this);
+    nameBtn->setToolTip("Give the selected input your own name (e.g. \"Alesis\n"
+                        "mixer (EV mic)\") so it is recognisable in this list");
+    connect(nameBtn, &QPushButton::clicked, this, [this] {
+        const QString node = vkMic_->currentData().toString();
+        if (node.isEmpty()) return;                // "Auto" has no device
+        QSettings st;
+        const QString key = "audio/names/" + node;
+        bool ok = false;
+        const QString name = QInputDialog::getText(
+            this, "Name this input",
+            "Your name for this device (empty = none):", QLineEdit::Normal,
+            st.value(key).toString(), &ok).trimmed();
+        if (!ok) return;
+        if (name.isEmpty()) st.remove(key); else st.setValue(key, name);
+        for (const ttc::ClipDeck::Source& src : ttc::ClipDeck::sources())
+            if (src.node == node)
+                vkMic_->setItemText(vkMic_->currentIndex(),
+                                    ttc::ClipDeck::friendlyLabel(src));
+    });
+    auto* micRow = new QHBoxLayout;
+    micRow->addWidget(vkMic_, 1);
+    micRow->addWidget(nameBtn);
+    form->addRow("Voice keyer mic", micRow);
+
+    form->addRow(section("DX CLUSTER", this));
+    // Editable combo: pick a node and the port follows, or type any host.
+    // Nodes are the ones that answered a TCP probe from this station on
+    // 2026-09-21 (VE7CC, the old default, did not — hence the list).
+    // Software matters: SET/FT8 and the spotter-area filter are CC Cluster
+    // commands, so the area chips bite hardest on a CC node.
+    static const struct { const char* host; int port; const char* who; } kNodes[] = {
+        {"hamqth.com",           7300, "HamQTH — DXSpider, worldwide"},
+        {"w3lpl.net",            7373, "W3LPL — DXSpider, Maryland"},
+        {"dxc.nc7j.com",         7373, "NC7J — CC Cluster"},
+        {"dxc.k0xm.net",         7300, "K0XM — CC Cluster, Missouri"},
+        {"k1ttt.net",            7373, "K1TTT — AR-Cluster"},
+        {"dxc.ve7cc.net",          23, "VE7CC — CC Cluster, BC"},
+        {"dxfun.com",            8000, "DXFun — DXSpider"},
+        {"gb7djk.dxcluster.net", 7300, "GB7DJK — DXSpider, UK"},
+    };
+    spotHost_ = new QComboBox(this);
+    spotHost_->setEditable(true);
+    for (const auto& n : kNodes)
+        spotHost_->addItem(QString("%1:%2 — %3").arg(n.host).arg(n.port)
+                               .arg(n.who),
+                           QStringList{n.host, QString::number(n.port)});
+    spotHost_->setEditText(s.value("spots/host", "dxc.ve7cc.net").toString());
+    spotHost_->setToolTip(
+        "Pick a node (the port follows) or type any host.\n"
+        "A node change takes effect as soon as you close this dialog.");
+    form->addRow("Node", spotHost_);
+    spotPort_ = new QSpinBox(this);
+    spotPort_->setRange(1, 65535);
+    spotPort_->setValue(s.value("spots/port", 23).toInt());
+    form->addRow("Port", spotPort_);
+    // Choosing a preset leaves the HOST in the line edit, not the menu
+    // label — what gets saved is what the box shows.
+    connect(spotHost_, &QComboBox::activated, this, [this](int i) {
+        const QStringList d = spotHost_->itemData(i).toStringList();
+        if (d.size() != 2) return;
+        spotHost_->setEditText(d.at(0));
+        spotPort_->setValue(d.at(1).toInt());
+    });
+    spotLogin_ = new QLineEdit(
+        s.value("spots/login", s.value("station/callsign", "").toString())
+            .toString(), this);
+    spotLogin_->setToolTip("Cluster login — normally your callsign");
+    form->addRow("Login", spotLogin_);
+
+    form->addRow(section("ROTOR", this));
+    rotorOn_ = new QCheckBox("Rotor control", this);
+    rotorOn_->setChecked(s.value("rotor/enabled", false).toBool());
+    form->addRow("", rotorOn_);
+
+    rotorMode_ = new QComboBox(this);
+    rotorMode_->addItem("DCU-3 on a serial port (console drives it)", "direct");
+    rotorMode_->addItem("rotctld daemon (console is a client)", "rotctld");
+    rotorMode_->setCurrentIndex(
+        s.value("rotor/mode", "direct").toString() == "rotctld" ? 1 : 0);
+    rotorMode_->setToolTip(
+        "Driving the DCU-3 ourselves is the accurate option: the\n"
+        "controller streams its heading while the antenna turns, which\n"
+        "hamlib's fixed-length reader cannot keep up with — its\n"
+        "position readback freezes on an old frame after the first turn\n"
+        "while aiming still works. Pick rotctld for any other rotator.");
+    form->addRow("Rotor is on", rotorMode_);
+
+    rotorDev_ = new QComboBox(this);
+    rotorDev_->setEditable(true);
+    rotorDev_->lineEdit()->setPlaceholderText(
+        "click to choose a port — the DCU-3's RS-232 jack");
+    rotorDev_->setToolTip(
+        "4800 8N1, straight-through cable. The DCU-3's internal jumper\n"
+        "selects RS-232 or USB, never both — on 'U' this jack is dead.");
+    form->addRow("Rotor serial port", rotorDev_);
+
+    rotorPort_ = new QSpinBox(this);
+    rotorPort_->setRange(1, 65535);
+    rotorPort_->setValue(s.value("rotor/port", 4533).toInt());
+    rotorPort_->setToolTip(
+        "Serving on this port in DCU-3 mode (cqrlog and Not1MM keep\n"
+        "pointing at it), or the daemon's port in rotctld mode.");
+    form->addRow("rotctld port", rotorPort_);
+    const auto rotorModeChanged = [this] {
+        const bool direct = rotorMode_->currentData().toString() == "direct";
+        rotorDev_->setEnabled(direct);
+    };
+    connect(rotorMode_, &QComboBox::currentIndexChanged, this, rotorModeChanged);
+    rotorModeChanged();
+
+    // RF wattmeter. Off by default: a station without an LP-100A must get
+    // exactly the behaviour it had before this section existed, which means
+    // the sweep keeps reading the radio's own SWR.
+    form->addRow(section("RF WATTMETER", this));
+    lpOn_ = new QCheckBox("External wattmeter on a serial port", this);
+    lpOn_->setChecked(
+        s.value("meter/enabled", s.value("lp100a/enabled", false)).toBool());
+    lpOn_->setToolTip(
+        "A calibrated external wattmeter on its own serial port —\n"
+        "more, and more accurate, than the radio's built-in metering.");
+    form->addRow("", lpOn_);
+
+    lpModel_ = new QComboBox(this);
+    lpModel_->addItem("TelePost LP-100A (vector: R+jX, Smith chart)",
+                      "lp100a");
+    lpModel_->addItem("Array Solutions PowerMaster (SWR + power)",
+                      "powermaster");
+    lpModel_->setCurrentIndex(
+        s.value("meter/model", "lp100a").toString() == "powermaster" ? 1 : 0);
+    lpModel_->setToolTip(
+        "LP-100A is polled at 115200 and measures complex impedance —\n"
+        "sweeps get Smith charts. The PowerMaster streams at 38400 —\n"
+        "fast forward/reflected/SWR, sweeps draw SWR curves only.");
+    form->addRow("Model", lpModel_);
+
+    lpDev_ = new QComboBox(this);
+    lpDev_->setEditable(true);
+    lpDev_->lineEdit()->setPlaceholderText(
+        "click to choose a port — leave empty if you have no wattmeter");
+    lpDev_->setToolTip(
+        "Straight-through DB9 cable, NOT a null modem — a null modem\n"
+        "reads as a dead port on either meter.");
+    form->addRow("Meter serial port", lpDev_);
+
+    lpSwr_ = new QComboBox(this);
+    lpSwr_->addItem("LP-100A, falling back to the radio", "meter");
+    lpSwr_->addItem("Radio only", "radio");
+    lpSwr_->setCurrentIndex(
+        s.value("swr/source", "meter").toString() == "radio" ? 1 : 0);
+    lpSwr_->setToolTip(
+        "Which SWR the right-click TUNE sweep believes.\n"
+        "The meter is used only while it is enabled AND answering;\n"
+        "if it goes quiet mid-sweep the radio takes over silently.");
+    form->addRow("Sweep reads", lpSwr_);
+
+    auto* mtest = new QPushButton("Test", this);
+    lpTest_ = new QLabel(this);
+    auto* mrow = new QHBoxLayout;
+    mrow->addWidget(mtest);
+    mrow->addWidget(lpTest_, 1);
+    form->addRow("", mrow);
+    connect(mtest, &QPushButton::clicked, this, &SetupDialog::testMeter);
+
+    auto syncLpRows = [this] {
+        const bool on = lpOn_->isChecked();
+        lpModel_->setEnabled(on);
+        lpDev_->setEnabled(on);
+        lpSwr_->setEnabled(on);
+    };
+    connect(lpOn_, &QCheckBox::toggled, this, syncLpRows);
+    syncLpRows();
+
+    auto* bb = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    bb->button(QDialogButtonBox::Ok)->setDefault(true);   // Enter also saves
+    outer->addWidget(bb);                                 // outside the scroll
+    connect(bb, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    refreshPorts();
+    applyConnMode(activeProfile());      // fills the radio device row per profile
+
+    // Inside a scroll area the wheel lands on whatever control is under the
+    // pointer and SILENTLY EDITS it — the operator went to scroll the page
+    // and changed his DX cluster port instead, with no idea which row had
+    // moved. Only a control the operator has deliberately focused takes the
+    // wheel; everything else lets it through to the page.
+    for (QWidget* w : findChildren<QWidget*>()) {
+        if (qobject_cast<QComboBox*>(w) || qobject_cast<QAbstractSpinBox*>(w)) {
+            w->setFocusPolicy(Qt::StrongFocus);
+            w->installEventFilter(this);
+        }
+    }
+
+    // Open at the form's natural size, but never taller than the screen
+    // it has to fit on (panel included) — past that the scroll area takes
+    // over. Ask the PAGE, not the dialog: a QScrollArea's own size hint
+    // says nothing about what is inside it, which sized this at 562x416
+    // and made the operator scroll for everything.
+    if (QScreen* sc = QGuiApplication::primaryScreen()) {
+        const QRect avail = sc->availableGeometry();
+        const QSize want = page->sizeHint();
+        const int chrome = bb->sizeHint().height() + 24;
+        resize(std::min(want.width() + 24, avail.width() - 40),
+               std::min(want.height() + chrome, int(avail.height() * 0.92)));
+    }
+}
+
+bool SetupDialog::eventFilter(QObject* o, QEvent* e) {
+    if (e->type() == QEvent::Wheel) {
+        auto* w = qobject_cast<QWidget*>(o);
+        if (w && !w->hasFocus()) { e->ignore(); return true; }
+    }
+    return QDialog::eventFilter(o, e);
+}
+
+// Probe the selected wattmeter once and decode what came back. The LP-100A
+// answers its poll with the callsign programmed into it — the friendliest
+// possible "yes, this is the right port". The PowerMaster acknowledges its
+// activation command and starts streaming.
+void SetupDialog::testMeter() {
+    const QString dev = lpDev_->currentText().trimmed();
+    const bool pm = lpModel_->currentData().toString() == "powermaster";
+    if (!liveMeterDev_.isEmpty() && dev == liveMeterDev_) {
+        lpTest_->setText("✓ in use by this console — connected");
+        return;
+    }
+    QSerialPort p;
+    p.setPortName(dev);
+    p.setBaudRate(pm ? 38400 : 115200);
+    p.setDataBits(QSerialPort::Data8);
+    p.setParity(QSerialPort::NoParity);
+    p.setStopBits(QSerialPort::OneStop);
+    p.setFlowControl(QSerialPort::NoFlowControl);
+    if (!p.open(QIODevice::ReadWrite)) {
+        lpTest_->setText("✗ " + p.errorString());
+        return;
+    }
+    lpTest_->setText("probing…");
+    lpTest_->repaint();
+    QByteArray got;
+    const QByteArray probe = pm
+        ? QByteArray("\x02" "D1" "\x03" "C0" "\r" "S\x00", 9)  // activation
+        : QByteArrayLiteral(";P?");                            // vendor poll
+    for (int attempt = 0; attempt < 3 && got.size() < 40; ++attempt) {
+        p.clear();
+        got.clear();
+        p.write(probe);
+        p.flush();
+        for (int i = 0; i < 5 && got.size() < 40; ++i)
+            if (p.waitForReadyRead(250)) got += p.readAll();
+    }
+    p.close();
+    if (pm) {
+        // Expect STX-framed frames; a 'D' payload carries the live power.
+        const int d = got.indexOf("\x02" "D,");
+        if (d >= 0) {
+            const QList<QByteArray> f = got.mid(d + 1).split(',');
+            const QString fwd = f.size() > 1
+                ? QString::fromLatin1(f[1]).trimmed() : QString();
+            lpTest_->setText(fwd.isEmpty()
+                ? QStringLiteral("✓ PowerMaster streaming")
+                : QStringLiteral("✓ PowerMaster streaming — fwd %1 W").arg(fwd));
+        } else if (got.contains('\x02')) {
+            lpTest_->setText("✓ PowerMaster acknowledged");
+        } else {
+            lpTest_->setText("✗ no stream — right port? meter set to 38400? "
+                             "straight-through cable?");
+        }
+        return;
+    }
+    const int semi = got.indexOf(';');
+    if (semi < 0 || got.size() - semi < 43) {
+        lpTest_->setText("✗ no answer — is this the LP-100A port?");
+        return;
+    }
+    const QList<QByteArray> f = got.mid(semi + 1, 42).split(',');
+    if (f.size() != 9) {
+        lpTest_->setText("✗ unrecognized reply");
+        return;
+    }
+    const QString call = QString::fromLatin1(f[4]).trimmed();
+    lpTest_->setText(call.isEmpty()
+                         ? QStringLiteral("✓ LP-100A answered")
+                         : QStringLiteral("✓ LP-100A answered — call %1").arg(call));
+}
+
+// Serial candidates: everything QSerialPortInfo can see (USB adapters AND
+// native COM ports) — but offered under a STABLE name wherever one exists.
+// QSerialPortInfo reports kernel paths, and those renumber whenever the
+// hardware set changes: adding a second PCIe serial card renumbers ttyS4-7
+// and silently repoints every setting that named one (which once left a
+// rotor daemon writing into a transceiver's CAT port). Two kinds of stable
+// name are offered instead, and the kernel path is dropped when either
+// exists: /dev/serial/by-id/ (the adapter's own serial number, so it
+// survives replugging) and any symlink the station's own udev rules put in
+// /dev — native PCIe/COM ports get nothing from the kernel, so a rule like
+// SYMLINK+="portS4" is the only way to pin those, and if the operator has
+// written one we should offer it rather than the number beneath it.
+// The combos are editable, so a hand-written path is always still possible.
+// The 8250 driver publishes ttyS0..ttyS31 whether or not there is silicon
+// behind them, so a station with two real ports would otherwise have to find
+// them among thirty phantoms. /sys/class/tty/<port>/type reads 0
+// (PORT_UNKNOWN) for a node with no UART; a real one reports its chip (4 =
+// 16550A). Ports with no type file at all — USB adapters, virtual pairs —
+// are genuine devices and are kept.
+static bool phantomSerialNode(const QString& portName) {
+    QFile f(QStringLiteral("/sys/class/tty/%1/type").arg(portName));
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+    return f.readAll().trimmed() == "0";
+}
+
+QStringList SetupDialog::serialPortCandidates() {
+    QStringList real;                              // kernel paths, phantoms cut
+    for (const QSerialPortInfo& p : QSerialPortInfo::availablePorts()) {
+        if (phantomSerialNode(p.portName())) continue;
+        const QString c = QFileInfo(p.systemLocation()).canonicalFilePath();
+        real << (c.isEmpty() ? p.systemLocation() : c);
+    }
+    // Stable aliases for those ports: the kernel's own /dev/serial/by-id
+    // names (adapter serial number), plus any symlink the operator's udev
+    // rules put straight in /dev — a station that has named its ports
+    // should be offered ITS names, not the kernel numbers underneath.
+    QMultiMap<QString, QString> alias;
+    const auto scan = [&](const QString& dir) {
+        const auto entries = QDir(dir).entryInfoList(
+            QDir::AllEntries | QDir::System | QDir::NoDotAndDotDot);
+        for (const QFileInfo& fi : entries) {
+            if (!fi.isSymLink()) continue;
+            const QString target = fi.canonicalFilePath();
+            if (real.contains(target)) alias.insert(target, fi.absoluteFilePath());
+        }
+    };
+    scan(QStringLiteral("/dev/serial/by-id"));
+    scan(QStringLiteral("/dev"));
+
+    QStringList out;
+    for (const QString& r : real) {
+        const QStringList names = alias.values(r);
+        if (names.isEmpty()) out << r;             // no alias: kernel path
+        else out << names;                         // every stable name it has
+    }
+    out.sort();
+    out.removeDuplicates();
+    return out;
+}
+
+// Current settings are kept even if not enumerated (the device may be
+// unplugged right now, or be a station's own udev alias). The radio device
+// row is owned by applyConnMode (it depends on the connection profile);
+// here we handle the keyer and the wattmeter.
+void SetupDialog::refreshPorts() {
+    QSettings s;
+    const QStringList ports = serialPortCandidates();
+
+    // No default device: an unset port means "not configured", and the
+    // operator picks from the list. Seeding a developer's own hardware
+    // here just preselects a path that exists on exactly one station.
+    const auto fill = [&ports](QComboBox* box, const QString& cur) {
+        box->clear();
+        box->addItems(ports);
+        if (!cur.isEmpty() && !ports.contains(cur)) box->addItem(cur);
+        box->setCurrentText(cur);
+    };
+    fill(keyerDev_, s.value("cw/port").toString());
+    {   const int i = keyerSel_->findData(
+            s.value("cw/keyer", "auto").toString());
+        keyerSel_->setCurrentIndex(i < 0 ? 0 : i); }
+    fill(lpDev_, s.value("meter/device", s.value("lp100a/device")).toString());
+    fill(rotorDev_, s.value("rotor/device").toString());
+}
+
+// Which stored device the field is editing: the Orion's serial port, the
+// Omni's serial port, or the Omni's Ethernet address.
+QString SetupDialog::activeProfile() const {
+    if (model_->currentData().toString().startsWith("orion"))
+        return QStringLiteral("orion");
+    return conn_->currentData().toString();       // "serial" | "remote"
+}
+
+// Swap the device field between the per-radio profiles, remembering the
+// field we're leaving so a flip-back is lossless. Serial profiles list the
+// enumerated ports; remote offers the saved udp: string (plus this
+// station's One Plug default as a hint). Orion models force + grey the
+// Connection row (serial-only radio).
+void SetupDialog::applyConnMode(const QString& profile) {
+    const QString shown = radioDev_->currentText().trimmed();
+    if (!shown.isEmpty()) {                       // stash (skip the empty init)
+        if (lastProfile_ == "remote")      devRemote_ = shown;
+        else if (lastProfile_ == "orion")  devOrion_  = shown;
+        else if (lastProfile_ == "serial") devSerial_ = shown;
+    }
+    lastProfile_ = profile;
+    const bool orion = profile == "orion";
+    if (!orion) connMode_ = profile;              // the Omni's serial/remote pick
+    {                                             // Orion: pin selector to serial
+        QSignalBlocker block(conn_);
+        if (orion) conn_->setCurrentIndex(0);
+        else conn_->setCurrentIndex(connMode_ == "remote" ? 1 : 0);
+    }
+    conn_->setEnabled(!orion);
+
+    radioDev_->clear();
+    if (profile == "remote") {
+        if (devLabel_) devLabel_->setText("Radio address");
+        radioDev_->setToolTip("udp:HOST[:PORT] — the radio's IP in REMOTE\n"
+                              "mode (default CMD port 49152). Same string on\n"
+                              "the laptop, pointed at the radio's LAN address.");
+        if (!devRemote_.isEmpty()) radioDev_->addItem(devRemote_);
+        radioDev_->lineEdit()->setPlaceholderText(
+            "udp:HOST[:PORT] — the radio's address in REMOTE mode");
+        radioDev_->setCurrentText(devRemote_);
+    } else {
+        const QString& cur = orion ? devOrion_ : devSerial_;
+        if (devLabel_) devLabel_->setText("CAT serial port");
+        radioDev_->setToolTip(orion
+            ? "Serial device of the Orion (its only CAT path)."
+            : "Serial device this console opens when operating the Omni VII\n"
+              "at the desk (front panel / RADIO mode).");
+        const QStringList ports = serialPortCandidates();
+        radioDev_->addItems(ports);
+        if (!cur.isEmpty() && !ports.contains(cur)) radioDev_->addItem(cur);
+        radioDev_->lineEdit()->setPlaceholderText(
+            ports.isEmpty() ? "no serial ports found on this machine"
+                            : "click to choose this radio's CAT port");
+        radioDev_->setCurrentText(cur);
+    }
+}
+
+// Live CAT probe: ?V at 57600 8N1 (Orion ASCII dialect — both Orions).
+// The Omni VII speaks binary with RTS/CTS; a raw probe would mislead, so
+// it gets a hint instead. Probing the port THIS console holds open would
+// only collide with our own exclusive lock — report the live connection.
+void SetupDialog::testRadio() {
+    const QString dev = radioDev_->currentText().trimmed();
+    if (dev == liveRadioDev_) {
+        radioTest_->setText(radioConnected_
+                                ? "✓ in use by this console — connected"
+                                : "held by this console, not answering — "
+                                  "check cable/power");
+        return;
+    }
+    // Remote (Ethernet): a real UDP ?V probe — the same passcode-framed
+    // query the driver uses. Confirms the radio is reachable and in REMOTE
+    // mode before committing, which is exactly what you want from the
+    // laptop. (Only possible when the console isn't itself holding 49152 —
+    // i.e. it launched on a serial device; the dev==liveRadioDev_ branch
+    // above already covers the in-use case.)
+    if (dev.startsWith("udp:")) {
+        const QString spec = dev.mid(4);
+        const int colon = spec.lastIndexOf(':');
+        const QString host = colon > 0 ? spec.left(colon) : spec;
+        const quint16 port = colon > 0 ? quint16(spec.mid(colon + 1).toUInt())
+                                       : 49152;
+        const quint16 pass =
+            quint16(QSettings().value("radio/netPasscode", 0).toUInt());
+        QUdpSocket u;
+        if (!u.bind(QHostAddress::AnyIPv4, port)) {   // symmetric ports
+            radioTest_->setText("✗ can't bind local :" + QString::number(port) +
+                                " (another app using it?)");
+            return;
+        }
+        QByteArray q;
+        q.append(char(pass >> 8));
+        q.append(char(pass & 0xff));
+        q.append("?V\r", 3);
+        u.writeDatagram(q, QHostAddress(host), port);
+        if (u.waitForReadyRead(1200)) {
+            QByteArray d(int(u.pendingDatagramSize()), 0);
+            u.readDatagram(d.data(), d.size());
+            radioTest_->setText("✓ " + QString::fromLatin1(d.simplified()));
+        } else {
+            radioTest_->setText("✗ no reply — radio in REMOTE mode? "
+                                "IP/passcode right? cable to the LAN?");
+        }
+        return;
+    }
+    if (model_->currentData() == "omni8") {
+        radioTest_->setText("Omni VII serial probe n/a (binary CAT) — save "
+                            "and restart to test");
+        return;
+    }
+    QSerialPort p;
+    p.setPortName(dev);
+    p.setBaudRate(57600);
+    if (!p.open(QIODevice::ReadWrite)) {
+        radioTest_->setText("✗ " + p.errorString());
+        return;
+    }
+    p.write("?V\r");
+    p.flush();
+    QByteArray got;
+    for (int i = 0; i < 6 && !got.contains('\r'); ++i)
+        if (p.waitForReadyRead(250)) got += p.readAll();
+    p.close();
+    radioTest_->setText(got.isEmpty()
+                            ? "✗ no reply — right port? radio on?"
+                            : "✓ " + QString::fromLatin1(got.simplified()));
+}
+
+// WinKeyer echo probe: three nulls to wake, Admin:Echo of one byte — the
+// same sanity check WinKeyer::open() runs, minus the full session setup.
+void SetupDialog::testKeyer() {
+    const QString dev = keyerDev_->currentText().trimmed();
+    if (dev == liveKeyerDev_) {
+        keyerTest_->setText("✓ in use by this console — connected");
+        return;
+    }
+    QSerialPort p;
+    p.setPortName(dev);
+    p.setBaudRate(1200);
+    p.setStopBits(QSerialPort::TwoStop);
+    if (!p.open(QIODevice::ReadWrite)) {
+        keyerTest_->setText("✗ " + p.errorString());
+        return;
+    }
+    p.setDataTerminalReady(true);
+    p.setRequestToSend(false);
+    keyerTest_->setText("probing…");
+    keyerTest_->repaint();
+    QThread::msleep(800);                  // WKUSB wake-up after DTR
+    p.clear();
+    p.write(QByteArray("\x13\x13\x13", 3));
+    p.flush();
+    QThread::msleep(300);
+    p.readAll();
+    p.write(QByteArray("\x00\x04\x14", 3));
+    p.flush();
+    QByteArray got;
+    for (int i = 0; i < 8 && !got.contains(char(0x14)); ++i)
+        if (p.waitForReadyRead(250)) got += p.readAll();
+    p.close();
+    keyerTest_->setText(got.contains(char(0x14))
+                            ? "✓ WinKeyer answered"
+                            : "✗ no echo — is this the WinKeyer port?");
+}
+
+void SetupDialog::accept() {
+    QSettings s;
+    s.setValue("station/callsign", call_->text().trimmed().toUpper());
+    s.setValue("station/grid", grid_->text().trimmed());
+    s.setValue("station/name", opName_->text().trimmed());
+    s.setValue("station/qth", opQth_->text().trimmed());
+    s.setValue("station/units", units_->currentData().toString());
+    // Only once someone picks Panel (or back): a stock config stays as is.
+    if (layout_->currentData().toString() != s.value("ui/layout", "classic").toString())
+        s.setValue("ui/layout", layout_->currentData().toString());
+    s.setValue("radio/model", model_->currentData().toString());
+    // Fold the currently-shown field back into its per-radio profile, save
+    // all three, and mirror the active one into radio/device (what the app
+    // opens at launch; a udp: string also auto-enables RIP audio).
+    const QString shown = radioDev_->currentText().trimmed();
+    const QString prof = activeProfile();
+    if (prof == "remote")      devRemote_ = shown;
+    else if (prof == "orion")  devOrion_  = shown;
+    else                       devSerial_ = shown;
+    s.setValue("radio/connection", connMode_);
+    s.setValue("radio/deviceSerial", devSerial_);
+    s.setValue("radio/deviceRemote", devRemote_);
+    s.setValue("radio/deviceOrion", devOrion_);
+    s.setValue("radio/device",
+               prof == "orion" ? devOrion_
+               : connMode_ == "remote" ? devRemote_ : devSerial_);
+    s.setValue("cw/port", keyerDev_->currentText().trimmed());
+    s.setValue("cw/keyer", keyerSel_->currentData().toString());
+    s.setValue("cw/audioDev", audioDev_->currentText().trimmed());
+    s.setValue("dvr/micSource", vkMic_->currentData().toString());
+    s.setValue("spots/host", spotHost_->currentText().trimmed());
+    s.setValue("spots/port", spotPort_->value());
+    s.setValue("spots/login", spotLogin_->text().trimmed().toUpper());
+    s.setValue("rotor/enabled", rotorOn_->isChecked());
+    s.setValue("rotor/mode", rotorMode_->currentData().toString());
+    s.setValue("rotor/device", rotorDev_->currentText().trimmed());
+    s.setValue("rotor/port", rotorPort_->value());
+    s.setValue("meter/enabled", lpOn_->isChecked());
+    s.setValue("meter/model", lpModel_->currentData().toString());
+    s.setValue("meter/device", lpDev_->currentText().trimmed());
+    // Mirror into the original keys so a rollback to an older build keeps
+    // the meter working (those builds only know lp100a/*).
+    s.setValue("lp100a/enabled", lpOn_->isChecked());
+    s.setValue("lp100a/device", lpDev_->currentText().trimmed());
+    s.setValue("swr/source", lpSwr_->currentData().toString());
+    s.setValue("setup/done", true);
+    QDialog::accept();
+}
+
+} // namespace ttc

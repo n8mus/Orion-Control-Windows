@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+#include <QDialog>
+
+class QLabel;
+class QLineEdit;
+class QPlainTextEdit;
+class QSqlTableModel;
+class QTableView;
+class QTimer;
+
+namespace ttc {
+
+class CtyLookup;
+class LogDb;
+class OnlineLogsDialog;
+class QslUploader;
+
+// The station log as a table: search, inline edit, import/export ADIF.
+// cqrlog on the Linux box stays the award engine — this is the daily view.
+class LogbookWindow : public QDialog {
+    Q_OBJECT
+public:
+    LogbookWindow(LogDb* db, const CtyLookup* cty, QslUploader* uploader,
+                  QWidget* parent = nullptr);
+
+signals:
+    // "→ cqrlog" button: ask the owner to compare this log against
+    // cqrlog and offer to send whatever cqrlog is missing.
+    void cqrlogSyncRequested();
+
+private:
+    void applyFilter();
+    void refreshStats();
+    void importAdif();
+    void exportAdif();
+    void deleteSelected();
+
+    LogDb* db_;
+    const CtyLookup* cty_;
+    QslUploader* uploader_;
+    OnlineLogsDialog* onlineDlg_ = nullptr;
+    QSqlTableModel* model_ = nullptr;
+    QTableView* view_ = nullptr;
+    QLineEdit* search_ = nullptr;
+    QLabel* stats_ = nullptr;
+    QPlainTextEdit* traffic_ = nullptr;
+    QTimer* refresh_ = nullptr;
+};
+
+} // namespace ttc

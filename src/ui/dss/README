@@ -1,0 +1,19 @@
+AetherSDR's 3D stacked-trace view ("3DSS"; https://github.com/ten9876/AetherSDR,
+GPL-3.0), copied from the operator's fork ~/aether-orion at f7b405e2.
+
+Unchanged but for the three-line header:
+  DssRenderer.h/.cpp     the row store: peak-preserving resample to 768
+                         columns, median-of-3 + 1-2-1 + 60/40 temporal
+                         smoothing, per-row frequency frames, the shared
+                         perspective constants, and a CPU image fallback
+                         (unused here: the console's 3D is GPU only)
+  DssDcEdgeMath.h        Flex-only (a DC-start spike); kept for their test
+  ../shaders/dss_mesh.*  the GPU mesh shaders (one comment line added)
+  tests/dsstest.cpp      their tests/dss_renderer_test.cpp (include paths)
+
+Ported by hand from their SpectrumWidget.cpp into PanGpuView /
+PanadapterWidget: the mesh pipeline + static mesh, the RGBA16F height ring
+upload, the UBO packing, the back-to-front
+draw with OpenGL's shared fill/outline pipeline, the slice-shadow decals
+(VFO A/B passbands, "3D passband shading"), the floor anchor, the
+"3D Gain" palette LUT and the Floor / Gain / Span controls.

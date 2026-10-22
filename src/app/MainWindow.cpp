@@ -1,0 +1,4249 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "app/MainWindow.h"
+#include "audio/LiveVoice.h"
+#include "ui/FreeDvWindow.h"
+#include "ui/TuneDialogs.h"
+#ifdef HAVE_WDSP
+#include "sdr/SdrRx.h"
+#endif
+#include "app/Bands.h"
+#include "app/MainWindowInternal.h"
+#include "contest/ContestDeck.h"
+#include "contest/ContestEngine.h"
+#include <numeric>
+#include "log/CqrlogSync.h"
+#include "log/LogDb.h"
+#include "log/QrzLookup.h"
+#include "log/QslUploader.h"
+#include "log/WsjtxListener.h"
+#include "ui/LogWindow.h"
+#include "ui/SpotTableWindow.h"
+#include "util/SpotMode.h"
+
+#include <QSettings>
+#include <QSlider>
+#include <QStatusBar>
+#include <QLabel>
+#include <QVBoxLayout>
+#include <QGridLayout>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QWidget>
+#include <QtGlobal>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+#include <QChronoTimer>
+#endif
+#include <QTimer>
+#include <QToolButton>
+#include <QMenu>
+#include <QActionGroup>
+#include <QWidgetAction>
+#include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
+#include <QProcess>
+#include <QApplication>
+#include <QHostAddress>
+#include <QPushButton>
+#include <QInputDialog>
+#include <climits>
+#include <QLineEdit>
+#include <QSet>
+#include <QShortcut>
+#include <QPlainTextEdit>
+#include <QTextEdit>
+#include <QAbstractSpinBox>
+#include <QSpinBox>
+#include <QStandardPaths>
+#include <QUdpSocket>
+#include <QFile>
+#include <QThread>
+#include <cstring>
+#include "app/ClassicLayout.h"
+#include "app/PanelLayout.h"
+#include "ui/MeterHost.h"
+#include "ui/DisplayPanel.h"
+#include "ui/SdrGainPanel.h"
+#include "ui/SetupDialog.h"
+#include "radio/PmMeter.h"
+#include "cw/CwDecoder.h"
+#include "cw/SkimmerEngine.h"
+#include "cw/SkimServer.h"
+#include "cw/SkimStft.h"
+#include "ui/SkimViewWindow.h"
+#include "net/FldigiClient.h"
+#include "net/SpotClient.h"
+#include "ui/DigiWindow.h"
+#include "ui/SkimmerWindow.h"
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+
+namespace ttc {
+
+// kLoOffsetHz / edgesFromRig / styleMenu etc. live in MainWindowInternal.h
+// now that MainWindow spans several translation units.
+
+// Spotter-area presets: ctys = CC Cluster spotter-origin country prefixes
+// (SET/FILTER DOC/PASS list, coarse-but-practical major spotting countries
+// per region); parks = POTA park country codes for the same region. Empty
+// ctys = no filter. The Custom menu entry takes any DOC list verbatim.
+struct SpotArea { const char* name; const char* ctys; const char* parks; };
+static const SpotArea kSpotAreas[] = {
+    {"All spotters",  "", ""},
+    {"North America", "K,VE,XE,KL,KP4,KP2,CM,C6,ZF,6Y,HI,TI,V3,HP,YS,HR,TG,YN",
+                      "US,CA,MX"},
+    {"Europe",        "G,GM,GW,GI,GD,GU,GJ,EI,F,DL,PA,ON,LX,HB,OE,I,EA,CT,OK,OM,"
+                      "SP,HA,YO,LZ,SV,S5,9A,E7,YU,Z3,OH,SM,LA,OZ,ES,YL,LY,EW,UR,UA",
+                      "GB,IE,FR,DE,NL,BE,LU,CH,AT,IT,ES,PT,CZ,SK,PL,HU,RO,BG,GR,"
+                      "SI,HR,RS,FI,SE,NO,DK,EE,LV,LT,UA"},
+    {"Asia",          "JA,HL,BY,BV,VR,VU,4X,UA9,UA0,HS,9V,9M2,DU,YB,A4,A6,A7,A9,"
+                      "HZ,EP,TA",
+                      "JP,KR,CN,TW,IN,IL,TH,SG,MY,PH,ID"},
+    {"Oceania",       "VK,ZL,KH6,KH2,FK,3D2,P2",
+                      "AU,NZ,FJ,PG"},
+    {"South America", "PY,LU,CE,CX,HK,YV,OA,HC,ZP,P4,PJ2,PJ4,8R,9Y",
+                      "BR,AR,CL,UY,CO,VE,PE,EC,PY"},
+    {"Africa",        "ZS,5Z,SU,CN,EA8,V5,9J,7X,3B8,5R,TR,TU,6W,Z2,A2",
+                      "ZA,KE,EG,MA,NA,ZM,MU,MG,SN,ZW,BW"},
+};
+
+// The resolved radio-model choice: TTC_RADIO env overrides the persisted
+// picker. "orion" = Ten-Tec Orion 565, "orion2" = Orion II 566 (identical
+// ASCII CAT and controls — only the nameplate differs); "omni8"/"omni7" =
+// Omni VII 588 (binary CAT, RTS/CTS).
+static QString radioModelChoice() {
+    QString model = qEnvironmentVariable("TTC_RADIO");
+    if (model.isEmpty()) model = QSettings().value("radio/model", "orion").toString();
+    return model;
+}
+
+static RadioController* makeRadio(QObject* parent) {
+    const QString model = radioModelChoice();
+    if (model == "omni8" || model == "omni7")
+        return new TenTecOmni7(parent);
+    return new TenTecOrion(parent);      // "orion" and "orion2" alike
+}
+
+// Window title, operator's re-christening 2026-08-02 (the fleet names
+// with their NCC hull numbers — the radios' real Ten-Tec model numbers —
+// served 2026-07-16 to 2026-08-02; the ship theme lives on in the
+// backdrop gallery).
+static QString shipName() {
+    const QString model = radioModelChoice();
+    if (model == "omni8" || model == "omni7") return "Omni VII Control";
+    if (model == "orion2")                    return "Orion II Control";
+    return "Orion Control";
+}
+
+MainWindow::MainWindow(QWidget* parent)
+    : QMainWindow(parent), radio_(makeRadio(this)), rigctld_(radio_) {
+    setWindowTitle(shipName());
+
+    pan_ = new PanadapterWidget(this);
+    rose_ = new CompassRoseWidget(this);
+    tuneCard_ = new TuneBoxWidget(this);
+    solarBox_ = new SolarWidget(this);
+    connect(pan_, &PanadapterWidget::roseTargetRequested,
+            rose_, &CompassRoseWidget::pointAt);
+    // GPU panadapter (display/gpuPan; TTC_GPUPAN=0/1 overrides). Falls back
+    // to the CPU paint by itself if the GPU path can't start.
+    {
+        bool gpu = QSettings().value("display/gpuPan", true).toBool();
+        const QByteArray env = qgetenv("TTC_GPUPAN");
+        if (!env.isEmpty()) gpu = env != "0";
+        pan_->setGpuEnabled(gpu);
+    }
+    pan_->setPassband(-1200, 1200);
+    pan_->setCenterHz(centerHz_);                  // grid labels need the dial freq
+    smeter_ = new SMeterWidget(this);
+    // Meter-face lettering names the connected radio (same branch the
+    // window title uses).
+    smeter_->setWordmark(radio_->caps().dualReceiver ? QStringLiteral("ORION")
+                                                     : QStringLiteral("OMNI-VII"));
+    panel_  = new ControlPanel(this);
+    // Readout colors follow the TX role (matching the routing buttons and
+    // panadapter flags): red = the transmitting VFO, green = the other one.
+    // Green dimmed to match the red's visual weight — at equal brightness
+    // the saturated green reads "bigger" than red at identical pixel size.
+    const QColor vfoTxRed(230, 95, 95), vfoRxGreen(62, 190, 112);
+    freqDisp_ = new FrequencyDisplay("VFO A", vfoTxRed, this);
+    freqDisp_->setFrequency(centerHz_);            // TX starts on A
+    freqDisp_->setTxRole(true);
+    freqDispB_ = new FrequencyDisplay("VFO B", vfoRxGreen, this);
+    freqDispB_->setFrequency(7000000);             // real value polled at startup
+    auto applyVfoColors = [this, vfoTxRed, vfoRxGreen] {
+        freqDisp_->setAccent(txVfo_ == 'B' ? vfoRxGreen : vfoTxRed);
+        freqDisp_->setTxRole(txVfo_ != 'B');
+        freqDispB_->setAccent(txVfo_ == 'B' ? vfoTxRed : vfoRxGreen);
+        freqDispB_->setTxRole(txVfo_ == 'B');
+        // Split reads faster as a word than as a color swap mid-pileup.
+        freqDispB_->setBadge(txVfo_ == 'B' ? QStringLiteral("SPLIT") : QString());
+    };
+    curBand_ = bandIndexOf(centerHz_);
+    if (curBand_ >= 0) {
+        QSettings s;
+        curReg_ = std::clamp(
+            s.value(QString("band/%1/reg").arg(kBands[curBand_].label), 0).toInt(),
+            0, kStackCount - 1);
+    }
+    panel_->showBand(curBand_);
+    panel_->showBandStack(curBand_ >= 0 ? curReg_ : -1);
+
+    // Where everything goes: the layout host (app/LayoutHost). Classic =
+    // today's window; MainWindow builds and wires, the host places.
+    // ui/layout picks the host at start-up (applies on restart): "classic"
+    // (the default) or "panel" (app/PanelLayout, opt-in). TTC_LAYOUT
+    // overrides it for tests.
+    {
+        QString want = QSettings().value("ui/layout", "classic").toString();
+        if (const char* e = std::getenv("TTC_LAYOUT")) want = QString::fromLocal8Bit(e);
+        if (want == "panel") {
+            layout_ = std::make_unique<PanelLayout>(this);
+        } else {
+            if (want != "classic")
+                std::fprintf(stderr, "[layout] unknown layout '%s' — using classic\n",
+                             qPrintable(want));
+            layout_ = std::make_unique<ClassicLayout>(this);
+        }
+    }
+    auto* topStrip = layout_->buttonParent();
+    auto* topLay = layout_->menuRow();
+    // The meter: Panel gets MeterHost (all four faces, sized by its box).
+    // The Original view keeps OUR meter in the top deck, plain, as it always
+    // was — click it to cycle its own faces (SmartMTR included). The
+    // AetherSDR faces live in the sidebar's METER box instead: the top-deck
+    // host's face bar and fixed 266x(arc height) slot stole panadapter
+    // (operator, 2026-10-20 — reverts the 2026-10-17 pick).
+    if (layout_->isPanel()) {
+        meterHost_ = new MeterHost(smeter_, radio_, this);
+        layout_->placeMeter(meterHost_);
+    } else {
+        layout_->placeMeter(smeter_);
+    }
+    // One ticker updates the clock and keeps the VFO band labels honest
+    // (external clients can move the dials any time).
+    auto* uiTick = new QTimer(this);
+    connect(uiTick, &QTimer::timeout, this, [this] {
+        refreshLights();                   // SPOTS / SDR / SKIM / ROT on?
+        const QDateTime now = QDateTime::currentDateTime();
+        panel_->showClock(now.toUTC().toString("HH:mm:ss' UTC'"),
+                          now.toString("HH:mm:ss' local'"));
+        const int ba = bandIndexOf(centerHz_);
+        freqDisp_->setBandText(ba >= 0 ? QString("%1m").arg(kBands[ba].label)
+                                       : QString());
+        const int bb = bandIndexOf(vfoBHz_);
+        freqDispB_->setBandText(bb >= 0 ? QString("%1m").arg(kBands[bb].label)
+                                        : QString());
+    });
+    uiTick->start(1000);
+    topStrip_ = topStrip;              // the tool builders hang things here
+    topLay2_  = layout_->toolRow();    // new buttons go here, never the menu row
+    // Zoom (log scale, 0 = full span .. 100 = deepest zoom); Ctrl+wheel on
+    // the panadapter still works and keeps the slider in sync. Level with
+    // the S-meter, spanning VFO B's column: label at B's left edge, slider
+    // running to the column's right edge (the VIEW button's edge).
+    auto* zoomBlk = new ZoomBlock(topStrip);       // ui/ZoomBlock: label + slider
+    zoomBlock_ = zoomBlk;
+    auto* zoom = zoomBlk->slider();
+    layout_->placeZoom(zoomBlk->layout());
+    // Each VFO is a block (ui/VfoBlock): readout on top, its volume, MUTE,
+    // LOCK and one extra button (CTUN / VIEW) right below. The block builds
+    // the widgets; the wiring stays here.
+    auto makeVfoBlock = [&](int i, FrequencyDisplay* disp) {
+        auto* blk = new VfoBlock(disp, i, topStrip);
+        vfoBlock_[i] = blk;
+        volSl_[i] = blk->volume();
+        volLbl_[i] = blk->volumeLabel();
+        muteBtn_[i] = blk->mute();
+        lockBtn_[i] = blk->lock();
+        connect(lockBtn_[i], &QToolButton::toggled, this, [this, i](bool on) {
+            (i == 0 ? vfoLockA_ : vfoLockB_) = on;
+            radio_->setVfoLock(i == 0 ? 'A' : 'B', on);
+            pan_->setVfoLocks(vfoLockA_, vfoLockB_);
+            statusBar()->showMessage(QString("VFO %1 %2")
+                                         .arg(i == 0 ? 'A' : 'B')
+                                         .arg(on ? "LOCKED" : "unlocked"));
+        });
+        return blk;
+    };
+    auto* colA = makeVfoBlock(0, freqDisp_);
+    // CTUN (PowerSDR click-tune): spectrum holds still, the A marker floats
+    // like B's; clicking a signal jumps the marker there in place. Off =
+    // classic behavior (dial pinned at center, spectrum slides). Sits where
+    // B's VIEW button does, balancing the two VFO rows.
+    ctunBtn_ = new QToolButton(topStrip);
+    ctunBtn_->setText("CTUN");
+    ctunBtn_->setCheckable(true);
+    ctunBtn_->setFocusPolicy(Qt::NoFocus);
+    ctunBtn_->setFixedHeight(19);
+    ctunBtn_->setToolTip(
+        "Click-tune mode (PowerSDR CTUN): the spectrum stays fixed and the\n"
+        "VFO A marker moves as you tune — click a signal and the marker\n"
+        "jumps there in place. Zooming in re-centers on the VFO; the display\n"
+        "re-centers itself when the marker nears an edge.\n"
+        "Off: classic view — VFO A pinned at center, spectrum slides.");
+    ctunBtn_->setStyleSheet(       // padding 4px not 8: the A row is the top
+        "QToolButton { background: #1c2430; border: 1px solid #2a3644;"
+        " border-radius: 3px; color: #8fa3b8; font-size: 10px; font-weight: bold;"
+        " padding: 0 4px; }"       // strip's width driver — keep the ruler happy
+        "QToolButton:hover { border-color: #4a5a6e; }"
+        "QToolButton:checked { background: #2f6d9e; border-color: #5db2f0;"
+        " color: #eaf6ff; }");
+    {
+        const QSignalBlocker b(ctunBtn_);
+        ctunBtn_->setChecked(QSettings().value("tune/ctun", false).toBool());
+    }
+    ctun_ = ctunBtn_->isChecked();
+    connect(ctunBtn_, &QToolButton::toggled, this, [this](bool on) {
+        ctun_ = on;
+        QSettings().setValue("tune/ctun", on);
+        if (!on) {
+            // Back to classic: re-center the capture on the dial.
+            pan_->setViewShiftHz(0);
+#ifdef HAVE_SDRPLAY
+            if (sdrLoHz_) {
+                sdrLoHz_ = centerHz_ + kLoOffsetHz;
+                sdr_.setCenterFrequency(static_cast<double>(sdrLoHz_));
+            }
+#endif
+            setLoOff(kLoOffsetHz);
+        }
+        statusBar()->showMessage(
+            on ? "CTUN: spectrum fixed — VFO A floats (click-tune)"
+               : "CTUN off: VFO A centered, spectrum follows the dial");
+    });
+    colA->addRowButton(ctunBtn_);
+    layout_->placeVfo(0, colA->layout());
+    routing_ = new RoutingPanel(topStrip);
+    layout_->placeRouting(routing_);
+    auto* colB = makeVfoBlock(1, freqDispB_);
+    // VIEW: show/hide VFO B on the panadapter — declutters the display when
+    // the sub VFO isn't in play. B keeps tracking underneath; right-clicking
+    // to drop B on a station turns the view back on.
+    bViewBtn_ = new QToolButton(topStrip);
+    bViewBtn_->setText("VIEW");
+    bViewBtn_->setCheckable(true);
+    bViewBtn_->setFocusPolicy(Qt::NoFocus);
+    bViewBtn_->setFixedHeight(19);
+    bViewBtn_->setToolTip("Show VFO B on the panadapter (uncheck to hide it "
+                          "when the second VFO isn't needed)");
+    bViewBtn_->setStyleSheet(
+        "QToolButton { background: #1c2430; border: 1px solid #2a3644;"
+        " border-radius: 3px; color: #8fa3b8; font-size: 10px; font-weight: bold;"
+        " padding: 0 8px; }"
+        "QToolButton:hover { border-color: #4a5a6e; }"
+        "QToolButton:checked { background: #2f6d9e; border-color: #5db2f0;"
+        " color: #eaf6ff; }");
+    bViewBtn_->setChecked(QSettings().value("display/showVfoB", true).toBool());
+    pan_->setVfoBVisible(bViewBtn_->isChecked());
+    connect(bViewBtn_, &QToolButton::toggled, this, [this](bool on) {
+        QSettings().setValue("display/showVfoB", on);
+        pan_->setVfoBVisible(on);
+        statusBar()->showMessage(on ? "VFO B shown on the panadapter"
+                                    : "VFO B hidden from the panadapter");
+    });
+    colB->addRowButton(bViewBtn_);
+    layout_->placeVfo(1, colB->layout());
+    layout_->finishVfos(colA->layout(), colB->layout());
+
+    // The zoom scale's top is band-aware: inside a ham band, full-left is
+    // the band overview itself, so the knob has zero dead travel — the
+    // first nudge right leaves the frame and starts zooming. A
+    // capture-wide top left an inch of travel that all mapped to "wider
+    // than the band" and read as a hitch (live-found). Out of band, or on
+    // 60 m, the top is the capture-wide maximum as before.
+    auto zoomTopSpan = [this] {
+        const int frame = bandFrameSpanHz();
+        return frame > 0 ? std::min(frame, pan_->maxViewSpanHz())
+                         : pan_->maxViewSpanHz();
+    };
+    auto spanFromSlider = [this, zoomTopSpan](int v) {
+        const int top = zoomTopSpan();
+        const double ratio = double(pan_->minViewSpanHz()) / top;
+        return static_cast<int>(std::lround(top * std::pow(ratio, v / 100.0)));
+    };
+    auto sliderFromSpan = [this, zoomTopSpan](int spanHz) {
+        const int top = zoomTopSpan();
+        const double ratio = double(pan_->minViewSpanHz()) / top;
+        const double f = std::log(double(spanHz) / top) / std::log(ratio);
+        return std::clamp(static_cast<int>(std::lround(f * 100.0)), 0, 100);
+    };
+    connect(zoom, &QSlider::valueChanged, this,
+            [this, zoom, spanFromSlider](int v) {
+        const int spanHz = spanFromSlider(v);
+        // Zooming OUT to (or past) the band's width lands on the band
+        // overview — the whole-band view is the terminal zoomed-out state
+        // inside a ham band. Without this, zoom-out went classic and
+        // expanded around wherever the last click left the dial: a view
+        // wider than the band and off its center (live-found). Otherwise
+        // the slider is manual zoom: exit the band overview exactly like
+        // Ctrl+wheel does (the "deliberate way out" must not depend on
+        // which zoom control the operator reached for).
+        if (zoomToBandFrame(spanHz)) {
+            // The overview IS this band's "fully out" — park the knob at
+            // full-left instead of yanking it back to the frame span's
+            // nominal position (which read as a stuck slider, live-found).
+            const QSignalBlocker b(zoom);
+            zoom->setValue(0);
+        } else if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
+            exitBandFrame(spanHz);
+        else
+            pan_->setViewSpanHz(spanHz);
+        statusBar()->showMessage(
+            QString("zoom -> span %1 kHz").arg(pan_->viewSpanHz() / 1000.0, 0, 'f', 1));
+    });
+    connect(pan_, &PanadapterWidget::viewSpanChanged, this,
+            [zoom, sliderFromSpan](int spanHz) {
+                QSignalBlocker block(zoom);
+                zoom->setValue(sliderFromSpan(spanHz));
+            });
+
+    // All toolbar dropdowns share the console's dark look — without this the
+    // QMenu frame and plain actions render in the system (light) theme.
+
+    // "DISPLAY" dropdown: Flex/KE9NS-style viewer settings (ref level, range,
+    // averaging, waterfall speed, palette, fill, peak hold), applied live and
+    // persisted. Sits in a QWidgetAction so the popup stays open while dragging.
+    auto* dispBtn = new QToolButton(topStrip);
+    dispBtn->setText("DISPLAY ▾");
+    dispBtn->setPopupMode(QToolButton::InstantPopup);
+    dispBtn->setFocusPolicy(Qt::NoFocus);
+    dispBtn->setStyleSheet(
+        QString(kSideBtnStyle));
+    auto* dispMenu = new QMenu(dispBtn);
+    styleMenu(dispMenu);
+    // No on/off of its own: lit while its menu is open.
+    dispBtn->setCheckable(true);
+    connect(dispMenu, &QMenu::aboutToShow, dispBtn, [dispBtn] { dispBtn->setChecked(true); });
+    connect(dispMenu, &QMenu::aboutToHide, dispBtn, [dispBtn] { dispBtn->setChecked(false); });
+    auto* dispPanel = new DisplayPanel(dispMenu);
+    dispPanel_ = dispPanel;
+    auto* dispAction = new QWidgetAction(dispMenu);
+    dispAction->setDefaultWidget(dispPanel);
+    dispMenu->addAction(dispAction);
+    // Which buttons the sidebar shows (filled once the layout is built).
+    auto* sideMenu = dispMenu->addMenu("Sidebar buttons");
+    styleMenu(sideMenu);
+    auto* sideAct = new QWidgetAction(sideMenu);
+    sideAct->setDefaultWidget(dispPanel->sidebarPicker());
+    sideMenu->addAction(sideAct);
+    // One-click view switch, in both views: save ui/layout and restart
+    // ourselves (same --wait-lock path as the radio switch, so the new
+    // console takes the radio, SDR and ports only once this one let go).
+    // Refused while transmitting.
+    dispMenu->addSeparator();
+    {
+        const bool panel = layout_->isPanel();
+        auto* viewAct = dispMenu->addAction(panel ? "Switch to Original view (restarts)"
+                                                  : "Switch to Panel view (restarts)");
+        viewAct->setToolTip(panel ? "Today's console layout. The console restarts in a few\n"
+                                    "seconds on the same band and frequency."
+                                  : "AetherSDR-style layout: sidebar boxes, BAND flyout.\n"
+                                    "The console restarts in a few seconds on the same\n"
+                                    "band and frequency.");
+        connect(viewAct, &QAction::triggered, this, [this, panel] {
+            if (radioTx_ || dvrTxPlayback_ || radeTxOn_) {
+                statusBar()->showMessage("view switch: not while transmitting", 4000);
+                return;
+            }
+            QSettings s;
+            s.setValue("ui/layout", panel ? "classic" : "panel");
+            s.sync();
+            statusBar()->showMessage(QString("switching to the %1 view — restarting…")
+                                         .arg(panel ? "Original" : "Panel"));
+            QTimer::singleShot(300, this, [] {
+                QStringList args = qApp->arguments().mid(1);
+                if (!args.contains("--wait-lock")) args << "--wait-lock";
+                qunsetenv("TTC_LAYOUT");           // the saved choice must win
+                QProcess::startDetached(qApp->applicationFilePath(), args);
+                qApp->quit();
+            });
+        });
+    }
+    // GPU panadapter + frame rate (the drawing's on the video card, so 60 fps
+    // costs the CPU next to nothing; the CPU paint stays at 20).
+    auto* gpuAct = dispMenu->addAction("GPU panadapter (video card draws it)");
+    gpuAct->setCheckable(true);
+    gpuAct->setChecked(pan_->gpuEnabled());
+    gpuAct->setEnabled(PanadapterWidget::gpuAvailable());   // Qt < 6.7 builds: CPU only
+    gpuAct->setToolTip("Waterfall, trace and fill on the video card (OpenGL); the labels\n"
+                       "and scales redrawn only when they change. Off = the CPU paint.\n"
+                       "Falls back to the CPU paint by itself if the GPU can't start.");
+    // 3D stacked traces (GPU only): the recent sweeps in perspective over
+    // the spectrum area, AetherSDR's 3D view. Off = the flat trace.
+    auto* act3d = dispMenu->addAction("3D stacked traces (GPU)");
+    act3d->setCheckable(true);
+    act3d->setChecked(QSettings().value("display/pan3d", false).toBool());
+    act3d->setToolTip("The last few seconds of spectrum stacked in perspective, newest\n"
+                      "in front, scrolling back. Uses the PALETTE (or the heat colours\n"
+                      "with TRACE = Heat map). Needs the GPU panadapter.");
+    pan_->set3D(act3d->isChecked());
+    act3d->setEnabled(pan_->gpuEnabled());
+    connect(act3d, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("display/pan3d", on);
+        pan_->set3D(on);
+    });
+    QMenu* fpsMenu = dispMenu->addMenu("Frame rate");
+    auto* fpsGroup = new QActionGroup(fpsMenu);
+    const int fpsNow = std::clamp(QSettings().value("display/panFps", 20).toInt(), 20, 60);
+    for (int f : {20, 30, 60}) {
+        QAction* a = fpsMenu->addAction(QString("%1 fps").arg(f));
+        a->setCheckable(true);
+        a->setData(f);
+        a->setChecked(f == fpsNow);
+        fpsGroup->addAction(a);
+    }
+    const auto applyFps = [this, fpsMenu, act3d](int f) {
+        if (!pan_->gpuEnabled()) f = 20;           // the CPU paint can't afford more
+#ifdef HAVE_SDRPLAY
+        spectrum_.setFrameRateHz(f);
+        startSpecPacer();
+#endif
+        pan_->setFrameRate(f);
+        fpsMenu->setEnabled(pan_->gpuEnabled());
+        act3d->setEnabled(pan_->gpuEnabled());
+    };
+    connect(fpsGroup, &QActionGroup::triggered, this, [applyFps](QAction* a) {
+        QSettings().setValue("display/panFps", a->data().toInt());
+        applyFps(a->data().toInt());
+    });
+    connect(gpuAct, &QAction::toggled, this, [this, applyFps](bool on) {
+        QSettings().setValue("display/gpuPan", on);
+        pan_->setGpuEnabled(on);
+        applyFps(QSettings().value("display/panFps", 20).toInt());
+        statusBar()->showMessage(on ? "GPU panadapter on" : "GPU panadapter off — CPU paint", 4000);
+    });
+    connect(pan_, &PanadapterWidget::gpuFellBack, this, [this, gpuAct, applyFps] {
+        const QSignalBlocker b(gpuAct);
+        gpuAct->setChecked(false);
+        applyFps(20);
+        statusBar()->showMessage("GPU panadapter couldn't start — using the CPU paint", 8000);
+    });
+    applyFps(fpsNow);
+    dispBtn->setMenu(dispMenu);
+    topLay->addSpacing(8);
+    topLay->addWidget(dispBtn);
+    auto saveDisplay = [](const DisplaySettings& d) {
+        QSettings s;
+        s.setValue("display/refDb",   d.refDb);
+        s.setValue("display/rangeDb", d.rangeDb);
+        s.setValue("display/palette", d.palette);
+        s.setValue("display/avg",     d.avgFrames);
+        s.setValue("display/wfSpeed", d.wfSpeed);
+        s.setValue("display/fill",    d.fillTrace);
+        s.setValue("display/peak",    d.peakHold);
+        s.setValue("display/split",   d.split);
+        s.setValue("display/background", d.background);
+        s.setValue("display/mapDay",     d.mapDay);
+        s.setValue("display/mapNight",   d.mapNight);
+        s.setValue("display/grid",       d.showGrid);
+        s.setValue("display/callsign",   d.showCall);
+        s.setValue("display/solar",      d.showSolar);
+        s.setValue("display/voacap",     d.showVoacap);
+        s.setValue("display/bandplan",   d.showBandPlan);
+        s.setValue("display/privileges", d.showPrivileges);
+        s.setValue("display/trace",      d.traceColor);
+        s.setValue("display/traceStyle", d.traceStyle);
+        s.setValue("display/lineWidth",  d.lineWidth);
+        s.setValue("display/fftSmooth",  d.smoothPx);
+        s.setValue("display/decombHz",   d.decombHz);
+        s.setValue("display/dssFloor",   d.dssFloor);
+        s.setValue("display/dssGain",    d.dssGain);
+        s.setValue("display/dssSpan",    d.dssSpan);
+        s.setValue("display/dssShadow",  d.dssShadow);
+        s.setValue("display/bigVfo",     d.bigVfo);
+        s.setValue("display/clock",      d.showClock);
+        s.setValue("display/wfTime",     d.showWfTime);
+        s.setValue("display/cursor",     d.showCursor);
+        s.setValue("display/wfRef",      d.wfRefDb);
+        s.setValue("display/cwZap",      d.cwZap);
+    };
+    // Station callsign: drives the watermark and defaults the cluster login.
+    // Editable in the DISPLAY panel (CALL field), persisted immediately.
+    QString stationCall;
+    {
+        QSettings s;
+        stationCall = s.value("station/callsign", "").toString();
+    }
+    // A fresh install has no callsign (none is built in): say so once the
+    // window is up. The cluster, FreeDV/PSK reporting, RADE and ARDOP all
+    // refuse to go out without one.
+    if (stationCall.trimmed().isEmpty())
+        QTimer::singleShot(1500, this, [this] {
+            statusBar()->showMessage("No station callsign yet — set it in Setup → Station "
+                                     "(the cluster, reporting and digital TX wait for it)", 30000);
+        });
+    dispPanel->setCallsign(stationCall);
+    pan_->setCallsign(stationCall);
+    // Station grid square -> QTH for the compass rose; cty.dat places DX
+    // calls for the bearing pointer (no grid set = no QTH yet).
+    cty_.load();
+    {
+        QSettings s;
+        const QString grid = s.value("station/grid", "").toString();
+        dispPanel->setGrid(grid);
+        double la, lo;
+        if (CtyLookup::gridToLatLon(grid, la, lo)) {
+            pan_->setQth(la, lo);
+            rose_->setQth(la, lo);
+        }
+    }
+    connect(dispPanel, &DisplayPanel::gridChanged, this, [this](const QString& g) {
+        QSettings().setValue("station/grid", g);
+        double la, lo;
+        if (CtyLookup::gridToLatLon(g, la, lo)) {
+            pan_->setQth(la, lo);
+            rose_->setQth(la, lo);
+            statusBar()->showMessage(QString("QTH grid %1 (%2, %3)")
+                                         .arg(g).arg(la, 0, 'f', 1).arg(lo, 0, 'f', 1));
+        }
+    });
+    // US 60 m allocation per FCC 25-60, effective 2026-02-13 (KE9NS-style
+    // zone boxes): contiguous 5351.5-5366.5 kHz at 15 W EIRP / 2.8 kHz max
+    // bandwidth / any compliant mode, plus the four retained USB channels
+    // (2.8 kHz wide, 100 W ERP, USB/CW/digital). Old channel 3 (5358.5) is
+    // gone as a channel — it sits inside the band at the lower power limit.
+    pan_->setBandZones({
+        {5330600, 5333400, "60m CH1 100W"},
+        {5346600, 5349400, "60m CH2 100W"},
+        {5351500, 5366500, "60m 5351.5-5366.5 · 15W EIRP · ≤2.8k"},
+        {5371600, 5374400, "60m CH4 100W"},
+        {5403600, 5406400, "60m CH5 100W"},
+    });
+    connect(dispPanel, &DisplayPanel::callsignChanged, this,
+            [this](const QString& call) {
+                QSettings().setValue("station/callsign", call);
+                pan_->setCallsign(call);
+            });
+    {   // restore persisted display settings before first paint
+        QSettings s;
+        DisplaySettings d;
+        d.refDb     = s.value("display/refDb",   d.refDb).toFloat();
+        d.rangeDb   = s.value("display/rangeDb", d.rangeDb).toFloat();
+        d.palette   = s.value("display/palette", d.palette).toInt();
+        d.avgFrames = s.value("display/avg",     d.avgFrames).toInt();
+        d.wfSpeed   = s.value("display/wfSpeed", d.wfSpeed).toInt();
+        d.fillTrace = s.value("display/fill",    d.fillTrace).toBool();
+        d.peakHold  = s.value("display/peak",    d.peakHold).toBool();
+        d.split     = s.value("display/split",   d.split).toFloat();
+        d.background = s.value("display/background", d.background).toInt();
+        d.mapDay     = s.value("display/mapDay",     d.mapDay).toInt();
+        d.mapNight   = s.value("display/mapNight",   d.mapNight).toInt();
+        d.showGrid   = s.value("display/grid",       d.showGrid).toBool();
+        d.showCall   = s.value("display/callsign",   d.showCall).toBool();
+        d.showSolar  = s.value("display/solar",      d.showSolar).toBool();
+        d.showVoacap = s.value("display/voacap",     d.showVoacap).toBool();
+        d.showBandPlan = s.value("display/bandplan", d.showBandPlan).toBool();
+        d.showPrivileges = s.value("display/privileges", d.showPrivileges).toBool();
+        d.traceColor = s.value("display/trace",      d.traceColor).toInt();
+        d.traceStyle = s.value("display/traceStyle", d.traceStyle).toInt();
+        d.lineWidth  = s.value("display/lineWidth",  d.lineWidth).toFloat();
+        d.smoothPx   = s.value("display/fftSmooth",  d.smoothPx).toInt();
+        d.decombHz   = s.value("display/decombHz",   d.decombHz).toInt();
+        d.dssFloor   = s.value("display/dssFloor",   d.dssFloor).toInt();
+        d.dssGain    = s.value("display/dssGain",    d.dssGain).toInt();
+        d.dssSpan    = s.value("display/dssSpan",    d.dssSpan).toInt();
+        d.dssShadow  = s.value("display/dssShadow",  d.dssShadow).toBool();
+        d.bigVfo     = s.value("display/bigVfo",     d.bigVfo).toBool();
+        d.showClock  = s.value("display/clock",      d.showClock).toBool();
+        d.showWfTime = s.value("display/wfTime",     d.showWfTime).toBool();
+        d.showCursor = s.value("display/cursor",     d.showCursor).toBool();
+        // default: locked to the spectrum ref until first dragged apart
+        d.wfRefDb    = s.value("display/wfRef",      d.refDb).toFloat();
+        d.cwZap      = s.value("display/cwZap",      d.cwZap).toBool();
+        cwZap_       = d.cwZap;
+        dispPanel->setSettings(d);
+        pan_->setDisplaySettings(d);
+        freqDisp_->setLargeDigits(d.bigVfo);
+        freqDispB_->setLargeDigits(d.bigVfo);
+        panel_->setClockVisible(d.showClock);
+        // The "Solar data panel" toggle governs the solar DISPLAY (corner
+        // panel + map sun marker) — but the NOAA poller feeds VOACAP's SSN
+        // too, so it runs when EITHER consumer wants it. solar=false with
+        // voacap=true silently starved the forecast for an entire session
+        // (live-found: 20 m, band wide open, not one contour).
+        solarClient_.setEnabled(d.showSolar || d.showVoacap);
+        voacapEnabled_ = d.showVoacap;
+    }
+    connect(&solarClient_, &SolarClient::updated, this, [this] {
+        const SolarData sd = solarClient_.data();
+        pan_->setSolarInfo(sd.sfi, sd.aIdx, sd.kIdx, sd.ssn, sd.xray);
+        solarBox_->setInfo(sd.sfi, sd.aIdx, sd.kIdx, sd.ssn, sd.xray);
+        maybeRunVoacap();                          // fresh SSN -> forecast
+    });
+    connect(&voacap_, &Voacap::ready, this,
+            [this](const QVector<PanadapterWidget::PropContour>& c,
+                   const QString& legend) {
+                pan_->setPropForecast(c, legend);
+            });
+    // Slow re-check: the key (band+hour+SSN) makes reruns free unless the
+    // UTC hour rolled or conditions moved.
+    voacapTimer_ = new QTimer(this);
+    voacapTimer_->setInterval(10 * 60 * 1000);
+    connect(voacapTimer_, &QTimer::timeout, this, &MainWindow::maybeRunVoacap);
+    voacapTimer_->start();
+    connect(dispPanel, &DisplayPanel::settingsChanged, this,
+            [this, saveDisplay](const DisplaySettings& d) {
+                pan_->setDisplaySettings(d);
+                freqDisp_->setLargeDigits(d.bigVfo);
+                freqDispB_->setLargeDigits(d.bigVfo);
+                panel_->setClockVisible(d.showClock);
+                voacapEnabled_ = d.showVoacap;
+                solarClient_.setEnabled(d.showSolar || d.showVoacap);
+                layout_->setSideBoxVisible("solar", d.showSolar);
+                maybeRunVoacap();
+                cwZap_ = d.cwZap;
+                saveDisplay(d);
+            });
+    // In-widget edits (dB-axis drag/wheel, divider drag) flow back the other
+    // way: persist them and keep the DISPLAY panel's sliders in sync.
+    connect(pan_, &PanadapterWidget::displaySettingsEdited, this,
+            [this, dispPanel, saveDisplay](const DisplaySettings& d) {
+                dispPanel->setSettings(d);
+                saveDisplay(d);
+                // In-widget edits are easy to make without noticing — say so.
+                statusBar()->showMessage(
+                    QString("display: REF %1 dB  RANGE %2 dB  WF REF %3 dB")
+                        .arg(d.refDb, 0, 'f', 0).arg(d.rangeDb, 0, 'f', 0)
+                        .arg(d.wfRefDb, 0, 'f', 0));
+            });
+
+    // Hover-cursor zap preview: paint asks where a CW-zap click would
+    // land; INT_MIN = zap not applicable (wrong mode / feature off).
+    pan_->setSnapPreview([this](int offHz) {
+        if (!cwZap_ || (rigMode_ != Mode::CWU && rigMode_ != Mode::CWL))
+            return INT_MIN;
+        return snapToCwPeak(offHz, 150);
+    });
+
+    // Pinned frequency markers: Shift+right-click on the panadapter toggles
+    // one (label prompt on create). The list lives in QSettings as
+    // "hz|label" strings and survives restarts — that permanence is what
+    // separates a marker from a spot.
+    {
+        QVector<FreqMarker> mk;
+        for (const QString& e :
+             QSettings().value("panadapter/markers").toStringList()) {
+            const int bar = e.indexOf('|');
+            FreqMarker m;
+            m.hz = e.left(bar < 0 ? e.size() : bar).toLongLong();
+            if (bar >= 0) m.label = e.mid(bar + 1);
+            if (m.hz > 0) mk.append(m);
+        }
+        markers_ = mk;
+        pan_->setMarkers(markers_);
+    }
+    connect(pan_, &PanadapterWidget::markerToggleRequested, this,
+            [this](qint64 hz) {
+                // Near an existing marker (a few pixels at the current
+                // zoom) = remove it; otherwise create one here.
+                const qint64 tol =
+                    std::max<qint64>(300, pan_->viewSpanHz() / 250);
+                for (int i = 0; i < markers_.size(); ++i) {
+                    if (std::llabs(markers_[i].hz - hz) <= tol) {
+                        statusBar()->showMessage(
+                            QString("marker removed: %1 kHz")
+                                .arg(markers_[i].hz / 1000.0, 0, 'f', 1));
+                        markers_.removeAt(i);
+                        saveMarkers();
+                        return;
+                    }
+                }
+                bool ok = false;
+                const QString label = QInputDialog::getText(
+                    this, "Pin frequency marker",
+                    QString("Label for %1 kHz (empty shows the frequency):")
+                        .arg(hz / 1000.0, 0, 'f', 1),
+                    QLineEdit::Normal, QString(), &ok);
+                if (!ok) return;                   // canceled: no marker
+                markers_.append({hz, label.trimmed()});
+                saveMarkers();
+            });
+
+    // "SPOTS" dropdown: DX-cluster callsign labels on the panadapter. The feed
+    // is a plain cluster telnet login (default VE7CC); host/port/login live in
+    // QSettings (spots/host, spots/port, spots/login) for other nodes or RBN.
+    auto* spotsBtn = new QToolButton(topStrip);
+    spotsBtn->setText("SPOTS ▾");
+    spotsBtn->setPopupMode(QToolButton::InstantPopup);
+    spotsBtn->setFocusPolicy(Qt::NoFocus);
+    spotsBtn->setStyleSheet(
+        QString(kSideBtnStyle));
+    auto* spotsMenu = new QMenu(spotsBtn);
+    styleMenu(spotsMenu);
+    auto* spotsOn   = spotsMenu->addAction("Show spots");
+    spotsOn->setCheckable(true);
+    lightWhile(spotsBtn, spotsMenu, [spotsOn] { return spotsOn->isChecked(); });
+    // Per-source toggles, so any mix works: just FT8 for a digital session,
+    // just POTA for park hunting, everything for a contest.
+    auto* dxOn = spotsMenu->addAction("DX spots");
+    dxOn->setCheckable(true);
+    dxOn->setToolTip("Classic human cluster spots (yellow labels)");
+    auto* potaOn = spotsMenu->addAction("POTA spots");
+    potaOn->setCheckable(true);
+    potaOn->setToolTip("Park activations from api.pota.app (green labels "
+                       "with the park reference)");
+    auto* ft8On = spotsMenu->addAction("FT8 spots");
+    ft8On->setCheckable(true);
+    ft8On->setToolTip("FT8 skimmer spots from the cluster node (cyan labels, "
+                      "placed at the station's actual offset in the watering hole)");
+    auto* wsjtOn = spotsMenu->addAction("My WSJT-X decodes");
+    wsjtOn->setCheckable(true);
+    wsjtOn->setChecked(QSettings().value("spots/wsjtx", true).toBool());
+    wsjtOn->setToolTip("Stations OUR WSJT-X decodes — CQs and anyone calling you (orange\n"
+                       "ring) — at their place in the passband, colored by this logbook.\n"
+                       "Clicking one shows it; it never retunes (the dial is WSJT-X's)");
+    auto* fdvOn = spotsMenu->addAction("FreeDV Reporter spots");
+    fdvOn->setCheckable(true);
+    fdvOn->setToolTip("Who is on FreeDV / RADE digital voice now, from qso.freedv.org\n"
+                      "(orange labels; watch-only — nothing about this station is sent)");
+    fdvSpotsAct_ = fdvOn;
+    auto* n1Dupes = spotsMenu->addAction("Gray Not1MM contest dupes");
+    n1Dupes->setCheckable(true);
+    n1Dupes->setToolTip("While Not1MM runs, stations already worked in its current contest\n"
+                        "draw gray on the band map, by that contest's own dupe rule\n"
+                        "(read-only from Not1MM's log; nothing to set up in Not1MM)");
+    // Spotter area: only show what's being heard in a chosen part of the
+    // world (server-side CC Cluster spotter-origin filter); the same region
+    // choice narrows POTA to that region's parks. Custom takes any CC
+    // country-prefix list for slicing the world however the operator likes.
+    auto* areaMenu = spotsMenu->addMenu("Spotter area");
+    styleMenu(areaMenu);
+    auto* areaGrp = new QActionGroup(spotsMenu);
+    QVector<QAction*> areaActs;
+    for (const SpotArea& a : kSpotAreas) {
+        auto* act = areaMenu->addAction(a.name);
+        act->setCheckable(true);
+        act->setActionGroup(areaGrp);
+        areaActs.push_back(act);
+    }
+    auto* areaCustom = areaMenu->addAction("Custom…");
+    areaCustom->setCheckable(true);
+    areaCustom->setActionGroup(areaGrp);
+    auto* spotsClear = spotsMenu->addAction("Clear spots");
+    spotsMenu->addSeparator();
+    // The whole feed as a sortable table (HRD-style needed-status columns).
+    auto* tableAct = spotsMenu->addAction("Spot table…");
+    tableAct->setToolTip("Every spot as a row: country/band/mode needed "
+                         "columns,\nazimuth (click = rotate), double-click "
+                         "= tune + log");
+    connect(tableAct, &QAction::triggered, this,
+            [this] { openSpotTable(); });
+    spotsMenu->addSeparator();
+    // DX watch: patterns matched against every spot; hits get an orange
+    // alert ring, a status-bar callout and (optionally) a beep.
+    watch_.setPatterns(QSettings().value("spots/watch").toString());
+    auto* watchEdit = spotsMenu->addAction(
+        QString("Watch list… (%1)").arg(watch_.count()));
+    watchEdit->setToolTip(
+        "Alert patterns, one per line or space-separated:\n"
+        "  W1AW      exact call\n"
+        "  JA*       prefix\n"
+        "  US-1234   POTA park\n"
+        "  NEW       anything you never worked (red spots)\n"
+        "Hits ring orange on the panadapter and call out in the status bar.");
+    auto* watchBeep = spotsMenu->addAction("Watch alert beep");
+    watchBeep->setCheckable(true);
+    watchBeep->setChecked(QSettings().value("spots/watchBeep", true).toBool());
+    connect(watchBeep, &QAction::toggled, this, [](bool on) {
+        QSettings().setValue("spots/watchBeep", on);
+    });
+    spotsMenu->addSeparator();
+    {   // Worked-before legend (colors fed from the cqrlog logbook).
+        auto* legend = spotsMenu->addAction(
+            "Call colors: red new · amber new band · green worked · gray "
+            "cfmd  |  3 dots = country·band·mode");
+        legend->setEnabled(false);
+        legend->setToolTip(
+            "Spot callsigns are colored from your cqrlog logbook:\n"
+            "red = never worked, amber = worked but not on this band,\n"
+            "green = worked this band, gray = confirmed (card/LoTW/eQSL).\n"
+            "POTA spots color by the PARK (red = never hunted).\n"
+            "A small edge bar keeps the source color (yellow DX / green "
+            "POTA / cyan FT8 /\nviolet SKIM).\nPlain colors mean no logbook "
+            "data yet — start cqrlog once to load it.");
+    }
+    spotsMenu->addSeparator();
+    {
+        QSettings s;
+        const QString host  = s.value("spots/host", "dxc.ve7cc.net").toString();
+        const quint16 port  = static_cast<quint16>(s.value("spots/port", 23).toUInt());
+        const QString login = s.value("spots/login", stationCall).toString();
+        spotSrcAct_ = spotsMenu->addAction(QString("source: %1:%2 as %3")
+                                               .arg(host).arg(port).arg(login));
+        spotSrcAct_->setEnabled(false);
+        spotsOnAct_ = spotsOn;                   // openSetup reconnects through it
+        spotClient_.configure(host, port, login);
+        spotsOn->setChecked(s.value("spots/enabled", true).toBool());
+        dxOn->setChecked(s.value("spots/dx", true).toBool());
+        potaOn->setChecked(s.value("spots/pota", true).toBool());
+        ft8On->setChecked(s.value("spots/ft8", true).toBool());
+        fdvOn->setChecked(s.value("spots/freedv", false).toBool());
+        n1Dupes->setChecked(s.value("spots/not1mmDupes", true).toBool());
+    }
+    spotsBtn->setMenu(spotsMenu);
+    topLay->addSpacing(8);
+    topLay->addWidget(spotsBtn);
+
+    // The second-deck tools (LOG/CW/SKIM/DIGI/ROT) each build in their own
+    // function in MainWindowTools.cpp — one call per feature here, so
+    // parallel feature work doesn't collide in this file.
+    setupLogUi();
+    setupCwUi();
+    setupSkimUi(stationCall);
+    setupDigiUi();
+    setupRotorUi();
+
+    // AUDIO: the Orion's output routing (*UC, one VFO per ear for split
+    // pileups) + TX monitor, a sidebar box since 2026-10-18 (its button is
+    // the box toggle). The voice keyer EQ got its own EQ button; Winlink
+    // moved to the bottom of SDR ▾.
+    audioPanel_ = new AudioPanel(this);
+    setupEqUi();
+    setupWsjtxUi();
+
+    // Per-VFO volume + mute (the rows under the readouts). Sliding a muted
+    // receiver's volume implicitly unmutes it; mute remembers the level.
+    for (int i = 0; i < 2; ++i) {
+        const Rx rx = i == 0 ? Rx::Main : Rx::Sub;
+        volTx_[i] = new QTimer(this);
+        volTx_[i]->setSingleShot(true);
+        volTx_[i]->setInterval(60);
+        connect(volTx_[i], &QTimer::timeout, this,
+                [this, i, rx] { radio_->setAfVolume(rx, pendVol_[i]); });
+        connect(volSl_[i], &QSlider::valueChanged, this, [this, i, rx](int v) {
+            volLbl_[i]->setText(QString::number(v));
+            vol_[i] = v;
+            if (muted_[i]) {                        // touch = unmute
+                muted_[i] = false;
+                const QSignalBlocker b(muteBtn_[i]);
+                muteBtn_[i]->setChecked(false);
+            }
+            pendVol_[i] = v;
+            volTx_[i]->start();
+            statusBar()->showMessage(QString("volume %1 -> %2")
+                                         .arg(i == 0 ? "A" : "B").arg(v));
+        });
+        connect(muteBtn_[i], &QToolButton::toggled, this, [this, i, rx](bool on) {
+            muted_[i] = on;
+            if (on) {
+                preMute_[i] = vol_[i];
+                radio_->setAfVolume(rx, 0);
+            } else {
+                radio_->setAfVolume(rx, preMute_[i]);
+                vol_[i] = preMute_[i];
+                const QSignalBlocker b(volSl_[i]);
+                volSl_[i]->setValue(preMute_[i]);
+                volLbl_[i]->setText(QString::number(preMute_[i]));
+            }
+            statusBar()->showMessage(QString("VFO %1 audio %2")
+                                         .arg(i == 0 ? "A" : "B")
+                                         .arg(on ? "MUTED" : "unmuted"));
+        });
+    }
+    connect(audioPanel_, &AudioPanel::routingEdited, this,
+            [this](char l, char r, char s) {
+                radio_->setAudioRouting(l, r, s);
+                statusBar()->showMessage(
+                    QString("audio: phones L=%1 R=%2  speaker=%3").arg(l).arg(r).arg(s));
+            });
+    connect(radio_, &RadioController::audioRoutingReported, this,
+            [this](char l, char r, char s) { audioPanel_->showRouting(l, r, s); });
+
+    // Cluster spots carry no location: place them by cty.dat prefix (country
+    // center — good enough for a bearing), memoized per call so the FT8-rate
+    // feed never rescans the prefix table.
+    const auto ctyPlace = [this](SpotLabel& l) {
+        auto it = ctyMemo_.constFind(l.call);
+        if (it == ctyMemo_.constEnd()) {
+            double la = 999.0, lo = 999.0;
+            cty_.lookup(l.call, la, lo);
+            it = ctyMemo_.insert(l.call, qMakePair(la, lo));
+        }
+        l.lat = it->first;
+        l.lon = it->second;
+    };
+    // Worked-before status from the cqrlog logbook: POTA spots color by the
+    // park (hunted or not — that's the POTA question), everything else by
+    // call + band. No log data yet = '?' = plain kind colors.
+    const auto logStatus = [this](const SpotLabel& l) -> char {
+        if (!logbook_.ready()) return '?';
+        if (l.kind == 'P')
+            return logbook_.parkHunted(l.tag) ? 'W' : 'N';
+        return logbook_.status(l.call, LogbookIndex::bandForHz(l.hz))
+            .toLatin1();
+    };
+    // The dot triplet beside each label: is this spot's COUNTRY / this
+    // band / this mode confirmed, worked, or needed (from the station
+    // log — all '?' until it has data, and the dots stay invisible).
+    const auto needFill = [this](SpotLabel& l) {
+        const LogbookIndex::Need nd = logbook_.need(
+            l.call, LogbookIndex::bandForHz(l.hz),
+            guessSpotMode(l.kind, l.comment, l.hz));
+        l.needC = nd.country.toLatin1();
+        l.needB = nd.band.toLatin1();
+        l.needM = nd.mode.toLatin1();
+    };
+    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, wsjtOn, fdvOn, ctyPlace, logStatus,
+                      needFill, watchBeep] {
+        QVector<SpotLabel> labels;
+        if (spotsOn->isChecked()) {
+            QSet<QString> seen;                    // POTA API entry wins (has
+            if (potaOn->isChecked())               // the park ref) over the
+                for (const Spot& s : potaClient_.spots()) {  // cluster's copy
+                    // The spotter-area choice narrows POTA to that region's
+                    // parks (ref prefix, "US-2654" -> "US").
+                    if (!parkFilter_.isEmpty()
+                        && !parkFilter_.contains(s.tag.section('-', 0, 0)))
+                        continue;
+                    SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag,
+                                s.lat, s.lon};
+                    l.status = logStatus(l);
+                    needFill(l);
+                    labels.push_back(l);
+                    seen.insert(s.call);
+                }
+            if (fdvOn->isChecked())
+                for (const Spot& s : freedv_.spots()) {
+                    SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag, s.lat, s.lon};
+                    ctyPlace(l);
+                    l.status = logStatus(l);
+                    l.spotter = s.spotter;
+                    l.comment = s.comment;
+                    l.mapHidden = s.mapHidden;
+                    needFill(l);
+                    labels.push_back(l);
+                }
+            for (const Spot& s : spotClient_.spots()) {
+                if (s.kind == 'D' && !dxOn->isChecked()) continue;
+                if (s.kind == 'F' && !ft8On->isChecked()) continue;
+                if (s.kind == 'P' && !potaOn->isChecked()) continue;
+                if (seen.contains(s.call)) continue;
+                SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag, s.lat, s.lon};
+                if (l.lat > 500.0) ctyPlace(l);
+                l.status = logStatus(l);
+                l.spotter = s.spotter;
+                l.comment = s.comment;
+                needFill(l);
+                labels.push_back(l);
+            }
+        }
+        // Skimmer finds ride along whenever the skimmer runs — they're this
+        // station's own decodes, independent of the cluster feeds.
+        if (skim_->enabled())
+            for (const auto& s : skim_->spots()) {
+                SpotLabel l{s.call, s.hz, s.atSecs, 'S',
+                            s.wpm > 0 ? QString("%1w").arg(s.wpm) : QString()};
+                ctyPlace(l);
+                l.status = logStatus(l);
+                needFill(l);
+                labels.push_back(l);
+            }
+        // Our own WSJT-X decodes (CQs + calls to us), like the skimmer's
+        // finds: this station's ears, independent of the cluster feeds.
+        if (wsjtx_ && wsjtOn->isChecked())
+            for (const auto& h : wsjtx_->heard()) {
+                SpotLabel l{h.call, h.hz, h.atSecs, 'J',
+                            QString("%1dB").arg(h.snr)};
+                ctyPlace(l);
+                if (!h.grid.isEmpty()) {
+                    double la = 0, lo = 0;
+                    if (CtyLookup::gridToLatLon(h.grid, la, lo)) {
+                        l.lat = la;
+                        l.lon = lo;
+                    }
+                }
+                l.status = logStatus(l);
+                l.spotter = h.toMe ? QStringLiteral("calling you")
+                                   : QStringLiteral("WSJT-X");
+                l.comment = h.message;
+                l.alert = h.toMe;          // orange ring: someone wants us
+                needFill(l);
+                labels.push_back(l);
+            }
+        // Parked calls — knob-QSY memories from the contest deck — ride
+        // like local cluster spots and age out on a 20-minute clock.
+        if (!parkedSpots_.isEmpty()) {
+            const qint64 nowSecs = QDateTime::currentSecsSinceEpoch();
+            for (int i = parkedSpots_.size() - 1; i >= 0; --i)
+                if (nowSecs - parkedSpots_[i].atSecs > 1200)
+                    parkedSpots_.removeAt(i);
+            for (const Spot& s : parkedSpots_) {
+                SpotLabel l{s.call, s.hz, s.atSecs, 'D', QString(),
+                            s.lat, s.lon};
+                ctyPlace(l);
+                l.status = logStatus(l);
+                l.spotter = QStringLiteral("parked");
+                l.comment = QStringLiteral("parked here");
+                needFill(l);
+                labels.push_back(l);
+            }
+        }
+        // DX watch: flag hits, call out fresh ones (once per call per
+        // half hour so a busy feed doesn't nag).
+        if (!watch_.empty()) {
+            const qint64 now = QDateTime::currentSecsSinceEpoch();
+            for (SpotLabel& l : labels) {
+                const bool hit = watch_.matches(
+                    l.call, l.kind == 'P' ? l.tag : QString(),
+                    QChar::fromLatin1(l.status));
+                l.alert = l.alert || hit;  // a 'J' calling us keeps its ring
+                if (!hit) continue;
+                const qint64 last = watchNotified_.value(l.call, 0);
+                if (now - last < 1800) continue;
+                watchNotified_[l.call] = now;
+                statusBar()->showMessage(
+                    QString("WATCH: %1 on %2 kHz")
+                        .arg(l.call).arg(l.hz / 1000.0, 0, 'f', 1),
+                    10000);
+                if (std::getenv("TTC_SELFTEST"))
+                    std::fprintf(stderr, "[watch] %s %.1f kHz\n",
+                                 qPrintable(l.call), l.hz / 1000.0);
+                if (watchBeep->isChecked()) QApplication::beep();
+            }
+        }
+        // Contest mode: the map carries contest traffic ONLY. POTA and
+        // FT8 spots sit out, and — N1MM's "Contest" mode filter, same
+        // mechanism — every remaining spot's mode is judged (source
+        // kind, then comment tags, then the band plan's phone edge) and
+        // only the running contest's mode(s) pass. During a CW contest
+        // the SSB-segment chatter vanishes, and what survives the fence
+        // is, in practice, the contesters. What remains is colored by
+        // what it is WORTH (mult / new / worked / zero) against THIS
+        // contest's log alone. The SPOTS ▾ checkboxes come back
+        // untouched when contest mode ends.
+        if (contestDeck_ && contestDeckVisible()) {
+            const QString cat = contestDeck_->contestModeCategory();
+            labels.erase(
+                std::remove_if(
+                    labels.begin(), labels.end(),
+                    [&cat](const SpotLabel& l) {
+                        if (l.kind == 'P' || l.kind == 'F' || l.kind == 'V'
+                            || l.kind == 'J')
+                            return true;
+                        const QString m =
+                            guessSpotMode(l.kind, l.comment, l.hz);
+                        if (cat == QLatin1String("MIXED"))
+                            return m != QLatin1String("CW")
+                                && m != QLatin1String("SSB");
+                        return !cat.isEmpty() && m != cat;
+                    }),
+                labels.end());
+            // Busted-spot removal, N1MM's idea with a strict referee:
+            // two calls one edit apart within 300 Hz are one station
+            // skimmed twice; when master.scp vouches for exactly one,
+            // the other is the busted copy. No referee, keep both.
+            {
+                QVector<int> idx(labels.size());
+                std::iota(idx.begin(), idx.end(), 0);
+                std::sort(idx.begin(), idx.end(),
+                          [&labels](int a, int b) {
+                              return labels[a].hz < labels[b].hz;
+                          });
+                QSet<int> drop;
+                for (int a = 0; a + 1 < idx.size(); ++a)
+                    for (int b = a + 1;
+                         b < idx.size()
+                         && labels[idx[b]].hz - labels[idx[a]].hz <= 300;
+                         ++b) {
+                        const SpotLabel& A = labels[idx[a]];
+                        const SpotLabel& B = labels[idx[b]];
+                        if (!nearMissCall(A.call, B.call)) continue;
+                        // Referees, in order: master.scp, then whether
+                        // the call resolves to a COUNTRY at all —
+                        // J12MED points nowhere, JI2MED points to
+                        // Japan, and only one of them was ever real.
+                        bool aOk = contestDeck_->scpHas(A.call);
+                        bool bOk = contestDeck_->scpHas(B.call);
+                        if (aOk == bOk) {
+                            CtyInfo ci;
+                            aOk = cty_.info(normalizeForCty(A.call), ci);
+                            bOk = cty_.info(normalizeForCty(B.call), ci);
+                        }
+                        if (aOk == bOk) continue;
+                        drop.insert(aOk ? idx[b] : idx[a]);
+                    }
+                if (!drop.isEmpty()) {
+                    QList<int> dl = drop.values();
+                    std::sort(dl.begin(), dl.end(), std::greater<int>());
+                    for (int i : dl) labels.removeAt(i);
+                }
+            }
+            for (SpotLabel& l : labels)
+                l.contest = contestClassify(l.call, l.hz);
+        } else if (not1mm_.active()) {
+            // Not1MM's contest (the console's own deck is closed): its
+            // dupes gray out, everything else keeps its usual colors.
+            for (SpotLabel& l : labels)
+                if (not1mm_.isDupe(l.call, l.hz, guessSpotMode(l.kind, l.comment, l.hz)))
+                    l.contest = 'W';
+        }
+        shownSpots_ = labels;
+        pan_->setSpots(labels);
+        if (spotTable_) spotTable_->setSpots(labels);
+    };
+    pushSpots_ = pushSpots;            // contest toggle re-pushes for color
+    connect(skim_, &SkimmerEngine::spotsChanged, this, pushSpots);
+    connect(watchEdit, &QAction::triggered, this,
+            [this, watchEdit, pushSpots] {
+                bool ok = false;
+                const QString t = QInputDialog::getMultiLineText(
+                    this, "DX watch list",
+                    "Alert patterns — calls, prefixes (JA*), parks "
+                    "(US-1234), NEW for\nnever-worked; one per line:",
+                    watch_.patterns(), &ok);
+                if (!ok) return;
+                watch_.setPatterns(t);
+                QSettings().setValue("spots/watch", t);
+                watchEdit->setText(
+                    QString("Watch list… (%1)").arg(watch_.count()));
+                watchNotified_.clear();
+                pushSpots();
+            });
+    connect(skimEnable_, &QAction::toggled, this, [this, pushSpots](bool on) {
+        QSettings().setValue("skim/enabled", on);
+        applySkimGate();
+        const quint16 sp =
+            quint16(QSettings().value("skim/telnetPort", 7300).toUInt());
+        if (on) skimSrv_->start(sp);
+        else skimSrv_->stop();
+        statusBar()->showMessage(on ? "CW skimmer ON (violet spots)"
+                                    : "CW skimmer off", 5000);
+        pushSpots();
+    });
+    if (skimEnable_->isChecked())
+        skimSrv_->start(
+            quint16(QSettings().value("skim/telnetPort", 7300).toUInt()));
+    // Recolor live when the logbook loads or a bridged QSO lands in it.
+    connect(&logbook_, &LogbookIndex::updated, this, pushSpots);
+    // The console's own log (SQLite) is the second worked-before source —
+    // and the only one for the country/band/mode needed-status dimensions.
+    logDb_ = new LogDb(this);
+    if (!logDb_->open())
+        statusBar()->showMessage("station log: cannot open database", 6000);
+    logbook_.attachCty(&cty_);
+    logbook_.attachDb(logDb_);
+    logbook_.start();
+    // cqrlog -> console mirror: QSOs that land in cqrlog first (WSJT-X
+    // digi, hand entries there) pull into this log too, so the needed-
+    // dots agree across all modes. The other direction is the bridge.
+    cqrSync_ = new CqrlogSync(logDb_, &cty_, this);
+    connect(cqrSync_, &CqrlogSync::pulled, this, [this](int n) {
+        statusBar()->showMessage(
+            QString("station log: %1 QSO%2 mirrored from cqrlog")
+                .arg(n).arg(n == 1 ? "" : "s"), 6000);
+    });
+    cqrSync_->start();
+    // Online-log push (GridTracker-style instant uploads + retry sweep).
+    // Successes stay quiet — the status columns are the record; failures
+    // get one status-bar line so a dead service doesn't fail silently.
+    uploader_ = new QslUploader(logDb_, this);
+    // Every upload outcome shows in the status bar, success included —
+    // the operator wants to SEE each QSO land (GridTracker's traffic
+    // lines were the model).
+    connect(uploader_, &QslUploader::serviceResult, this,
+            [this](const QString& svc, bool ok, const QString& detail) {
+                statusBar()->showMessage(svc + ": " + detail,
+                                         ok ? 4000 : 8000);
+            });
+    // WSJT-X QSOs flow in over its UDP broadcast (GridTracker keeps doing
+    // the online pushing for those unless log/wsjtxPush says otherwise).
+    wsjtx_ = new WsjtxListener(logDb_, &cty_, this);
+    wsjtx_->start();
+    connect(wsjtx_, &WsjtxListener::heardChanged, this, [this] {
+        if (pushSpots_) pushSpots_();
+    });
+    connect(wsjtx_, &WsjtxListener::stateChanged, this, &MainWindow::onWsjtxState);
+    connect(wsjtx_, &WsjtxListener::qsoLogged, this,
+            [this](qint64 id, const QString& call, bool pushWanted) {
+                statusBar()->showMessage("logged " + call + " (WSJT-X)",
+                                         4000);
+                // live-found 2026-10-22: the New QSO window kept the call
+                // after WSJT-X logged it.
+                if (logWin_) logWin_->loggedElsewhere(call);
+                if (pushWanted && uploader_) uploader_->pushQso(id);
+                enrichQso(id, call);
+            });
+    // Clicking a decode (or starting a transmission) in WSJT-X rides the
+    // same rails as a spot click: New QSO window pre-fills, cqrlog is
+    // nudged, and the globe swings to the station.
+    connect(wsjtx_, &WsjtxListener::dxChanged, this,
+            [this](const QString& call, const QString& grid,
+                   const QString& mode) {
+                sendCqrLookup(call, {}, grid);
+                if (logWin_ && logWin_->isVisible())
+                    logWin_->setModeHint(mode);
+            });
+    qrz_ = new QrzLookup(this);
+    // cqrlog's habit, kept: every logged QSO gets its callbook lookup and
+    // the name/QTH/grid written into the log (only fields still empty).
+    connect(qrz_, &QrzLookup::result, this,
+            [this](const QString& call, bool ok, const QString& name,
+                   const QString& qth, const QString& grid,
+                   const QString&) {
+                const auto ids = enrichPending_.values(call);
+                enrichPending_.remove(call);
+                if (!ok || !logDb_) return;
+                for (const qint64 id : ids) {
+                    Qso q = logDb_->qso(id);
+                    if (q.id < 0) continue;
+                    bool ch = false;
+                    if (q.name.isEmpty() && !name.isEmpty()) {
+                        q.name = name;
+                        ch = true;
+                    }
+                    if (q.qth.isEmpty() && !qth.isEmpty()) {
+                        q.qth = qth;
+                        ch = true;
+                    }
+                    if (q.grid.isEmpty() && !grid.isEmpty()) {
+                        q.grid = grid;
+                        ch = true;
+                    }
+                    if (ch) logDb_->updateQso(q);
+                }
+            });
+    connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
+    connect(&spotClient_, &SpotClient::statusChanged, this,
+            [this](const QString& s) { statusBar()->showMessage(s, 4000); });
+    // Re-serve the whole aggregate on :7300 — cluster lines verbatim, POTA
+    // formatted (the server throttles POTA's poll repetition) — so a
+    // one-node client (HRD Logbook, cqrlog) points here and loses nothing
+    // against a direct cluster connection, and gains the skimmer.
+    connect(&spotClient_, &SpotClient::rawSpotLine,
+            skimSrv_, &SkimServer::relayLine);
+    connect(&potaClient_, &PotaClient::spotsChanged, this, [this] {
+        for (const Spot& s : potaClient_.spots())
+            skimSrv_->announcePota(s.call, s.hz, s.tag);
+    });
+    connect(&potaClient_, &PotaClient::spotsChanged, this, pushSpots);
+    connect(&potaClient_, &PotaClient::statusChanged, this,
+            [this](const QString& s) { statusBar()->showMessage(s, 4000); });
+    connect(spotsOn, &QAction::toggled, this, [this, pushSpots, potaOn, fdvOn](bool on) {
+        QSettings().setValue("spots/enabled", on);
+        spotClient_.setEnabled(on);
+        potaClient_.setEnabled(on && potaOn->isChecked());
+        updateFreedvLink();
+        pushSpots();
+    });
+    connect(potaOn, &QAction::toggled, this, [this, pushSpots, spotsOn](bool on) {
+        QSettings().setValue("spots/pota", on);
+        potaClient_.setEnabled(on && spotsOn->isChecked());
+        pushSpots();
+    });
+    connect(&not1mm_, &Not1mmLog::changed, this, [this, pushSpots] {
+        const bool a = not1mm_.active();
+        if (a != not1mmShownActive_) {
+            not1mmShownActive_ = a;
+            statusBar()->showMessage(a
+                ? QString("Not1MM: %1, %2 QSOs — its dupes gray on the band map")
+                      .arg(not1mm_.contestName()).arg(not1mm_.qsoCount())
+                : QStringLiteral("Not1MM dupes: off"), 6000);
+        }
+        pushSpots();
+    });
+    connect(n1Dupes, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("spots/not1mmDupes", on);
+        not1mm_.setEnabled(on);
+    });
+    not1mm_.setEnabled(n1Dupes->isChecked());
+    connect(&freedv_, &FreeDvReporter::spotsChanged, this, pushSpots);
+    connect(&freedv_, &FreeDvReporter::qsyRequested, this,
+            [this](const QString& from, qint64 hz, const QString& msg) {
+        QApplication::beep();
+        statusBar()->showMessage(QString("FreeDV: %1 asks you to QSY to %2 kHz%3 — double-click "
+                                         "%1 in the FreeDV window to go")
+                                     .arg(from).arg(hz / 1000.0, 0, 'f', 1)
+                                     .arg(msg.isEmpty() ? QString() : " (\"" + msg + "\")"), 30000);
+    });
+    connect(&freedv_, &FreeDvReporter::statusChanged, this,
+            [this](const QString& s) { statusBar()->showMessage(s, 4000); });
+    connect(fdvOn, &QAction::toggled, this, [this, pushSpots, spotsOn](bool on) {
+        QSettings().setValue("spots/freedv", on);
+        updateFreedvLink();
+        pushSpots();
+    });
+    connect(wsjtOn, &QAction::toggled, this, [pushSpots](bool on) {
+        QSettings().setValue("spots/wsjtx", on);
+        pushSpots();
+    });
+    connect(ft8On, &QAction::toggled, this, [this, pushSpots](bool on) {
+        QSettings().setValue("spots/ft8", on);
+        spotClient_.setFt8Wanted(on);              // reconfigures the node live
+        pushSpots();
+    });
+    connect(dxOn, &QAction::toggled, this, [pushSpots](bool on) {
+        QSettings().setValue("spots/dx", on);
+        pushSpots();
+    });
+    // Spotter area: push the country list to the node (live if connected),
+    // remember the park scope for POTA, and re-filter what's on screen.
+    const auto applyArea = [this, pushSpots](const QString& ctys,
+                                             const QString& parks,
+                                             const QString& label) {
+        spotClient_.setSpotterFilter(ctys);
+        parkFilter_ = parks.isEmpty() ? QStringList()
+                                      : parks.split(',', Qt::SkipEmptyParts);
+        pushSpots();
+        statusBar()->showMessage(ctys.isEmpty()
+            ? QStringLiteral("spots: all spotters worldwide")
+            : QString("spots: spotters filtered to %1").arg(label));
+    };
+    for (int i = 0; i < static_cast<int>(std::size(kSpotAreas)); ++i)
+        connect(areaActs[i], &QAction::triggered, this, [applyArea, i] {
+            QSettings().setValue("spots/area", kSpotAreas[i].name);
+            applyArea(kSpotAreas[i].ctys, kSpotAreas[i].parks, kSpotAreas[i].name);
+        });
+    connect(areaCustom, &QAction::triggered, this,
+            [this, applyArea, areaActs, areaCustom] {
+        QSettings s;
+        bool ok = false;
+        const QString list = QInputDialog::getText(this,
+            "Custom spotter filter",
+            "Spotter country prefixes (CC Cluster list, e.g. K,VE,XE):",
+            QLineEdit::Normal,
+            s.value("spots/areaCustomCty", "K,VE,XE").toString(), &ok)
+            .trimmed().toUpper();
+        if (!ok || list.isEmpty()) {               // canceled: restore the check
+            const QString cur = s.value("spots/area", "North America").toString();
+            for (int i = 0; i < static_cast<int>(std::size(kSpotAreas)); ++i)
+                if (cur == kSpotAreas[i].name) areaActs[i]->setChecked(true);
+            if (cur == "Custom") areaCustom->setChecked(true);
+            return;
+        }
+        s.setValue("spots/area", "Custom");
+        s.setValue("spots/areaCustomCty", list);
+        applyArea(list, QString(), "custom (" + list + ")");
+    });
+    connect(spotsClear, &QAction::triggered, this, [this] { spotClient_.clear(); });
+    {   // Restore the persisted area choice (default: North America).
+        QSettings s;
+        const QString cur = s.value("spots/area", "North America").toString();
+        bool found = false;
+        for (int i = 0; i < static_cast<int>(std::size(kSpotAreas)); ++i)
+            if (cur == kSpotAreas[i].name) {
+                areaActs[i]->setChecked(true);
+                applyArea(kSpotAreas[i].ctys, kSpotAreas[i].parks,
+                          kSpotAreas[i].name);
+                found = true;
+            }
+        if (!found) {                              // stored custom list
+            areaCustom->setChecked(true);
+            applyArea(s.value("spots/areaCustomCty", "").toString(), QString(),
+                      "custom");
+        }
+    }
+    spotClient_.setFt8Wanted(ft8On->isChecked());  // before connect: config
+    spotClient_.setEnabled(spotsOn->isChecked());  // rides the login sequence
+    potaClient_.setEnabled(spotsOn->isChecked() && potaOn->isChecked());
+    updateFreedvLink();
+    // FreeDV reporting, freedv-gui's cadence: the dial and TX state as they
+    // change, each end-of-over callsign at once (FreeDV Reporter + PSK
+    // Reporter), and while in sync an empty-callsign rx_report every
+    // second ("receiving something", freedv-gui's '--').
+    auto* fdvTick = new QTimer(this);
+    fdvTick->setInterval(250);
+    connect(fdvTick, &QTimer::timeout, this, [this, seenCalls = 0, quietTicks = 0]() mutable {
+        updateFreedvLink();
+        // FreeDV follows the band's sideband as the dial moves (40 -> 20 m:
+        // LSB -> USB); a flip by hand holds until the band changes.
+        if (fdvMode_) {
+            const Mode want = fdvSideband(centerHz_);
+            static QString lastBand;
+            const QString band = LogbookIndex::bandForHz(qint64(centerHz_));
+            if (band != lastBand) {
+                lastBand = band;
+                if (want != fdvSb_) {
+                    fdvSb_ = want;
+                    applyMode(want);
+                    panel_->clearModeSelection();
+                }
+            }
+        }
+#ifdef HAVE_WDSP
+        if (fdvWin_ && sdrRx_) {
+            const SdrRx::RadeStatus rs = sdrRx_->radeStatus();
+            FreeDvWindow::Status st;
+            st.sync = rs.sync;
+            st.tx = radioTx_ && radeTxOn_;
+            st.snrDb = rs.snrDb;
+            st.freqOffsetHz = rs.freqOffsetHz;
+            st.lastCall = QString::fromStdString(rs.lastCall);
+            st.modemOutDb = live_ && live_->rade() ? live_->outputPeakDb() : -120.f;
+            st.micDb = live_ && live_->rade() ? live_->inputPeakDb() : -120.f;
+            fdvWin_->setStatus(st);
+            fdvWin_->setStations(freedv_.stations(), qint64(centerHz_));
+            if (rs.calls > seenCalls && !rs.lastCall.empty() && !isOwnCall(st.lastCall))
+                fdvWin_->addHeard(st.lastCall, int(std::lround(rs.snrDb)), qint64(centerHz_));
+        }
+#endif
+        if (!fdvReportingNow_) {
+#ifdef HAVE_WDSP
+            if (sdrRx_) seenCalls = sdrRx_->radeStatus().calls;
+#endif
+            return;
+        }
+        freedv_.reportFrequency(qint64(centerHz_));
+        freedv_.reportTransmit(radeTxOn_ && radioTx_);
+#ifdef HAVE_WDSP
+        if (!sdrRx_) return;
+        const SdrRx::RadeStatus r = sdrRx_->radeStatus();
+        if (r.calls != seenCalls) {
+            if (r.calls > seenCalls && !r.lastCall.empty()
+                && !isOwnCall(QString::fromStdString(r.lastCall))) {
+                const QString call = QString::fromStdString(r.lastCall);
+                freedv_.reportHeard(call, int(std::lround(r.snrDb)));
+                psk_.addHeard(call, qint64(centerHz_), int(std::lround(r.snrDb)));
+                quietTicks = 0;
+            }
+            seenCalls = r.calls;
+        }
+        // Every second while in sync, as freedv-gui does: the Reporter
+        // highlights a receiving station's row only for 5 s after its
+        // last report (freedv_reporter.cpp RX_COLORING_SHORT_TIMEOUT_SEC)
+        // — live-found at 10 s: W4NMH saw our "green bar" mostly dark.
+        if (r.sync && !radioTx_ && ++quietTicks >= 4) {
+            quietTicks = 0;
+            freedv_.reportHeard(QString(), int(std::lround(r.snrDb)));
+        }
+#endif
+    });
+    fdvTick->start();
+
+#ifdef HAVE_SDRPLAY
+    // Compact "SDR" dropdown for RSP2 hardware controls (hidden until clicked).
+    // Antenna A = Orion spare jack, B = Omni VII spare jack — switch it when you
+    // switch radios; it retunes the panadapter input live.
+    auto* sdrBtn = new QToolButton(topStrip);
+    sdrBtn->setText("SDR ▾");
+    sdrBtn->setPopupMode(QToolButton::InstantPopup);
+    sdrBtn->setFocusPolicy(Qt::NoFocus);
+    sdrBtn->setStyleSheet(
+        QString(kSideBtnStyle));
+    auto* sdrMenu = new QMenu(sdrBtn);
+    styleMenu(sdrMenu);
+    // Lit while the SDR receive audio (WDSP) plays.
+    lightWhile(sdrBtn, sdrMenu, [this] { return sdrRx_ && sdrRx_->running(); });
+    sdrMenu->setToolTipsVisible(true);   // hardware entries carry their limits
+    // Radio picker: which driver the console runs. Takes effect on the next
+    // launch (the driver, serial framing, and rigctld identity are built at
+    // startup). TTC_RADIO env still overrides for testing.
+    {
+        auto* radioGroup = new QActionGroup(this);
+        radioGroup->setExclusive(true);
+        // Every way of reaching a radio is its own entry with its OWN saved
+        // device profile — Orion serial (radio/deviceOrion), Omni VII serial
+        // (radio/deviceSerial) and Omni VII Ethernet (radio/deviceRemote)
+        // never stomp each other. Picking an entry writes model + connection
+        // + that profile's device into radio/device and RESTARTS the console
+        // (drivers are built at startup), so switching radios or Omni
+        // serial<->remote is one click. Live-found: the old entries changed
+        // only the model, leaving the previous radio's device behind — an
+        // Orion pick after Omni-remote tried to open udp: and needed two
+        // manual restart cycles to untangle.
+        struct Ship {
+            const char* label; const char* model; const char* conn;
+            const char* devKey; const char* devDefault;
+        };
+        // devDefault is empty on purpose: an unconfigured radio must send the
+        // operator to Station setup (which lists this machine's real ports)
+        // rather than to a device path that exists on one developer's bench.
+        static constexpr Ship kFleet[] = {
+            {"Radio: USS Orion  (565)",    "orion",  nullptr,
+             "radio/deviceOrion", ""},
+            {"Radio: USS Orion II  (566)", "orion2", nullptr,
+             "radio/deviceOrion", ""},
+            {"Radio: USS Omni VII  588 — front panel (serial)", "omni8",
+             "serial", "radio/deviceSerial", ""},
+            {"Radio: USS Omni VII  588 — remote (Ethernet)",    "omni8",
+             "remote", "radio/deviceRemote", ""},
+        };
+        const QString current = radioModelChoice();
+        const QString curConn =
+            QSettings().value("radio/connection", "serial").toString();
+        for (const Ship& ship : kFleet) {
+            auto* act = radioGroup->addAction(sdrMenu->addAction(ship.label));
+            act->setCheckable(true);
+            const bool modelMatch =
+                current == ship.model
+                || (current == "omni7" && QString(ship.model) == "omni8");
+            const bool connMatch = !ship.conn || curConn == ship.conn;
+            if (modelMatch && connMatch) act->setChecked(true);
+            connect(act, &QAction::triggered, this, [this, ship] {
+                QSettings s;
+                // Seed a missing Orion profile from the device that's live
+                // right now if it's already a serial path (migration: Jon's
+                // Orion answers on /dev/ttyS0, not the /dev/orion default).
+                QString dev = s.value(ship.devKey).toString();
+                if (dev.isEmpty()) {
+                    const QString cur = s.value("radio/device").toString();
+                    const bool serialish = !cur.startsWith("udp:") && !cur.isEmpty();
+                    dev = (!ship.conn && serialish) ? cur
+                                                    : QString(ship.devDefault);
+                    s.setValue(ship.devKey, dev);
+                }
+                s.setValue("radio/model", ship.model);
+                if (ship.conn) s.setValue("radio/connection", ship.conn);
+                s.setValue("radio/device", dev);
+                s.sync();
+                statusBar()->showMessage(
+                    QString("radio: %1 — restarting…")
+                        .arg(QString(ship.label).mid(7)));
+                QTimer::singleShot(300, this, [] {
+                    QStringList args = qApp->arguments().mid(1);
+                    if (!args.contains("--wait-lock")) args << "--wait-lock";
+                    QProcess::startDetached(qApp->applicationFilePath(), args);
+                    qApp->quit();
+                });
+            });
+        }
+        // TX audio source for remote transmit (TRIP): what the radio sends
+        // over the air when keyed in Ethernet mode. Off = no streamed TX
+        // audio (keying alone = dead air over Ethernet). Mic / Digital pick
+        // the capture node from settings (station-specific, seeded in the
+        // conf) so no PipeWire node names live in the binary. tripSource is
+        // read live on each key; enabling from Off needs a relaunch (the
+        // stream object is built at connect).
+        auto* txMenu = sdrMenu->addMenu("TX audio (remote)");
+        auto* txGroup = new QActionGroup(this);
+        txGroup->setExclusive(true);
+        struct TxSrc { const char* label; const char* srcKey; };
+        static constexpr TxSrc kTxSrc[] = {
+            {"Off  (no streamed TX audio)", nullptr},
+            {"Microphone",                  "radio/tripSourceMic"},
+            {"Digital  (WSJT-X / fldigi)",  "radio/tripSourceDigital"},
+        };
+        {
+            QSettings s;
+            const bool tripOn = s.value("radio/tripAudio", false).toBool();
+            const QString curSrc = s.value("radio/tripSource").toString();
+            for (const TxSrc& t : kTxSrc) {
+                auto* act = txGroup->addAction(txMenu->addAction(t.label));
+                act->setCheckable(true);
+                if (!t.srcKey)
+                    act->setChecked(!tripOn);
+                else
+                    act->setChecked(tripOn
+                                    && curSrc == s.value(t.srcKey).toString());
+                connect(act, &QAction::triggered, this, [this, t] {
+                    QSettings s;
+                    if (!t.srcKey) {
+                        s.setValue("radio/tripAudio", false);
+                        statusBar()->showMessage(
+                            "TX audio: off — restart to apply", 6000);
+                        return;
+                    }
+                    const QString node = s.value(t.srcKey).toString();
+                    s.setValue("radio/tripSource", node);
+                    const bool wasOn = s.value("radio/tripAudio", false).toBool();
+                    s.setValue("radio/tripAudio", true);
+                    statusBar()->showMessage(
+                        QString("TX audio: %1%2")
+                            .arg(QString(t.label).section("  ", 0, 0))
+                            .arg(wasOn ? " (live next key)"
+                                       : " — restart to enable"),
+                        6000);
+                });
+            }
+        }
+        // TX audio shaping — Omni VII REMOTE-only DSP the front panel can't
+        // reach while remote (and the Orion doesn't have at all): the *C1I
+        // TX equalizer tilt (-20 dB "high pitched" .. 0 flat .. +20 dB
+        // "very bassy", 1 dB steps) and the *C1J low-end rolloff corner
+        // (70-300 Hz — where the SSB low end starts attenuating; lower =
+        // more bass gets through). Persisted and re-applied at connect (only
+        // once the operator has touched them, so an untouched radio keeps
+        // its own menu settings). Sliders live in the menu via
+        // QWidgetAction, so the TX bar's minimum width is untouched.
+        {
+            QSettings s;
+            const QString mdl = radioModelChoice();
+            const bool omniRemote =
+                (mdl == "omni8" || mdl == "omni7")
+                && s.value("radio/device").toString().startsWith("udp:");
+            auto* shapeMenu = sdrMenu->addMenu("TX audio shaping (bass/EQ)");
+            shapeMenu->setEnabled(omniRemote);
+            if (!omniRemote)
+                shapeMenu->setToolTip("Omni VII over Ethernet only — the "
+                                      "*C1 DSP group answers in REMOTE mode");
+            auto addShapeSlider = [&](const QString& name, int min, int max,
+                                      int step, const QString& key, int def,
+                                      const QString& suffix, auto sendFn) {
+                auto* w = new QWidget(shapeMenu);
+                auto* lay = new QHBoxLayout(w);
+                lay->setContentsMargins(10, 4, 10, 4);
+                auto* lbl = new QLabel(name, w);
+                lbl->setStyleSheet("color: #c8d4e0; font-size: 12px;");
+                lbl->setFixedWidth(64);
+                auto* sl = new QSlider(Qt::Horizontal, w);
+                sl->setRange(min, max);
+                sl->setSingleStep(step);
+                sl->setFixedWidth(150);
+                auto* val = new QLabel(w);
+                val->setStyleSheet(
+                    "color: #6aa5d8; font-size: 12px; font-weight: bold;");
+                val->setFixedWidth(56);
+                const int cur = QSettings().value(key, def).toInt();
+                sl->setValue(cur);
+                val->setText(QString::number(cur) + suffix);
+                lay->addWidget(lbl);
+                lay->addWidget(sl);
+                lay->addWidget(val);
+                connect(sl, &QSlider::valueChanged, this,
+                        [this, val, suffix, key, sendFn](int v) {
+                            val->setText(QString::number(v) + suffix);
+                            QSettings().setValue(key, v);
+                            sendFn(v);
+                        });
+                auto* act = new QWidgetAction(shapeMenu);
+                act->setDefaultWidget(w);
+                shapeMenu->addAction(act);
+            };
+            addShapeSlider("TX EQ", -20, 20, 1, "tx/eqDb", 0, " dB",
+                           [this](int v) {
+                               radio_->setTxEq(v);
+                               statusBar()->showMessage(
+                                   QString("TX EQ %1 dB (+ = bassy)").arg(v));
+                           });
+            addShapeSlider("Rolloff", 70, 300, 10, "tx/rolloffHz", 70, " Hz",
+                           [this](int v) {
+                               radio_->setTxRolloff(v);
+                               statusBar()->showMessage(
+                                   QString("TX low-end rolloff %1 Hz "
+                                           "(lower = more bass)").arg(v));
+                           });
+        }
+        auto* setupAct = sdrMenu->addAction("Station setup…");
+        connect(setupAct, &QAction::triggered, this, &MainWindow::openSetup);
+        sdrMenu->addSeparator();
+    }
+    auto* antGroup = new QActionGroup(this);
+    antGroup->setExclusive(true);
+    auto* antA = antGroup->addAction(sdrMenu->addAction("Antenna A  (Orion)"));
+    auto* antB = antGroup->addAction(sdrMenu->addAction("Antenna B  (Omni VII)"));
+    antA->setCheckable(true);
+    antB->setCheckable(true);
+    sdrMenu->addSeparator();
+    auto* bcNotch = sdrMenu->addAction("Broadcast (MW) notch");
+    bcNotch->setCheckable(true);
+    bcNotch->setToolTip(
+        "RSP2 hardware band-stop across the AM broadcast band, ahead of\n"
+        "the tuner. On the higher bands it changes no real signal — what\n"
+        "it removes there is the junk strong AM stations make inside the\n"
+        "RSP2 when the front end is driven hard.\n"
+        "\n"
+        "ONLY WORKS AT LNA 0-2. Measured on this receiver at 80 m, mean\n"
+        "change over the ten strongest signals in the window:\n"
+        "    LNA 0  -10 dB      LNA 3  -1 dB\n"
+        "    LNA 1  -31 dB      LNA 5   0 dB\n"
+        "    LNA 2  -11 dB      LNA 7   0 dB\n"
+        "Above state 2 the RSP2 does not switch the filter in at all, no\n"
+        "matter who asks. To use the notch, drop the LNA to 0-2 and take\n"
+        "the level back with IF gain reduction — or just use Notch mode\n"
+        "below, which parks the gain there for you.");
+    auto* notchMode = sdrMenu->addAction("Notch mode  (LNA 1 / IF -59 dB)");
+    notchMode->setCheckable(true);
+    notchMode->setToolTip(
+        "Switches the broadcast notch in AND parks the gain at the only\n"
+        "setting where the RSP2 actually puts it in circuit: LNA 1 with\n"
+        "the IF gain reduction at maximum. Measured on 80 m, this takes\n"
+        "24 dB off the broadcast ghosts; LNA 7 takes off nothing, and a\n"
+        "low LNA with light IF reduction just saturates the front end.\n"
+        "\n"
+        "Switching it off hands your own gain back. Moving the IF or LNA\n"
+        "control by hand drops out of notch mode, like Auto LNA does.");
+    sdrMenu->addSeparator();
+    // Band recorder: raw capture to disk so the whole pipeline (skimmer
+    // included) can be re-run on a real recording. Park on the band first
+    // — the recording stops itself if the dial moves.
+    iqRec_ = new IqRecorder(this);
+    recIqAct_ = sdrMenu->addAction("Record band IQ (~4 MB/s)");
+    recIqAct_->setCheckable(true);
+    recIqAct_->setToolTip(
+        "Write the raw 1 MHz capture to disk (.tciq). Everything the "
+        "panadapter\nsees, replayable through the skimmer/decoder later. "
+        "Park on the band first;\ntuning stops the recording.");
+    connect(recIqAct_, &QAction::toggled, this, [this](bool on) {
+        if (on) {
+            const QString path = IqRecorder::defaultDir()
+                + QString("/%1-%2kHz.tciq")
+                      .arg(QDateTime::currentDateTimeUtc()
+                               .toString("yyyyMMdd-hhmmss"))
+                      .arg(centerHz_ / 1000);
+            // Header rate must be the rate feed() actually receives — it
+            // was left at the old 500 k literal when the capture went to
+            // 1 MHz (found 2026-08-06 before any capture was taken wrong).
+            // The dial rides in the v2 header because center − dial is
+            // whatever the LO policy made it (band frames park the LO
+            // above the frame, CTUN parks it anywhere).
+            if (iqRec_->start(path,
+                              sdrSpanHz_ > 0 ? double(sdrSpanHz_)
+                                             : double(kSdrCaptureHz),
+                              double(centerHz_) + loOffHz_,
+                              double(centerHz_)))
+                statusBar()->showMessage("IQ recording -> " + path);
+            else {
+                statusBar()->showMessage("IQ record: cannot open " + path,
+                                         6000);
+                const QSignalBlocker b(recIqAct_);
+                recIqAct_->setChecked(false);
+            }
+        } else if (iqRec_->active()) {
+            iqRec_->stop();
+            statusBar()->showMessage(
+                QString("IQ recording saved (%1 MB): %2")
+                    .arg(iqRec_->bytesWritten() / 1048576)
+                    .arg(iqRec_->path()), 10000);
+        }
+    });
+    connect(iqRec_, &IqRecorder::progress, this,
+            [this](qint64 bytes, double secs) {
+                static int n = 0;
+                if (++n % 25 == 0)         // every ~5 s, not every drain
+                    statusBar()->showMessage(
+                        QString("IQ recording  %1 s   %2 MB")
+                            .arg(int(secs)).arg(bytes / 1048576));
+            });
+    // Timed unattended capture (RX only): tune + record at a UTC time.
+    schedIqAct_ = sdrMenu->addAction("Schedule IQ recording…");
+    schedIqAct_->setToolTip(
+        "Arm a one-shot recording: at the set UTC time the console tunes\n"
+        "to the chosen dial and records band IQ for the duration (W1AW\n"
+        "code practice, overnight opening studies). Select again to cancel.");
+    connect(schedIqAct_, &QAction::triggered, this,
+            &MainWindow::scheduleIqRecordingDialog);
+    sdrMenu->addSeparator();
+
+    // Front-end gain, live-adjustable: too much gain = ADC overload warnings
+    // and a taller DC spike; too little buries weak signals. IF slider shows
+    // gain (right = hotter, mapped to the API's 59..20 dB reduction); LNA is
+    // the coarse attenuator (0 = max gain .. 8 = max attenuation).
+    auto* gainW = new SdrGainPanel(sdrMenu);       // ui/SdrGainPanel
+    auto* ifGain = gainW->ifGain();
+    auto* ifVal = gainW->ifValue();
+    auto* lna = gainW->lna();
+    auto* autoLnaBox = gainW->autoLna();
+    auto* gainAction = new QWidgetAction(sdrMenu);
+    gainAction->setDefaultWidget(gainW);
+    sdrMenu->addAction(gainAction);
+
+    sdrBtn->setMenu(sdrMenu);
+    setupSdrRxUi(sdrMenu);                       // Receive audio (WDSP) submenu
+    topLay->addSpacing(8);
+    topLay->addWidget(sdrBtn);
+
+    {   // restore persisted RSP2 state before start() applies it
+        QSettings s;
+        const bool useB  = s.value("sdr/antennaB", false).toBool();
+        const bool nMode = s.value("sdr/notchMode", false).toBool();
+        const bool bcn   = nMode || s.value("sdr/broadcastNotch", false).toBool();
+        // Notch mode owns the gain while it is on, but sdr/gRdB and sdr/lna
+        // keep holding the OPERATOR's gain the whole time — that is what
+        // switching notch mode off hands back, so it must never be written
+        // over with the parked values.
+        const int  gr = nMode ? SdrPlaySource::kNotchModeGRdB
+                              : std::clamp(s.value("sdr/gRdB", 40).toInt(), 20, 59);
+        const int  ls = nMode ? SdrPlaySource::kNotchModeLna
+                              : std::clamp(s.value("sdr/lna", 6).toInt(), 0, 8);
+        (useB ? antB : antA)->setChecked(true);
+        bcNotch->setChecked(bcn);
+        notchMode->setChecked(nMode);
+        sdr_.setAntennaB(useB);
+        sdr_.setBroadcastNotch(bcn);
+        sdr_.setGain(gr, ls);
+        const QSignalBlocker b1(ifGain), b2(lna);
+        ifGain->setValue(gr);
+        lna->setCurrentIndex(ls);
+        ifVal->setText(QString("-%1 dB").arg(gr));
+    }
+    auto applySdrGain = [this, ifGain, ifVal, lna, notchMode] {
+        const int gr = ifGain->value(), ls = lna->currentIndex();
+        ifVal->setText(QString("-%1 dB").arg(gr));
+        sdr_.setGainLive(gr, ls);
+        QSettings s;
+        s.setValue("sdr/gRdB", gr);
+        s.setValue("sdr/lna", ls);
+        // Hand-set gain wins over notch mode, exactly as it does over Auto
+        // LNA. Notch mode's own gain moves come through with the widgets
+        // blocked, so they never land here.
+        if (notchMode->isChecked()) {
+            const QSignalBlocker b(notchMode);
+            notchMode->setChecked(false);
+            s.setValue("sdr/notchMode", false);
+        }
+        // Raising the LNA past state 2 takes the broadcast notch out of
+        // circuit (see SdrPlaySource::kNotchDeadAboveLna) — silently, in the
+        // hardware. If the operator is relying on the notch, say so here
+        // rather than let him hunt the ghosts it stops removing.
+        const bool notchInert =
+            sdr_.broadcastNotch() && !sdr_.notchCanWork();
+        statusBar()->showMessage(
+            QString("SDR gain: IF -%1 dB  LNA state %2%3").arg(gr).arg(ls)
+                .arg(notchInert ? "  —  broadcast notch is INERT above LNA 2"
+                                : ""),
+            notchInert ? 10000 : 0);
+    };
+    connect(ifGain, &QSlider::valueChanged, this, applySdrGain);
+    connect(lna, &QComboBox::currentIndexChanged, this, applySdrGain);
+    // --- Auto LNA wiring ---
+    autoLnaBox->setChecked(QSettings().value("sdr/autoLna", true).toBool());
+    // Release floor: quiet must not invite the shack's RFI up out of the
+    // noise (40 m grew spikes at LNA 1 the one evening this defaulted to
+    // 0 — see AutoGain.h). Per-station RF fact, so a setting.
+    autoLna_.setMinLna(QSettings().value("sdr/minLna", 3).toInt());
+    autoLna_.reset(lna->currentIndex(), QDateTime::currentMSecsSinceEpoch());
+    connect(autoLnaBox, &QCheckBox::toggled, this, [this, lna](bool on) {
+        QSettings().setValue("sdr/autoLna", on);
+        if (on)
+            autoLna_.reset(lna->currentIndex(),
+                           QDateTime::currentMSecsSinceEpoch());
+        statusBar()->showMessage(on ? "Auto LNA ON" : "Auto LNA off (manual)",
+                                 4000);
+    });
+    connect(lna, &QComboBox::currentIndexChanged, this,
+            [this, autoLnaBox](int) {
+                // The operator's hand wins: a manual LNA change takes the
+                // loop out (re-check the box to hand it back).
+                if (autoLnaBox->isChecked()) {
+                    const QSignalBlocker b(autoLnaBox);
+                    autoLnaBox->setChecked(false);
+                    QSettings().setValue("sdr/autoLna", false);
+                    statusBar()->showMessage(
+                        "Auto LNA off — manual control", 5000);
+                }
+            });
+    auto* agcTick = new QTimer(this);
+    agcTick->setInterval(1000);
+    connect(agcTick, &QTimer::timeout, this,
+            [this, lna, ifGain, autoLnaBox] {
+                const float pk = iqPeak_.exchange(0.0f);
+                if (pk <= 0.0f || replayThread_) return;   // no live stream
+                if (txMonOn_ || radioTx_) return;  // TX peaks aren't band state
+                // Panic-slammed samples make the band look QUIET — feeding
+                // them to the release logic ratcheted the LNA to 0 today
+                // (live-found: spur forest + persisted sdr/lna=0). Sit the
+                // window out entirely.
+                if (panicked_) return;
+                if (!autoLnaBox->isChecked()) return;
+                const double dbfs = 20.0 * std::log10(double(pk));
+                const auto d = autoLna_.tick(
+                    dbfs, QDateTime::currentMSecsSinceEpoch());
+                if (!d.step) return;
+                sdr_.setGainLive(ifGain->value(), d.lna);
+                QSettings().setValue("sdr/lna", d.lna);
+                {
+                    const QSignalBlocker b(lna);   // don't trip manual-off
+                    lna->setCurrentIndex(d.lna);
+                }
+                statusBar()->showMessage(
+                    QString("auto LNA -> %1  (%2, peaks %3 dBFS)")
+                        .arg(d.lna).arg(d.why).arg(dbfs, 0, 'f', 1), 6000);
+            });
+    agcTick->start();
+    // TX monitor (Option A): while transmitting, slam the RSP2 to maximum
+    // attenuation so the panadapter shows the operator's own signal at the
+    // "0.9 W look" instead of ADC-clipped garbage — the tap runs ~20-25 dB
+    // past clipping at 100 W. Triggers, OR'd: the radio's TX-format meter
+    // reply (paddle/mic PTT, ~a poll cycle), console-keyed PTT (manual
+    // tune, DVR — instant), and a BURST of ADC overload events within one
+    // 100 ms tick (milliseconds; a burst is required so a single RX
+    // overload from a broadcaster stays Auto LNA's business). A 1 s hang
+    // keeps the gain from flapping between CW elements and SSB syllables.
+    txMonAct_ = sdrMenu->addAction("TX monitor (gain drop on transmit)");
+    txMonAct_->setCheckable(true);
+    txMonAct_->setChecked(QSettings().value("sdr/txMon", true).toBool());
+    txMonAct_->setToolTip(
+        "While transmitting, drop the RSP2 gain hard so your own signal\n"
+        "shows cleanly on the panadapter (keying envelope, speech width)\n"
+        "instead of overload hash. Restores receive gain ~1 s after unkey.");
+    // Antenna flip on TX: hop the RSP2 to the OTHER port while the
+    // transmitter is up, so the pan shows that port instead of the blast
+    // on the shared feed. With the far port empty that's a calm screen;
+    // with the RF sampler (bench plan) on it, it becomes a clean TX
+    // monitor. Rides the TX monitor's detection and hang timer.
+    txFlipAct_ = sdrMenu->addAction("Flip to the other antenna on TX");
+    txFlipAct_->setCheckable(true);
+    txFlipAct_->setChecked(QSettings().value("sdr/txAntFlip", false).toBool());
+    txFlipAct_->setToolTip(
+        "While transmitting, switch the RSP2 to the opposite antenna port\n"
+        "(back on the receive port after the TX-monitor hang). Empty port =\n"
+        "quiet screen during TX; a TX sampler on that port = clean TX view.\n"
+        "Needs TX monitor enabled — it shares the same transmit detection.");
+    connect(txFlipAct_, &QAction::toggled, this, [](bool on) {
+        QSettings().setValue("sdr/txAntFlip", on);
+    });
+    // Panic arming is TX-scoped by the txTick below — never armed on a
+    // plain receive, no matter how hot the band runs the ADC.
+    sdr_.setTxPanic(false);
+    txMonEnabled_.store(txMonAct_->isChecked(), std::memory_order_relaxed);
+    connect(txMonAct_, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("sdr/txMon", on);
+        if (!on) sdr_.setTxPanic(false);
+        txMonEnabled_.store(on, std::memory_order_relaxed);
+        if (!on && txMonOn_) {
+            txMonOn_ = false;
+            sdr_.setGainLive(txSaveGr_, txSaveLna_);
+        }
+    });
+    // Hang time before RX gain returns. QSK CW unkeys between elements
+    // and the Orion's meter poll flaps TX/RX with it — the SDR must NOT
+    // chase that (live-found: gain bouncing during QSK strings). Longer
+    // hang = calmer QSK at the cost of a deafer beat after the over.
+    txMonHangMs_ = QSettings().value("sdr/txMonHangS", 1).toInt() * 1000;
+    auto* hangMenu = sdrMenu->addMenu("TX monitor hang");
+    styleMenu(hangMenu);
+    auto* hangGrp = new QActionGroup(this);
+    for (int secs : {1, 2, 3}) {
+        auto* a = hangMenu->addAction(QString("%1 s").arg(secs));
+        a->setCheckable(true);
+        a->setActionGroup(hangGrp);
+        a->setChecked(txMonHangMs_ == secs * 1000);
+        connect(a, &QAction::triggered, this, [this, secs] {
+            txMonHangMs_ = secs * 1000;
+            QSettings().setValue("sdr/txMonHangS", secs);
+            statusBar()->showMessage(
+                QString("TX monitor hang %1 s").arg(secs), 4000);
+        });
+    }
+    if (!hangGrp->checkedAction())         // stale setting: default 1 s
+        hangGrp->actions().first()->setChecked(true);
+    // The fldigi companion window, parked here since its old button
+    // became CNTST. The operator never opens it; public-alpha users who
+    // had a DIGI button still have a door.
+    sdrMenu->addSeparator();
+    connect(sdrMenu->addAction("Digi (fldigi) window…"), &QAction::triggered,
+            this, [this] { openDigiWindow(); });
+    setupWinlinkUi(sdrMenu);                      // right below fldigi
+    auto* txTick = new QTimer(this);
+    txTick->setInterval(100);
+    connect(txTick, &QTimer::timeout, this, [this, ifGain, lna] {
+        if (replayThread_) return;
+        const unsigned ov = sdr_.overloadCount();
+        const unsigned burst = ov - lastOverloads_;
+        lastOverloads_ = ov;
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const bool predicted = now - txPredictMs_ < 1500;
+        // Overload bursts alone are NOT transmit evidence: a hot band can
+        // hold the ADC in sustained overload and fire the same rapid
+        // events, and treating that as TX flapped the gain in a 300 ms
+        // slam/restore loop (live-found on the first post-restart look:
+        // "spikes, drops out, comes back"). TX = the radio says so, or
+        // the console keyed it, or keying is predicted; the callback
+        // panic still covers a paddle's first ~250 ms until the meter
+        // confirms.
+        const bool tx = radioTx_ || tuning_ || dvrTxPlayback_ || predicted;
+        if (tx) lastTxMs_ = now;
+        if (!txMonAct_->isChecked()) {
+            panicked_ = false;             // disabled = nothing slams; a
+            if (txAntFlipped_) {           // monitor turned off mid-TX:
+                txAntFlipped_ = false;     // never strand the RX antenna
+                sdr_.setAntennaB(
+                    QSettings().value("sdr/antennaB", false).toBool());
+            }
+            return;                        // latched flag was muting Auto
+        }                                  // LNA (live-found: stuck LNA 0)
+        // Arm the callback's panic slam ONLY around actual transmit
+        // context. Armed-at-all-times meant the SWBC-hour band's chronic
+        // RX overloads slammed the hardware gains, the restore needed
+        // 300 ms of overload silence the band never granted, and the
+        // latched panic muted Auto LNA — the one mechanism that would
+        // have tamed the band. Display blanked, meter dead, deadlock
+        // (live-found 2026-07-16 ~21:00 on 40 m).
+        sdr_.setTxPanic(tx || now - lastTxMs_ < 3000);
+        if (tx || txMonOn_)
+            txCtxMs_.store(now, std::memory_order_relaxed);
+        if (burst > 0 && (tx || txMonOn_))
+            panicked_ = true;              // callback may have slammed gain
+        // Unconfirmed panic: restore the receive gains once the overloads
+        // settle — or unconditionally 5 s past the last TX sign; chronic
+        // RX overload is Auto LNA's business, not the TX monitor's.
+        if (panicked_ && !txMonOn_ && !tx
+            && (now - sdr_.lastOverloadMs() > 300
+                || now - lastTxMs_ > 5000)) {
+            panicked_ = false;
+            sdr_.setGainLive(sdr_.gainReduction(), sdr_.lnaState());
+        }
+        if (tx && !txMonOn_) {
+            txMonOn_ = true;
+            txSaveGr_ = sdr_.gainReduction();
+            txSaveLna_ = sdr_.lnaState();
+            sdr_.setGainLive(59, 8);
+            // Antenna flip: hop to the port the transmitter is NOT on.
+            // The RX port is re-read from settings at both ends so a
+            // mid-session A/B change never restores to a stale port.
+            if (txFlipAct_->isChecked()) {
+                txAntFlipped_ = true;
+                sdr_.setAntennaB(
+                    !QSettings().value("sdr/antennaB", false).toBool());
+            }
+            statusBar()->showMessage(txAntFlipped_
+                ? "TX monitor: gain dropped, antenna flipped"
+                : "TX monitor: gain dropped");
+        } else if (txMonOn_ && now - lastTxMs_ > txMonHangMs_) {
+            txMonOn_ = false;
+            panicked_ = false;
+            if (txAntFlipped_) {
+                txAntFlipped_ = false;
+                sdr_.setAntennaB(
+                    QSettings().value("sdr/antennaB", false).toBool());
+            }
+            sdr_.setGainLive(txSaveGr_, txSaveLna_);
+            iqPeak_.exchange(0.0f);        // don't feed TX peaks to Auto LNA
+            {
+                const QSignalBlocker b(lna);
+                lna->setCurrentIndex(txSaveLna_);
+            }
+            statusBar()->showMessage("TX monitor: receive gain restored",
+                                     4000);
+        }
+    });
+    txTick->start();
+    connect(antA, &QAction::triggered, this, [this] {
+        sdr_.setAntennaB(false);
+        QSettings().setValue("sdr/antennaB", false);
+        statusBar()->showMessage("RSP2 antenna A (Orion)");
+    });
+    connect(antB, &QAction::triggered, this, [this] {
+        sdr_.setAntennaB(true);
+        QSettings().setValue("sdr/antennaB", true);
+        statusBar()->showMessage("RSP2 antenna B (Omni VII)");
+    });
+    // The antenna entries above have always confirmed themselves in the status
+    // bar; the notch never said anything, and since it can only bite inside the
+    // AM broadcast band there is nothing to see on the panadapter above 160 m
+    // either — checking it on 40 m looks exactly like a dead control. Say what
+    // happened, and say it truthfully if the API refused.
+    connect(bcNotch, &QAction::toggled, this, [this, bcNotch](bool on) {
+        if (!sdr_.setBroadcastNotch(on)) {
+            const QSignalBlocker b(bcNotch);
+            bcNotch->setChecked(sdr_.broadcastNotch());   // never lie about it
+            statusBar()->showMessage(
+                QString("RSP2 broadcast notch refused by the API: %1")
+                    .arg(QString::fromStdString(sdr_.lastError())), 8000);
+            return;
+        }
+        QSettings().setValue("sdr/broadcastNotch", on);
+        if (on && !sdr_.notchCanWork())
+            statusBar()->showMessage(
+                QString("RSP2 broadcast notch ON but INERT at LNA %1 — this "
+                        "receiver only switches it in at LNA 0-2. Drop the LNA "
+                        "(add IF gain reduction to hold the level) to use it.")
+                    .arg(sdr_.lnaState()), 12000);
+        else
+            statusBar()->showMessage(
+                on ? "RSP2 broadcast notch IN — 0.5-1.7 MHz killed at the "
+                     "antenna, ahead of the tuner"
+                   : "RSP2 broadcast notch out", 6000);
+    });
+    // Notch mode: the notch plus the only gain the RSP2 will hold it at.
+    // Everything here moves the widgets with their signals blocked, so
+    // applySdrGain never runs and the operator's own gain stays in
+    // sdr/gRdB + sdr/lna, waiting to be handed back.
+    connect(notchMode, &QAction::toggled, this,
+            [this, bcNotch, ifGain, ifVal, lna, autoLnaBox](bool on) {
+        QSettings s;
+        s.setValue("sdr/notchMode", on);
+        int gr, ls;
+        if (on) {
+            gr = SdrPlaySource::kNotchModeGRdB;
+            ls = SdrPlaySource::kNotchModeLna;
+            // Auto LNA would walk the LNA straight back out of the notch's
+            // reach within a tick or two, silently — it cannot share the
+            // wheel with notch mode.
+            if (autoLnaBox->isChecked()) {
+                const QSignalBlocker b(autoLnaBox);
+                autoLnaBox->setChecked(false);
+                s.setValue("sdr/autoLna", false);
+            }
+        } else {
+            gr = std::clamp(s.value("sdr/gRdB", 40).toInt(), 20, 59);
+            ls = std::clamp(s.value("sdr/lna", 6).toInt(), 0, 8);
+        }
+        {
+            const QSignalBlocker b1(ifGain), b2(lna);
+            ifGain->setValue(gr);
+            lna->setCurrentIndex(ls);
+            ifVal->setText(QString("-%1 dB").arg(gr));
+        }
+        sdr_.setGainLive(gr, ls);          // gain FIRST — the filter only goes
+        bcNotch->setChecked(on);           // in once the LNA is down here
+        if (on) sdr_.setBroadcastNotch(true);   // re-assert after the gain move
+        statusBar()->showMessage(
+            on ? QString("Notch mode ON — LNA %1 / IF -%2 dB, the only gain "
+                         "where the RSP2 holds the broadcast filter in "
+                         "(-24 dB on the ghosts, measured)").arg(ls).arg(gr)
+               : QString("Notch mode off — your gain back: LNA %1 / IF -%2 dB")
+                     .arg(ls).arg(gr),
+            9000);
+    });
+#endif
+    txBar_ = new TxBar(this);
+    {
+        QSettings s;
+        txBar_->setAmpMode(s.value("amp/enabled", false).toBool(),
+                           s.value("amp/limit", 40).toInt());
+    }
+    // The rose, tuner card and solar block are sidebar boxes in both views.
+    // SOLAR has no grid button: DISPLAY ▾ → "Solar data (NOAA)" is its
+    // switch (operator, 2026-10-19 — one tick for the poller AND the box,
+    // and the freed grid cell went to METER).
+    layout_->placeSideBox("rose", "COMPASS ROSE", "ROSE", rose_);
+    layout_->placeSideBox("tuner", "TUNER / AMP", "TUNER", tuneCard_);
+    layout_->placeSideBox("solar", "SOLAR", QString(), solarBox_);
+#ifdef HAVE_AETHER_METERS
+    // Original view: AetherSDR's meters as a sidebar box of their own, at
+    // the box's size and with the cross-needle the fixed top-deck host
+    // can't fit — float it out, move it, hide it like any other pane. Our
+    // own meter stays in the top deck (one widget, one host).
+    if (!layout_->isPanel()) {
+        MeterHost::Options bo;
+        bo.console = false;
+        bo.faceKey = "classic/side/meterFace";
+        meterBox_ = new MeterHost(smeter_, radio_, bo, this);
+        layout_->placeSideBox("meter", "METER", "METER", meterBox_);
+    }
+#endif
+    layout_->placeSideBox("audio", "AUDIO", "AUDIO", audioPanel_, /*tail=*/true);
+    layout_->placeMain(pan_, txBar_, panel_);
+    setCentralWidget(layout_->central());
+
+    connect(pan_, &PanadapterWidget::tuneRequested,    this, &MainWindow::onTuneRequested);
+    connect(pan_, &PanadapterWidget::passbandEditBegan, this, [this](int lo, int hi) {
+        anchorLoHz_ = lo;  anchorHiHz_ = hi;       // where the overlay was grabbed
+        anchorBwHz_ = rigBwHz_;                    // radio's real state, from polling
+        anchorPbtHz_ = rigPbtHz_;
+        sinceFilterEdit_.restart();
+    });
+    connect(pan_, &PanadapterWidget::passbandChanged,  this, &MainWindow::onPassbandChanged);
+    connect(pan_, &PanadapterWidget::viewSpanChanged,  this,
+            [this, zoom](int spanHz) {
+        statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
+        // Zoom-out terminal state: at or past the band's width, land on
+        // the band overview (see the zoom slider's handler — same rule,
+        // same reason). Zooming IN while the overview is up remains the
+        // deliberate way out: drop the frame and land at the chosen span,
+        // classic LO (exitBandFrame re-applies the span after
+        // normalizing).
+        if (qEnvironmentVariableIsSet("TTC_TRACE"))
+            fprintf(stderr, "[view] spanChanged %d frameC=%llu frameSpan=%d\n",
+                    spanHz, (unsigned long long)frameCenterHz_, frameSpanHz_);
+        if (zoomToBandFrame(spanHz)) {
+            const QSignalBlocker b(zoom);      // overview = fully out: knob
+            zoom->setValue(0);                 // parks full-left (see slider)
+            return;
+        }
+        if (frameCenterHz_ != 0 && spanHz != frameSpanHz_)
+            exitBandFrame(spanHz);
+    });
+    // Wheel tuning, step auto-set by mode: SSB/AM/FM 100 Hz per notch (10 Hz
+    // with Shift), CW 10 Hz (1 Hz with Shift) — matching how tight each mode
+    // actually tunes. SAM uses the CW steps for the carrier zero-beat.
+    // Ctrl+wheel still zooms; the wheel follows whichever VFO was tuned last
+    // (right-click/drag on B hands it to B; any A tune takes it back).
+    const auto wheelUnit = [this](bool fine) {
+        const bool tight = samActive_
+                        || rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
+        return tight ? (fine ? 1 : 10) : (fine ? 10 : 100);
+    };
+    connect(pan_, &PanadapterWidget::tuneStepRequested, this,
+            [this, wheelUnit](int steps, bool fine) {
+        // exact: wheel steps are deliberate nudges — never zap-snap them.
+        onTuneRequested(steps * wheelUnit(fine), true);
+    });
+    connect(pan_, &PanadapterWidget::vfoBStepRequested, this,
+            [this, wheelUnit](int steps, bool fine) {
+        if (vfoLockB_) { statusBar()->showMessage("VFO B is LOCKED"); return; }
+        vfoBHz_ = static_cast<uint64_t>(
+            static_cast<qint64>(vfoBHz_) + steps * wheelUnit(fine));
+        freqDispB_->setFrequency(vfoBHz_);
+        sinceVfoBEdit_.restart();
+        pushVfoB();
+        pendBHz_ = vfoBHz_;                        // coalesce like B drags
+        bfDirty_ = true;
+        if (!bfTx_->isActive()) bfTx_->start();
+        statusBar()->showMessage(QString("VFO B -> %1 MHz%2")
+                                     .arg(vfoBHz_ / 1e6, 0, 'f', 6)
+                                     .arg(txVfo_ == 'B' ? "  (TX)" : ""));
+    });
+
+    // Coalesce drag-to-filter writes: the Orion's UART services on a ~100 ms cycle,
+    // so raw mouse-move rates (100+ cmd pairs/sec) would flood it. Send only the
+    // latest edges, at most ~25x/sec, trailing edge included.
+    filterTx_ = new QTimer(this);
+    filterTx_->setSingleShot(true);
+    filterTx_->setInterval(40);
+    connect(filterTx_, &QTimer::timeout, this, &MainWindow::sendPendingFilter);
+    notchTx_ = new QTimer(this);
+    notchTx_->setSingleShot(true);
+    notchTx_->setInterval(40);
+    connect(notchTx_, &QTimer::timeout, this, &MainWindow::sendPendingNotch);
+
+    // Radio state -> mode-sided passband overlay (LSB hangs below the carrier).
+    connect(radio_, &RadioController::modeReported, this, [this](Rx rx, Mode m) {
+        if (rx == Rx::Sub) { subMode_ = m; return; }
+        // Believe a polled mode CHANGE only when two consecutive reports
+        // agree — a single torn read must not repaint the panel, restamp
+        // the band register, or flip the passband overlay.
+        if (m != rigMode_ && m != pendingPolledMode_) {
+            pendingPolledMode_ = m;
+            return;
+        }
+        pendingPolledMode_ = m;
+        rigctld_.cacheMode(m);                      // clients always see true mode
+        if (samActive_ && m == samEngine_)          // SAM's engine reporting in:
+            panel_->clearModeSelection();           // keep SAM as the lit mode
+        else
+            panel_->showMode(m);                    // sidebar mirrors the front panel
+        if (m != rigMode_) {
+            rigMode_ = m;
+            refreshPassbandOverlay();
+            refreshNotchOverlay();                  // marker side flips with sideband
+            if (bandStamp_) bandStamp_->start();    // keep the stack register current
+            if (samActive_ && m != samEngine_) {    // front panel left SAM's mode
+                samActive_ = false;
+                panel_->showSam(false);
+                panel_->setSamLabel("SAM");
+            }
+        }
+    });
+
+    // Manual notch / SAF: drag the marker to move it, wheel over it for width,
+    // sidebar buttons to engage. One DSP engine in the radio — NOTCH rejects
+    // the band, SAF peaks it — sharing center/width. Live-verified: *R.NS1
+    // engages SAF (NM then reads 1 too), *R.NM1 steals the engine back to
+    // notch (NS drops to 0), *R.NS0 shuts the whole engine down.
+    connect(pan_, &PanadapterWidget::notchDragged, this, [this](int rfOffsetHz) {
+        const int audio = std::clamp(pbtRfSign(rigMode_) * rfOffsetHz, 20, 4000);
+        notchCenter_ = audio;
+        sinceNotchEdit_.restart();
+        syncNotchUi();
+        notchDirty_ = true;
+        pendNotchHz_ = audio;
+        if (!notchTx_->isActive()) notchTx_->start();  // coalesce like the filter drag
+    });
+    connect(pan_, &PanadapterWidget::notchWidthAdjustRequested, this, [this](int steps) {
+        notchWidth_ = std::clamp(notchWidth_ + steps * 10, 10, 300);
+        radio_->setNotchWidth(Rx::Main, notchWidth_);
+        sinceNotchEdit_.restart();
+        syncNotchUi();
+        statusBar()->showMessage(QString("%1 width -> %2 Hz")
+                                     .arg(safOn_ ? "SAF" : "notch").arg(notchWidth_));
+    });
+    connect(panel_, &ControlPanel::notchToggled, this, [this](bool on) {
+        radio_->setNotchEngaged(Rx::Main, on);
+        notchOn_ = on;
+        safOn_ = false;                            // NM either steals or stops the engine
+        sinceNotchEdit_.restart();
+        syncNotchUi();
+    });
+    connect(panel_, &ControlPanel::safToggled, this, [this](bool on) {
+        radio_->setSaf(Rx::Main, on);
+        safOn_ = on;
+        notchOn_ = on;                             // NS1 -> NM reads 1; NS0 kills both
+        sinceNotchEdit_.restart();
+        syncNotchUi();
+        statusBar()->showMessage(on ? "SAF: peaking the marked band"
+                                    : "SAF off");
+    });
+    connect(panel_, &ControlPanel::hwNbToggled, this,
+            [this](bool on) { radio_->setHardwareNb(Rx::Main, on); });
+    connect(radio_, &RadioController::notchCenterReported, this, [this](Rx rx, int hz) {
+        if (rx != Rx::Main) return;
+        if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
+        notchCenter_ = hz;
+        syncNotchUi();
+    });
+    connect(radio_, &RadioController::notchWidthReported, this, [this](Rx rx, int hz) {
+        if (rx != Rx::Main) return;
+        if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
+        notchWidth_ = hz;
+        syncNotchUi();
+    });
+    connect(radio_, &RadioController::notchEngagedReported, this, [this](Rx rx, bool on) {
+        if (rx != Rx::Main) return;
+        if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
+        notchOn_ = on;
+        if (!on) safOn_ = false;                   // engine off implies SAF off
+        syncNotchUi();
+    });
+    connect(radio_, &RadioController::safReported, this, [this](Rx rx, bool on) {
+        if (rx != Rx::Main) return;
+        if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
+        safOn_ = on;
+        if (on) notchOn_ = true;                   // SAF active = engine engaged
+        syncNotchUi();
+    });
+    connect(radio_, &RadioController::hardwareNbReported, this, [this](Rx rx, bool on) {
+        if (rx == Rx::Main) panel_->showHwNb(on);
+    });
+
+    // Radio state -> control surface (front-panel changes reflect on screen).
+    connect(radio_, &RadioController::sMeterReported, this, [this](int mainRaw, int) {
+        if (std::getenv("TTC_SELFTEST")) {
+            static int n = 0;
+            if (++n % 4 == 1) std::fprintf(stderr, "[radio] S-meter main raw %d\n", mainRaw);
+        }
+        smeter_->setRawLevel(mainRaw);
+        lastRadioDbS9_ = SMeterWidget::rawToDbS9(mainRaw);   // for SDR-meter cal
+        rigctld_.cachePtt(false);                   // radio answered in receive
+    });
+    // SDR-source S-meter calibration: pin the SDR's passband-power reading to
+    // the radio's meter at a moment the radio is honest (RF gain full up).
+    // One offset, stored; the gRdB/LNA compensation keeps it valid across
+    // every gain-slider move afterward.
+    sdrCalDb_ = QSettings().value("sdr/smeterCalDb", 0.0).toDouble();
+    connect(smeter_, &SMeterWidget::calibrateRequested, this, [this] {
+        if (std::isnan(lastRadioDbS9_) || std::isnan(lastSdrMeasDb_)) {
+            statusBar()->showMessage(
+                "S-meter cal needs a radio reading and a running SDR — "
+                "connect both, then try again", 6000);
+            return;
+        }
+        sdrCalDb_ = lastRadioDbS9_ - lastSdrMeasDb_;
+        QSettings().setValue("sdr/smeterCalDb", sdrCalDb_);
+        smeter_->useSdrSource();          // calibrating implies wanting it
+        statusBar()->showMessage(
+            QString("S-meter calibrated and switched to SDR source "
+                    "(offset %1 dB) — RF gain can go back down")
+                .arg(sdrCalDb_, 0, 'f', 1), 8000);
+    });
+    // TX monitor state: the radio answers the meter poll in TX format
+    // only while keyed — the cleanest transmit indicator we have.
+    connect(radio_, &RadioController::txMeterReported, this,
+            [this](double, double, double) { radioTx_ = true; });
+    connect(radio_, &RadioController::sMeterReported, this,
+            [this](int, int) { radioTx_ = false; });
+    connect(radio_, &RadioController::txMeterReported, this,
+            [this](double fwd, double ref, double swr) {
+                smeter_->setTxLevel(fwd, ref, swr);
+                rigctld_.cachePtt(true);            // radio is provably keyed
+                // Amp protection, fast path: actual forward power well above
+                // the drive limit while keyed -> command the power back down.
+                if (txBar_->ampMode() && fwd > txBar_->ampLimit() * 1.15
+                    && (!sinceEnforce_.isValid() || sinceEnforce_.elapsed() > 1000)) {
+                    sinceEnforce_.restart();
+                    radio_->setTxPower(txBar_->ampLimit());
+                    txBar_->showTxPower(txBar_->ampLimit());
+                    statusBar()->showMessage(
+                        QString("AMP LIMIT: %1 W measured, drive forced to %2")
+                            .arg(fwd, 0, 'f', 0).arg(txBar_->ampLimit()));
+                }
+            });
+
+    // SWR sweep taps the same TX metering: keep the newest reading + time.
+    connect(radio_, &RadioController::txMeterReported, this,
+            [this](double, double, double swr) {
+                lastSwr_ = swr;
+                lastSwrMs_ = QDateTime::currentMSecsSinceEpoch();
+                // Tuner form's live SWR, when no wattmeter is answering.
+                if (tuneEntryDlg_ && radioTx_ && !meterSwrReady())
+                    tuneEntryDlg_->setLiveSwr(swr);
+            });
+    curAntenna_ = QSettings().value("swr/currentAntenna").toString();
+    loadTuneTable();                               // tuner/amp settings box
+    connect(tuneCard_, &TuneBoxWidget::clicked, this,
+            &MainWindow::openTuneEntryHere);
+    connect(tuneCard_, &TuneBoxWidget::menuRequested, this,
+            &MainWindow::showTuneBoxMenu);
+    loadSwrRuns();                                 // antenna+band curves from disk
+    pan_->setShowSwr(QSettings().value("swr/show", true).toBool());
+    refreshSwrOverlay();
+    // Panic key: ESC drops a running SWR sweep (carrier off, all restored).
+    auto* swrEsc = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(swrEsc, &QShortcut::activated, this, [this] {
+        if (swrSweeping_) stopSwrSweep(false);
+    });
+
+    // TX bar <-> radio.
+    connect(txBar_, &TxBar::txPowerChanged, this,
+            [this](int p) { radio_->setTxPower(p); });
+    connect(txBar_, &TxBar::micGainChanged, this,
+            [this](int p) { radio_->setMicGain(p); });
+    connect(audioPanel_, &AudioPanel::monitorChanged, this,
+            [this](int p) { radio_->setMonitor(p); });
+    connect(txBar_, &TxBar::txFilterChanged, this, [this](int hz) {
+        txBwHz_ = hz;
+        radio_->setTxFilter(hz);
+    });
+    connect(txBar_, &TxBar::speechProcChanged, this, [this](int l) {
+        if (!digital_) lastSpeechProc_ = l;
+        radio_->setSpeechProc(l);
+    });
+    connect(txBar_, &TxBar::profileRecalled, this, &MainWindow::applyTxProfile);
+    connect(txBar_, &TxBar::profileSaveRequested, this, &MainWindow::saveTxProfile);
+    connect(txBar_, &TxBar::tunerEnableToggled, this, [this](bool on) {
+        tunerOn_ = on;
+        radio_->setTunerEnabled(on);
+    });
+    tuneTimeout_ = new QTimer(this);
+    tuneTimeout_->setSingleShot(true);
+    tuneTimeout_->setInterval(15000);              // carrier never outlives 15 s
+    connect(tuneTimeout_, &QTimer::timeout, this, &MainWindow::stopManualTune);
+    connect(txBar_, &TxBar::tuneToggled, this, [this](bool on) {
+        if (!on) { stopManualTune(); return; }
+        if (tunerOn_) {
+            // Internal tuner enabled: the radio runs its own cycle (*TTT
+            // generates its own carrier and drops it when matched).
+            radio_->startTune();
+            statusBar()->showMessage("internal tuner: tune cycle started");
+            txBar_->showTuneActive(false);         // momentary in this mode
+            return;
+        }
+        startManualTune();
+    });
+    connect(txBar_, &TxBar::tuneContextRequested, this,
+            &MainWindow::showSwrMenu);
+    // MOX = manual voice transmit: key the rig in its current (SSB) mode so
+    // the mic / TRIP stream goes out — no carrier, no mode change. A failsafe
+    // timer drops the key if it's left on, so a forgotten MOX can't hold the
+    // transmitter up. Mutually exclusive with TUNE.
+    moxFailsafe_ = new QTimer(this);
+    moxFailsafe_->setSingleShot(true);
+    moxFailsafe_->setInterval(180000);            // 3 min runaway guard
+    connect(moxFailsafe_, &QTimer::timeout, this, [this] {
+        txBar_->showMoxActive(false);
+        radio_->setPtt(false);
+        statusBar()->showMessage("MOX failsafe: un-keyed after 3 min", 6000);
+    });
+    connect(txBar_, &TxBar::moxToggled, this, [this](bool on) {
+        if (on && winlinkActive_) {                // Pat owns the transmitter now
+            txBar_->showMoxActive(false);
+            statusBar()->showMessage("MOX refused: a Winlink session is on the air", 6000);
+            return;
+        }
+        if (on && wsjtxTransmitting()) {
+            txBar_->showMoxActive(false);
+            statusBar()->showMessage("MOX refused: WSJT-X is transmitting", 6000);
+            return;
+        }
+        if (on && tuneTimeout_->isActive()) {      // never both keyed at once
+            txBar_->showTuneActive(false);
+            stopManualTune();
+        }
+        // RADE: the end of over (callsign) must be on the air before PTT
+        // drops — hold the key until LiveVoice says it has played out
+        // (~0.5-0.9 s), with a 2 s backstop.
+        if (!on && radeTxOn_ && live_ && live_->rade()) {
+            radeUnkeyPending_ = true;
+            moxFailsafe_->stop();
+            live_->endOverRade();
+            statusBar()->showMessage("RADE: sending the end of over with your call…");
+            QTimer::singleShot(2000, this, [this] {
+                if (!radeUnkeyPending_) return;
+                radeUnkeyPending_ = false;
+                radio_->setPtt(false);
+                statusBar()->showMessage("RADE: un-keyed (end-of-over backstop)", 4000);
+            });
+            return;
+        }
+        radeUnkeyPending_ = false;
+        radio_->setPtt(on);
+        if (on) {
+            moxFailsafe_->start();
+            statusBar()->showMessage(radeTxOn_
+                ? QStringLiteral("MOX: transmitting RADE — talk; MOX / space again to end the over")
+                : QStringLiteral("MOX: transmitting — click MOX to un-key"));
+        } else {
+            moxFailsafe_->stop();
+            statusBar()->showMessage("MOX: un-keyed", 3000);
+        }
+    });
+    connect(txBar_, &TxBar::tuneLevelChanged, this, [](int w) {
+        QSettings().setValue("tune/power", w);
+    });
+    txBar_->setTuneLevel(QSettings().value("tune/power", 20).toInt());
+
+    // DVR + voice keyer. Audio rides the same SignaLink (USB codec) path
+    // fldigi uses: off-air takes are captured from its input (the radio's
+    // line out), VK/retransmit playback goes out its output into the radio
+    // with CAT PTT held — the SignaLink's own VOX keys as backup, so this
+    // works on both radios even where CAT TX audio config doesn't.
+    dvr_ = new ClipDeck(this);
+    {
+        const QString radioMatch = ClipDeck::radioAudioMatch();
+        radioSink_   = ClipDeck::findSink(radioMatch);
+        radioSource_ = ClipDeck::findSource(radioMatch);
+        radioAudioMatch_ = radioMatch;             // VK mic: resolved per take
+    }
+    QDir().mkpath(dvrDir());
+    refreshVkLoaded();
+    // Any DVR click while the deck runs means "stop that" — the finished()
+    // handler clears the lights and drops PTT, so just stop and swallow. A
+    // keyed-but-not-yet-playing state is the arming window (line-in switch
+    // settling): unwind it directly, the deck has nothing to stop yet.
+    const auto dvrBusy = [this] { return stopVoicePlayback(); };
+    connect(txBar_, &TxBar::dvrRecordClicked, this, [this, dvrBusy] {
+        if (dvrBusy()) return;
+        if (radioSource_.isEmpty()) {
+            statusBar()->showMessage("DVR: radio sound device (SignaLink) not found");
+            return;
+        }
+        dvrLastRx_ = dvrDir() + QString("/rx-%1.wav").arg(
+            QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss"));
+        if (dvr_->record(dvrLastRx_, radioSource_)) {
+            dvrJustRecorded_ = dvrLastRx_;
+            txBar_->showDvrRecording(-1);
+            statusBar()->showMessage("DVR: recording off air -> "
+                + QFileInfo(dvrLastRx_).fileName() + "   (REC again to stop)");
+        }
+    });
+    connect(txBar_, &TxBar::dvrPlayClicked, this, [this, dvrBusy](bool overAir) {
+        if (dvrBusy()) return;
+        if (overAir && wsjtxTransmitting()) {
+            statusBar()->showMessage("Replay refused: WSJT-X is transmitting", 6000);
+            return;
+        }
+        if (overAir && (winlinkActive_ || fdvMode_)) {
+            statusBar()->showMessage("Replay refused: Winlink / FreeDV owns the transmitter", 6000);
+            return;
+        }
+        QString f = dvrLastRx_;
+        if (f.isEmpty()) {                         // newest take from an earlier run
+            const QFileInfoList takes = QDir(dvrDir()).entryInfoList(
+                {"rx-*.wav"}, QDir::Files, QDir::Name);
+            if (!takes.isEmpty()) f = takes.last().filePath();
+        }
+        if (f.isEmpty() || !QFileInfo::exists(f)) {
+            statusBar()->showMessage("DVR: nothing recorded yet");
+            return;
+        }
+        // Over-air: remote rides TRIP (needs TX audio enabled — the keyed
+        // radio only accepts the Ethernet stream); serial rides the SignaLink.
+        if (overAir && radioDevUsed_.startsWith("udp:")
+            && !QSettings().value("radio/tripAudio", false).toBool()) {
+            statusBar()->showMessage(
+                "DVR: turn on TX audio first (SDR ▸ TX audio ▸ Mic or "
+                "Digital) — over-air clips ride the Ethernet stream");
+            return;
+        }
+        if (overAir && !radioDevUsed_.startsWith("udp:")
+            && radioSink_.isEmpty()) {
+            statusBar()->showMessage("DVR: radio sound device (SignaLink) not found");
+            return;
+        }
+        if (overAir) {
+            dvrPlayOverAir(f, -1);
+        } else if (dvr_->play(f, QString())) {
+            txBar_->showDvrPlaying(-1, false);
+            statusBar()->showMessage(
+                QString("DVR: playing %1 on the speakers  (left-click PLAY "
+                        "transmits it)").arg(QFileInfo(f).fileName()));
+        }
+    });
+    connect(txBar_, &TxBar::vkClicked, this, [this, dvrBusy](int slot) {
+        if (dvrBusy()) return;
+        if (winlinkActive_) {
+            statusBar()->showMessage("Voice keyer refused: a Winlink session is on the air", 6000);
+            return;
+        }
+        if (wsjtxTransmitting()) {
+            statusBar()->showMessage("Voice keyer refused: WSJT-X is transmitting", 6000);
+            return;
+        }
+        if (fdvMode_) {
+            statusBar()->showMessage("Voice keyer refused: FreeDV transmits RADE (the VK is analog)", 6000);
+            return;
+        }
+        playVoiceSlot(slot);
+    });
+    connect(txBar_, &TxBar::liveMicToggled, this, [this](bool on) {
+        if (fdvMode_) {                            // FreeDV owns the LIVE path
+            txBar_->showLiveMic(liveMic_);
+            statusBar()->showMessage("LIVE is RADE in FreeDV mode — leave FreeDV for voice LIVE", 6000);
+            return;
+        }
+        setLiveMic(on);
+    });
+    connect(txBar_, &TxBar::liveMicMenuRequested, this, &MainWindow::showVoiceEq);
+    connect(txBar_, &TxBar::vkPreviewClicked, this, [this, dvrBusy](int slot) {
+        if (dvrBusy()) return;
+        previewVoiceSlot(slot);
+    });
+    // A take records to a side file and only replaces the slot's message
+    // once dvrStopped has checked it holds real audio (live-found: two VK
+    // slots sat full of silence for weeks, transmitting dead air).
+    connect(txBar_, &TxBar::vkRecordClicked, this, [this, dvrBusy](int slot) {
+        if (dvrBusy()) return;
+        QString why;
+        const QString mic = vkMicSource(&why);
+        if (mic.isEmpty()) {
+            statusBar()->showMessage("VK: " + why, 10000);
+            return;
+        }
+        const QString take = vkTakePath(slot);
+        QFile::remove(take);
+        if (dvr_->record(take, mic)) {
+            dvrJustRecorded_ = take;
+            vkTakeSlot_ = slot;
+            txBar_->showDvrRecording(slot);
+            statusBar()->showMessage(QString(
+                "VK%1: recording from %2 — click it to stop")
+                .arg(slot + 1).arg(ClipDeck::sourceLabel(mic)));
+        }
+    });
+    connect(dvr_, &ClipDeck::finished, this, &MainWindow::dvrStopped);
+    // (playVoiceSlot / stopVoicePlayback are the same paths the VK
+    // buttons use, split out so the contest deck's phone F-keys and Esc
+    // ride them too.)
+    connect(dvr_, &ClipDeck::failed, this, [this](const QString& why) {
+        statusBar()->showMessage("DVR: " + why);
+    });
+
+    // Digital/voice audio switch: line-in for digital, mic for voice.
+    {
+        QSettings s;
+        lastMicGain_    = s.value("audio/voiceMic", 51).toInt();
+        lastSpeechProc_ = s.value("audio/voiceSpeech", 2).toInt();
+    }
+    connect(panel_, &ControlPanel::digitalToggled, this, [this](bool on) {
+        if (fdvMode_ && !on) {                     // RADE rides the line input
+            panel_->showDigital(true);
+            statusBar()->showMessage("DIG stays on in FreeDV — leave FreeDV to go back to the mic", 6000);
+            return;
+        }
+        setDigitalMode(on);
+    });
+    connect(txBar_, &TxBar::ampModeChanged, this, [this](bool on, int limit) {
+        QSettings s;
+        s.setValue("amp/enabled", on);
+        s.setValue("amp/limit", limit);
+        if (on) radio_->queryTxPower();              // check the current drive now
+        statusBar()->showMessage(on ? QString("amp mode: drive capped at %1 W").arg(limit)
+                                    : "amp mode off");
+    });
+    connect(radio_, &RadioController::txPowerReported, this, [this](int p) {
+        lastTxPwr_ = p;                             // for restore after manual tune
+        if (tuning_) return;                        // don't fight the tune carrier
+        // Amp protection, slow path: the periodic ?TP poll catches a front-
+        // panel PWR change above the limit even when not transmitting.
+        if (txBar_->ampMode() && p > txBar_->ampLimit()) {
+            if (!sinceEnforce_.isValid() || sinceEnforce_.elapsed() > 1000) {
+                sinceEnforce_.restart();
+                radio_->setTxPower(txBar_->ampLimit());
+                statusBar()->showMessage(
+                    QString("AMP LIMIT: drive %1 forced back to %2 W")
+                        .arg(p).arg(txBar_->ampLimit()));
+            }
+            txBar_->showTxPower(txBar_->ampLimit());
+            return;
+        }
+        txBar_->showTxPower(p);
+    });
+    connect(radio_, &RadioController::micGainReported, this, [this](int p) {
+        txBar_->showMicGain(p);
+        micNow_ = p;
+        // Learn the voice mic setting — but never learn 0: mic 0 is the
+        // digital line-in switch, and adopting it (e.g. console started
+        // while the radio was still in a digital session) poisons the
+        // restore so DIG-off "resets" to zero.
+        if (!digital_ && p > 0) lastMicGain_ = p;
+    });
+    connect(radio_, &RadioController::speechProcReported, this, [this](int l) {
+        // Proc 0 is a legitimate voice setting, so gate the learn on the
+        // radio actually being in voice (mic up) — otherwise a leftover
+        // digital state (mic 0 + proc 0) records proc "off" as the setup.
+        if (!digital_ && micNow_ > 0) lastSpeechProc_ = l;
+        txBar_->showSpeechProc(l);
+    });
+    connect(radio_, &RadioController::txFilterReported, this, [this](int hz) {
+        txBwHz_ = hz;
+        txBar_->showTxFilter(hz);
+    });
+    connect(radio_, &RadioController::monitorReported, this,
+            [this](int p) { audioPanel_->showMonitor(p); });
+    connect(radio_, &RadioController::afVolumeReported, this, [this](Rx rx, int p) {
+        const int i = rx == Rx::Main ? 0 : 1;
+        if (muted_[i]) return;                     // muted: 0 expected, keep slider
+        vol_[i] = p;
+        const QSignalBlocker b(volSl_[i]);
+        volSl_[i]->setValue(p);
+        volLbl_[i]->setText(QString::number(p));
+    });
+    connect(radio_, &RadioController::tunerReported, this, [this](bool on) {
+        tunerOn_ = on;
+        txBar_->showTuner(on);
+    });
+    connect(radio_, &RadioController::vfoLockReported, this, [this](char vfo, bool locked) {
+        const int i = vfo == 'B' ? 1 : 0;
+        (i == 0 ? vfoLockA_ : vfoLockB_) = locked;
+        const QSignalBlocker b(lockBtn_[i]);        // reflect, don't re-send
+        lockBtn_[i]->setChecked(locked);
+        pan_->setVfoLocks(vfoLockA_, vfoLockB_);
+    });
+
+    // rigctld PTT (WSJT-X / fldigi keying through :4532). The 't' reply
+    // tracks the radio's true T/R state via the metering replies.
+    connect(&rigctld_, &RigctldServer::pttRequested, this,
+            [this](bool on) { radio_->setPtt(on); });
+    connect(radio_, &RadioController::agcReported, this, [this](Rx rx, char a) {
+        if (rx == Rx::Main) panel_->showAgc(a);
+    });
+    connect(radio_, &RadioController::rfGainReported, this, [this](Rx rx, int g) {
+        if (rx == Rx::Main) panel_->showRfGain(g);
+    });
+    connect(radio_, &RadioController::attenReported, this, [this](Rx rx, int s) {
+        if (rx == Rx::Main) panel_->showAtten(s);
+    });
+    connect(radio_, &RadioController::preampReported, this, [this](Rx rx, bool on) {
+        if (rx == Rx::Main) panel_->showPreamp(on);
+    });
+    connect(radio_, &RadioController::nrReported, this, [this](Rx rx, int l) {
+        if (rx == Rx::Main) panel_->showNr(l);
+    });
+    connect(radio_, &RadioController::nbReported, this, [this](Rx rx, int l) {
+        if (rx == Rx::Main) panel_->showNb(l);
+    });
+    connect(radio_, &RadioController::autoNotchReported, this, [this](Rx rx, int l) {
+        if (rx == Rx::Main) panel_->showAutoNotch(l);
+    });
+
+    // Control surface -> radio. Sets are fire-and-forget; polling confirms.
+    connect(panel_, &ControlPanel::modeSelected, this, [this](Mode m) {
+        if (fdvMode_ && (m == Mode::USB || m == Mode::LSB)) {
+            // In FreeDV the sideband buttons just flip the sideband (some
+            // station is on the other one) — FreeDV stays on.
+            fdvSb_ = m;
+            applyMode(m);
+            panel_->clearModeSelection();
+            statusBar()->showMessage(QString("FreeDV on %1").arg(m == Mode::LSB ? "LSB" : "USB"), 4000);
+            return;
+        }
+        if (fdvMode_) setFdvMode(false, /*keepMode*/ true);   // any other mode ends FreeDV
+        if (samActive_) {                          // picking a real mode ends SAM
+            samActive_ = false;
+            panel_->showSam(false);
+            panel_->setSamLabel("SAM");
+        }
+        applyMode(m);
+        panel_->showMode(m);
+    });
+
+    // SAM (ECSS): the Orion has no true sync-AM, so receive the
+    // AM signal in USB with the carrier zero-beaten instead. Engaging swaps
+    // to USB + a wide filter; the panadapter wheel drops to 10 Hz (1 Hz with
+    // Shift) for the careful zero-beat. Off restores the previous mode/filter.
+    // Click cycle: off -> SAM-U -> SAM-L -> off. The sideband flip is the
+    // real sync-AM listener's move — pick whichever side dodges the QRM.
+    const auto samFilter = [this] {
+        QTimer::singleShot(450, this, [this] {     // after the mode switch settles
+            radio_->setBandwidthHz(Rx::Main, 4000); // AM-width audio
+            radio_->setPbtHz(Rx::Main, 0);
+        });
+    };
+    connect(panel_, &ControlPanel::fdvToggled, this, [this](bool on) { setFdvMode(on); });
+    connect(panel_, &ControlPanel::samToggled, this, [this, samFilter](bool on) {
+        if (on && fdvMode_) setFdvMode(false, true);
+        if (on) {                                  // engage, upper sideband first
+            samActive_ = true;
+            samEngine_ = Mode::USB;
+            preSamMode_ = rigMode_;
+            preSamBw_   = rigBwHz_;
+            applyMode(Mode::USB);                  // the ECSS engine, not the face
+            panel_->clearModeSelection();          // SAM alone stays lit
+            panel_->setSamLabel("SAM-U");
+            samFilter();
+            statusBar()->showMessage(
+                "SAM (upper): zero-beat the carrier — wheel 10 Hz, Shift 1 Hz");
+        } else if (samActive_ && samEngine_ == Mode::USB) {
+            samEngine_ = Mode::LSB;                // second click: flip sideband
+            panel_->showSam(true);                 // stay lit
+            panel_->setSamLabel("SAM-L");
+            applyMode(Mode::LSB);
+            panel_->clearModeSelection();
+            samFilter();                           // mode change recalls per-mode filter
+            statusBar()->showMessage("SAM (lower sideband)");
+        } else {                                   // third click: off
+            samActive_ = false;
+            panel_->setSamLabel("SAM");
+            applyMode(preSamMode_);
+            panel_->showMode(preSamMode_);
+            QTimer::singleShot(450, this, [this] {
+                radio_->setBandwidthHz(Rx::Main, preSamBw_);
+            });
+            statusBar()->showMessage("SAM off — previous mode restored");
+        }
+    });
+
+    // Band buttons with Orion-style stack registers: a fresh band recalls its
+    // last-used register; clicking the active band again cycles A->B->C->D.
+    connect(panel_, &ControlPanel::bandSelected, this, [this](int idx) {
+        if (idx < 0 || idx >= kBandCount) return;
+        if (is60m(idx)) {
+            // Channelized + locked: cycle CH1..CH5 from the hard-coded table.
+            // Only "which channel was last used" persists, never the values.
+            const int ch = (idx == lastBandPress_)
+                ? (curReg_ + 1) % kChan60Count
+                : std::clamp(QSettings().value("band/60/chan", 2).toInt(),
+                             0, kChan60Count - 1);
+            saveBandMemory();                       // stash the outgoing band
+            recall60m(ch);
+            frameBand(kBands[idx].loHz, kBands[idx].hiHz);   // overview landing
+            lastBandPress_ = idx;
+            return;
+        }
+        QSettings s;
+        int reg;
+        // Cycle A->B->C->D on repeated presses of the SAME button. Keyed off the
+        // last button pressed (syncBandRegister clears it when the dial moves to
+        // another band under us, so a stale press can't trigger a bogus cycle).
+        if (idx == lastBandPress_) {
+            reg = (curReg_ + 1) % kStackCount;      // same button again: next reg
+        } else {
+            reg = s.value(QString("band/%1/reg").arg(kBands[idx].label), 0).toInt();
+            reg = std::clamp(reg, 0, kStackCount - 1);
+        }
+        saveBandMemory();                           // stash the outgoing register
+        recallStack(idx, reg);
+        frameBand(kBands[idx].loHz, kBands[idx].hiHz);       // overview landing
+        lastBandPress_ = idx;                       // after recall (sync resets it)
+    });
+
+    // The Orion's CAT set has no way to read its internal band-stack registers,
+    // so the console mirrors them instead: shortly after ANY dial/mode/filter
+    // change settles (front-panel knob or band button, WSJT-X, click-to-tune),
+    // stamp the state into the active register for that band. Our band buttons
+    // then return to the same spot the radio's own band button would.
+    bandStamp_ = new QTimer(this);
+    bandStamp_->setSingleShot(true);
+    bandStamp_->setInterval(1500);
+    connect(bandStamp_, &QTimer::timeout, this, &MainWindow::saveBandMemory);
+
+    // Frequency readout edits (digit wheel/click or type-in) tune the radio.
+    connect(freqDisp_, &FrequencyDisplay::frequencyEdited, this,
+            [this](uint64_t hz) { tuneAbsolute(hz); });
+    // VFO B goes straight to the sub receiver's dial (*BF); the panadapter
+    // stays on VFO A, whose IQ tap feeds it.
+    connect(freqDispB_, &FrequencyDisplay::frequencyEdited, this,
+            [this](uint64_t hz) {
+                radio_->setFrequencyHz(Rx::Sub, hz);
+                vfoBHz_ = hz;
+                pushVfoB();
+                sinceVfoBEdit_.restart();           // poll echo may still be stale
+                statusBar()->showMessage(
+                    QString("VFO B -> %1 MHz").arg(hz / 1e6, 0, 'f', 6));
+            });
+    pushVfoB();                                     // marker live from the start
+
+    // Routing matrices + A/B dial transfers (the Orion front panel's VFO and
+    // antenna button groups, driven over *KV / *KA).
+    connect(routing_, &RoutingPanel::vfoAssignmentEdited, this,
+            [this, applyVfoColors](char m, char s, char t) {
+                // Snapshot BEFORE the radio call: the Omni driver confirms
+                // its split flag by emitting vfoAssignmentReported
+                // synchronously inside setVfoAssignment, and that handler
+                // sets txVfo_/rxVfo_ — so testing them after the call sees
+                // "B was already engaged" and skips the park (live-found:
+                // split on the Omni never parked B). The Orion answers by
+                // poll, later, and never hit this.
+                const char prevTx = txVfo_, prevRx = rxVfo_;
+                radio_->setVfoAssignment(m, s, t);
+                // One-click split setup (no separate split button): the moment a
+                // click puts VFO B on TX or RX, park B above the dial — 5 kHz
+                // in voice, 1 kHz in CW. The radio's own menu copies the mode
+                // to the sub, so only the dial needs setting.
+                const bool bEngaged = (t == 'B' && prevTx != 'B')
+                                   || (m == 'B' && prevRx != 'B');
+                txVfo_ = t;
+                rxVfo_ = m;
+                if (bEngaged && !vfoLockB_) {       // locked B: engage without the park
+                    const bool cw = rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
+                    const uint64_t b = centerHz_ + (cw ? 1000 : 5000);
+                    radio_->setFrequencyHz(Rx::Sub, b);
+                    vfoBHz_ = b;
+                    freqDispB_->setFrequency(b);
+                    sinceVfoBEdit_.restart();
+                }
+                applyVfoColors();
+                pushVfoB();
+                statusBar()->showMessage(
+                    QString("VFO routing: RX %1  SUB %2  TX %3%4")
+                        .arg(m).arg(s).arg(t)
+                        .arg(m != t ? "  (SPLIT)" : ""));
+            });
+    connect(routing_, &RoutingPanel::antennaRoutingEdited, this,
+            [this](char a1, char a2, char rxa) {
+                radio_->setAntennaRouting(a1, a2, rxa);
+                statusBar()->showMessage(QString("antenna routing: ANT1=%1 ANT2=%2 RX=%3")
+                                             .arg(a1).arg(a2).arg(rxa));
+            });
+    // Dial transfers carry MODE with the frequency (PowerSDR semantics: the
+    // VFO is freq+mode). Mode commands trail the freq by 120+ ms — the Orion
+    // drops commands that arrive while it's busy with a mode switch.
+    connect(routing_, &RoutingPanel::copyABRequested, this, [this] {
+        if (vfoLockB_) { statusBar()->showMessage("A>B blocked: VFO B is LOCKED"); return; }
+        radio_->setFrequencyHz(Rx::Sub, centerHz_);
+        vfoBHz_ = centerHz_;
+        pushVfoB();
+        freqDispB_->setFrequency(centerHz_);
+        sinceVfoBEdit_.restart();
+        // Sub mode: handled by the radio itself (menu set to copy the mode;
+        // *RSM is dead on v3 firmware anyway).
+        statusBar()->showMessage(QString("A>B: VFO B -> %1 MHz")
+                                     .arg(centerHz_ / 1e6, 0, 'f', 6));
+    });
+    connect(routing_, &RoutingPanel::copyBARequested, this, [this] {
+        if (vfoLockA_) { statusBar()->showMessage("B>A blocked: VFO A is LOCKED"); return; }
+        tuneAbsolute(vfoBHz_);
+        QTimer::singleShot(120, this, [this, m = subMode_] {
+            applyMode(m);
+            panel_->showMode(m);
+        });
+        statusBar()->showMessage(QString("B>A: VFO A -> %1 MHz")
+                                     .arg(vfoBHz_ / 1e6, 0, 'f', 6));
+    });
+    connect(routing_, &RoutingPanel::swapABRequested, this, [this] {
+        if (vfoLockA_ || vfoLockB_) {
+            statusBar()->showMessage(QString("A<>B blocked: VFO %1 is LOCKED")
+                                         .arg(vfoLockA_ ? 'A' : 'B'));
+            return;
+        }
+        const uint64_t a = centerHz_, b = vfoBHz_;
+        const Mode ma = rigMode_, mb = subMode_;
+        radio_->setFrequencyHz(Rx::Sub, a);
+        vfoBHz_ = a;
+        pushVfoB();
+        freqDispB_->setFrequency(a);
+        sinceVfoBEdit_.restart();
+        tuneAbsolute(b);
+        if (mb != ma) {                              // bring B's mode to the main RX
+            QTimer::singleShot(120, this, [this, mb] {
+                applyMode(mb);
+                panel_->showMode(mb);
+            });
+        }
+        statusBar()->showMessage(QString("A<>B: %1 <-> %2 MHz")
+                                     .arg(b / 1e6, 0, 'f', 6).arg(a / 1e6, 0, 'f', 6));
+    });
+    connect(radio_, &RadioController::vfoAssignmentReported, this,
+            [this, applyVfoColors](char m, char s, char t) {
+                routing_->showVfoAssignment(m, s, t);
+                txVfo_ = t;
+                rxVfo_ = m;
+                applyVfoColors();
+                pushVfoB();
+            });
+    connect(radio_, &RadioController::antennaRoutingReported, this,
+            [this](char a1, char a2, char rxa) { routing_->showAntennaRouting(a1, a2, rxa); });
+    // Panel layout's Tune split: moves TX between A and B and NOTHING else —
+    // no B park, no frequency, never keys (the operator picks his spot by
+    // tuning B himself; the routing grid's TX B click still parks B as
+    // always). Classic never builds it.
+    if (layout_->isPanel()) {
+        auto* ts = new QPushButton("Tune split");
+        ts->setCheckable(true);
+        ts->setFocusPolicy(Qt::NoFocus);
+        ts->setToolTip("Move the transmitter to VFO B (split) or back to A.\n"
+                       "Only TX moves: no frequency is set and nothing keys.");
+        ts->setStyleSheet(
+            "QPushButton { background: #1c2430; color: #c8d4e0; border: 1px solid #2a3644;"
+            " border-radius: 3px; font-size: 11px; padding: 4px 10px; }"
+            "QPushButton:hover { border-color: #4a5a6e; }"
+            "QPushButton:checked { background: #4a3a1a; color: #ffd27a;"
+            " border-color: #7a6230; font-weight: bold; }");
+        connect(ts, &QPushButton::clicked, this, [this, applyVfoColors, ts](bool on) {
+            const char t = on ? 'B' : 'A';
+            const char m = routing_->mainRxVfo() == 'N' ? rxVfo_ : routing_->mainRxVfo();
+            const char s = routing_->subRxVfo();
+            radio_->setVfoAssignment(m, s, t);
+            routing_->showVfoAssignment(m, s, t);
+            txVfo_ = t;
+            rxVfo_ = m;
+            ts->setText(on ? "TX back to A" : "Tune split");
+            applyVfoColors();
+            pushVfoB();
+            statusBar()->showMessage(on ? "Split: TX on VFO B (frequency untouched)"
+                                        : "TX back on VFO A");
+        });
+        connect(radio_, &RadioController::vfoAssignmentReported, ts, [ts](char, char, char t) {
+            const QSignalBlocker b(ts);
+            ts->setChecked(t == 'B');
+            ts->setText(t == 'B' ? "TX back to A" : "Tune split");
+        });
+        layout_->placeTransmit(ts);
+    }
+    if (std::getenv("TTC_TEST_XFER"))               // headless transfer exercise
+        QTimer::singleShot(3000, routing_, &RoutingPanel::swapABRequested);
+    connect(panel_, &ControlPanel::agcSelected, this,
+            [this](char a) { radio_->setAgc(Rx::Main, a); });
+    connect(panel_, &ControlPanel::agcThresholdChanged, this, [this](int uv) {
+        radio_->setAgcThreshold(Rx::Main, uv);
+        statusBar()->showMessage(QString("AGC threshold -> %1 µV").arg(uv));
+        // Read back shortly: the radio quantizes, show its real value.
+        QTimer::singleShot(300, this, [this] { radio_->queryAgcThreshold(Rx::Main); });
+    });
+    connect(radio_, &RadioController::agcThresholdReported, this,
+            [this](Rx rx, double uv) {
+                if (rx == Rx::Main) panel_->showAgcThreshold(uv);
+            });
+    connect(panel_, &ControlPanel::agcHangChanged, this, [this](int tenths) {
+        radio_->setAgcHang(Rx::Main, tenths / 10.0);
+        statusBar()->showMessage(tenths == 0
+                                     ? QString("AGC hang -> off")
+                                     : QString("AGC hang -> %1 s").arg(tenths / 10.0, 0, 'f', 1));
+        QTimer::singleShot(300, this, [this] { radio_->queryAgcHang(Rx::Main); });
+    });
+    connect(radio_, &RadioController::agcHangReported, this,
+            [this](Rx rx, double sec) {
+                if (rx == Rx::Main) panel_->showAgcHang(sec);
+            });
+    connect(panel_, &ControlPanel::agcDecayChanged, this, [this](int rate) {
+        radio_->setAgcDecay(Rx::Main, rate);
+        statusBar()->showMessage(QString("AGC decay -> %1").arg(rate));
+        QTimer::singleShot(300, this, [this] { radio_->queryAgcDecay(Rx::Main); });
+    });
+    connect(radio_, &RadioController::agcDecayReported, this,
+            [this](Rx rx, int rate) {
+                if (rx == Rx::Main) panel_->showAgcDecay(rate);
+            });
+    connect(panel_, &ControlPanel::attenSelected, this,
+            [this](int s) { radio_->setAttenuator(Rx::Main, s); });
+    connect(panel_, &ControlPanel::preampToggled, this,
+            [this](bool on) { radio_->setPreamp(Rx::Main, on); });
+    connect(panel_, &ControlPanel::rfGainChanged, this,
+            [this](int g) { radio_->setRfGain(Rx::Main, g); });
+    connect(panel_, &ControlPanel::nrChanged, this,
+            [this](int v) { radio_->setNoiseReduction(Rx::Main, v); });
+    connect(panel_, &ControlPanel::nbChanged, this,
+            [this](int v) { radio_->setNoiseBlanker(Rx::Main, v); });
+    connect(panel_, &ControlPanel::autoNotchChanged, this,
+            [this](int v) { radio_->setAutoNotch(Rx::Main, v); });
+    connect(radio_, &RadioController::bandwidthReported, this, [this](Rx rx, int bw) {
+        if (rx == Rx::Sub) {
+            if (sinceSubFilterEdit_.isValid()
+                && sinceSubFilterEdit_.elapsed() < 2000) return;  // mid/just-dragged
+            if (bw != subBwHz_) { subBwHz_ = bw; pushVfoB(); }
+            return;
+        }
+        rigctld_.cacheBandwidth(bw);
+        if (bw != rigBwHz_) { rigBwHz_ = bw; refreshPassbandOverlay(); bandStamp_->start(); }
+    });
+    connect(radio_, &RadioController::pbtReported, this, [this](Rx rx, int pbt) {
+        if (rx == Rx::Sub) {
+            if (sinceSubFilterEdit_.isValid()
+                && sinceSubFilterEdit_.elapsed() < 2000) return;  // mid/just-dragged
+            if (pbt != subPbtHz_) { subPbtHz_ = pbt; pushVfoB(); }
+            return;
+        }
+        panel_->showPbt(pbt);
+        if (pbt != rigPbtHz_) { rigPbtHz_ = pbt; refreshPassbandOverlay(); bandStamp_->start(); }
+    });
+
+    // Slide VFO B on the panadapter (grab its tint/line, or Shift+click to
+    // drop it on a station) — the pileup "get my TX dead on the spot" moves.
+    // Drags stream *BF coalesced to ~25 writes/sec like the filter drags.
+    bfTx_ = new QTimer(this);
+    bfTx_->setInterval(40);
+    connect(bfTx_, &QTimer::timeout, this, [this] {
+        if (!bfDirty_) { bfTx_->stop(); return; }
+        bfDirty_ = false;
+        radio_->setFrequencyHz(Rx::Sub, pendBHz_);
+    });
+    connect(pan_, &PanadapterWidget::vfoBDragged, this, [this](int off) {
+        const uint64_t hz =
+            static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
+        vfoBHz_ = hz;
+        freqDispB_->setFrequency(hz);
+        sinceVfoBEdit_.restart();
+        pendBHz_ = hz;
+        bfDirty_ = true;
+        if (!bfTx_->isActive()) bfTx_->start();
+        statusBar()->showMessage(QString("VFO B -> %1 MHz%2")
+                                     .arg(hz / 1e6, 0, 'f', 6)
+                                     .arg(txVfo_ == 'B' ? "  (TX)" : ""));
+    });
+    // Drag the A dial line: stream full retunes (radio + SDR + view recenter),
+    // coalesced a bit slower than B since each one moves the whole display.
+    afTx_ = new QTimer(this);
+    afTx_->setInterval(60);
+    connect(afTx_, &QTimer::timeout, this, [this] {
+        if (!afDirty_) { afTx_->stop(); return; }
+        afDirty_ = false;
+        tuneAbsolute(pendAHz_);
+    });
+    connect(pan_, &PanadapterWidget::vfoADragged, this, [this](uint64_t hz) {
+        pendAHz_ = hz;
+        afDirty_ = true;
+        if (!afTx_->isActive()) afTx_->start();
+        statusBar()->showMessage(QString("VFO A -> %1 MHz").arg(hz / 1e6, 0, 'f', 6));
+    });
+    // B filter edge drags -> sub RX filter (*RSF/*RSP), decomposed with the
+    // same exact edgesFromRig inverse as A (the sub runs the main's mode).
+    // Only useful when the Orion's sub-filter tracking of the main is off —
+    // with sync on, the radio re-slaves the sub and the drag won't stick.
+    sfTx_ = new QTimer(this);
+    sfTx_->setInterval(40);
+    connect(sfTx_, &QTimer::timeout, this, [this] {
+        if (!subFilterDirty_) { sfTx_->stop(); return; }
+        subFilterDirty_ = false;
+        radio_->setBandwidthHz(Rx::Sub, pendSubBw_);
+        radio_->setPbtHz(Rx::Sub, pendSubPbt_);
+        subBwHz_  = pendSubBw_;                     // optimistic; poll confirms
+        subPbtHz_ = pendSubPbt_;
+    });
+    connect(pan_, &PanadapterWidget::vfoBEditBegan, this, [this](int lo, int hi) {
+        anchorSubLoHz_ = lo;   anchorSubHiHz_ = hi;
+        anchorSubBwHz_ = subBwHz_;  anchorSubPbtHz_ = subPbtHz_;
+    });
+    connect(pan_, &PanadapterWidget::vfoBPassbandChanged, this, [this](int lo, int hi) {
+        int dWidth = (hi - lo) - (anchorSubHiHz_ - anchorSubLoHz_);
+        if (rigMode_ == Mode::AM) dWidth /= 2;      // drawn = 2x indicated in AM
+        int dPbt;
+        switch (rigMode_) {
+            case Mode::USB: dPbt = lo - anchorSubLoHz_;  break;
+            case Mode::LSB: dPbt = anchorSubHiHz_ - hi;  break;
+            default:
+                dPbt = pbtRfSign(rigMode_)
+                       * (((hi + lo) - (anchorSubHiHz_ + anchorSubLoHz_)) / 2);
+                break;
+        }
+        pendSubBw_  = std::clamp(anchorSubBwHz_ + dWidth, 100, bwMaxFor(rigMode_));
+        pendSubPbt_ = std::clamp(anchorSubPbtHz_ + dPbt, -8000, 8000);
+        subFilterDirty_ = true;
+        sinceSubFilterEdit_.restart();
+        if (!sfTx_->isActive()) sfTx_->start();
+        statusBar()->showMessage(QString("B filter -> bw %1 Hz  pbt %2 Hz")
+                                     .arg(pendSubBw_).arg(pendSubPbt_));
+    });
+    connect(pan_, &PanadapterWidget::vfoBTuneRequested, this, [this](int off) {
+        if (vfoLockB_) { statusBar()->showMessage("VFO B is LOCKED"); return; }
+        if (!bViewBtn_->isChecked()) bViewBtn_->setChecked(true);  // deliberate B use
+        const uint64_t hz =
+            static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
+        radio_->setFrequencyHz(Rx::Sub, hz);
+        vfoBHz_ = hz;
+        freqDispB_->setFrequency(hz);
+        sinceVfoBEdit_.restart();
+        pushVfoB();
+        statusBar()->showMessage(QString("VFO B -> %1 MHz%2")
+                                     .arg(hz / 1e6, 0, 'f', 6)
+                                     .arg(txVfo_ == 'B' ? "  (TX)" : ""));
+    });
+
+    // PBT back to the detent: sidebar button or double-click a passband edge.
+    // Bandwidth and dial untouched — the filter just slides back to center.
+    const auto zeroPbt = [this] {
+        filterTx_->stop();                          // drop any stale pending PBT
+        filterDirty_ = false;
+        radio_->setPbtHz(Rx::Main, 0);
+        rigPbtHz_ = 0;
+        panel_->showPbt(0);
+        sinceFilterEdit_.invalidate();              // explicit action: refresh now
+        refreshPassbandOverlay();
+        statusBar()->showMessage("PBT -> 0");
+    };
+    connect(panel_, &ControlPanel::pbtZeroRequested, this, zeroPbt);
+    connect(pan_, &PanadapterWidget::pbtZeroRequested, this, zeroPbt);
+    // Same detent snap for VFO B (double-click a B filter edge): the sub
+    // PBT drifts just like the main's when working its filter edges.
+    connect(pan_, &PanadapterWidget::vfoBPbtZeroRequested, this, [this] {
+        sfTx_->stop();                              // drop any stale pending PBT
+        subFilterDirty_ = false;
+        radio_->setPbtHz(Rx::Sub, 0);
+        subPbtHz_ = 0;
+        sinceSubFilterEdit_.invalidate();           // explicit action: redraw now
+        pushVfoB();
+        statusBar()->showMessage("VFO B PBT -> 0");
+    });
+    // Sidebar PBT slider: deliberate shifts (already coalesced in the panel).
+    connect(panel_, &ControlPanel::pbtChanged, this, [this](int hz) {
+        radio_->setPbtHz(Rx::Main, hz);
+        rigPbtHz_ = hz;
+        sinceFilterEdit_.invalidate();              // explicit action: redraw now
+        refreshPassbandOverlay();
+        sinceFilterEdit_.restart();                 // ...then guard the poll echo
+        statusBar()->showMessage(QString("PBT -> %1%2 Hz")
+                                     .arg(hz > 0 ? "+" : "").arg(hz));
+    });
+
+    // The radio reported its frequency (startup sync or dial-follow poll): keep the
+    // rigctld cache and the panadapter center locked to the physical VFO.
+    connect(radio_, &RadioController::frequencyReported, this,
+            [this](Rx rx, uint64_t hz) {
+                if (rx == Rx::Sub) {                 // VFO B: display-follow only
+                    if (!sinceVfoBEdit_.isValid() || sinceVfoBEdit_.elapsed() > 1500) {
+                        vfoBHz_ = hz;
+                        freqDispB_->setFrequency(hz);
+                        pushVfoB();
+                    }
+                    return;
+                }
+                awaitingFreq_ = false;               // poll answered; next one may go
+                if (std::getenv("TTC_SELFTEST"))
+                    std::fprintf(stderr, "[radio] VFO-A reports %.4f MHz\n", hz / 1e6);
+                // Band change: the Omni recalls its per-band antenna on its
+                // own (6 m -> ANT2 etc.) — re-ask *C1V so the routing matrix
+                // follows the relay instead of showing the old band's port.
+                if (const int b = bandIndexOf(hz); b != antBand_) {
+                    antBand_ = b;
+                    if (radioDevUsed_.startsWith("udp:")) radio_->queryAntenna();
+                }
+                if (hz != centerHz_) {
+                    // Right after a click-to-tune the radio takes a few hundred ms to
+                    // settle; stale reads must not "confirm" the old frequency and
+                    // yank the tune back. Ignore dial-follow during that window.
+                    if (sinceTune_.isValid() && sinceTune_.elapsed() < 1500) return;
+                    // A smooth knob spin moves only tens of kHz between polls, so
+                    // follow those single reads live — freezing until two reads
+                    // agree is what made the pan lag behind the dial. A stray
+                    // mangled frame within this window is harmless (it self-
+                    // corrects on the next poll). Only a big jump (band change, or
+                    // a garbled frame that still parsed as a plausible frequency)
+                    // waits for two consecutive identical reads before we yank the
+                    // dial there.
+                    constexpr uint64_t kFollowJumpHz = 100000;   // 100 kHz
+                    const uint64_t delta =
+                        hz > centerHz_ ? hz - centerHz_ : centerHz_ - hz;
+                    if (delta > kFollowJumpHz && hz != pendingHz_) {
+                        pendingHz_ = hz;
+                        return;
+                    }
+                    pendingHz_ = hz;
+                    sinceDialMove_.restart();            // burst the ?AF poll (B)
+                    const uint64_t prevDial = centerHz_;
+                    centerHz_ = hz;
+                    rigctld_.cacheFrequency(hz);     // cache only debounce-confirmed values
+                    freqDisp_->setFrequency(hz);
+                    pan_->setCenterHz(hz);           // keep grid labels on the dial
+                    syncBandRegister();              // mirror the move into the stack
+                    retuneSdrFor(hz, prevDial);      // CTUN-aware LO policy
+                    statusBar()->showMessage(
+                        QString("radio %1 MHz  |  panadapter following").arg(hz / 1e6, 0, 'f', 4));
+                }
+            });
+
+    // CW keys — Z: 0-beat the strongest signal in the passband; X: CW⇄CWR
+    // flip (same note pitch both ways = exactly zero-beat, works by ear).
+    // Guarded so typing a Z or X into the CALL/GRID fields never fires them.
+    const auto keyGuard = [](auto fn) {
+        return [fn] {
+            if (qobject_cast<QLineEdit*>(QApplication::focusWidget())) return;
+            fn();
+        };
+    };
+    connect(new QShortcut(QKeySequence(Qt::Key_Z), this), &QShortcut::activated,
+            this, keyGuard([this] { zeroBeat(); }));
+    connect(new QShortcut(QKeySequence(Qt::Key_X), this), &QShortcut::activated,
+            this, keyGuard([this] { flipCwSideband(); }));
+    // Space = MOX on / MOX off (operator's ask), exactly a click on MOX —
+    // same failsafe, same TUNE interlock. It transmits, so it is fenced off
+    // from typing: a focused text box (CALL, GRID, the contest deck's call
+    // field, which uses Space itself, any spin box or log editor) takes the
+    // key first, and the guard below re-checks; holding the bar down does
+    // not chatter the rig (no auto-repeat).
+    {
+        auto* space = new QShortcut(QKeySequence(Qt::Key_Space), this);
+        space->setAutoRepeat(false);
+        connect(space, &QShortcut::activated, this, [this] {
+            QWidget* f = QApplication::focusWidget();
+            if (qobject_cast<QLineEdit*>(f) || qobject_cast<QAbstractSpinBox*>(f)
+                || qobject_cast<QTextEdit*>(f) || qobject_cast<QPlainTextEdit*>(f))
+                return;
+            if (auto* cb = qobject_cast<QComboBox*>(f); cb && cb->isEditable())
+                return;
+            txBar_->toggleMox();
+        });
+    }
+
+    // Start the interop seam. Clients (cqrlog/WSJT-X/fldigi/GridTracker) connect
+    // here. TTC_RIGCTLD_PORT overrides for side-by-side protocol testing.
+    const char* rcpEnv = std::getenv("TTC_RIGCTLD_PORT");
+    const bool listening = rigctld_.listen(rcpEnv ? quint16(atoi(rcpEnv)) : 4532);
+    statusBar()->showMessage(
+        listening ? "rigctld emulation on :4532  |  radio: not connected (wire /dev/orion)"
+                  : "FAILED to bind :4532 (already in use? stop flrig/rigctld)");
+
+#ifdef HAVE_SDRPLAY
+    // IQ -> FFT -> panadapter. The spectrum callback runs on the SDR thread, so
+    // marshal the result onto the GUI thread before touching the widget.
+    // PowerSDR-style offset LO (their if_freq / spur reduction): the RSP2
+    // tunes kLoOffsetHz ABOVE the dial, so the zero-IF DC artifact — line,
+    // phase-noise hump and recalibration transients — sits at a fixed
+    // +60 kHz from the tuned frequency, never on it and never in a passband.
+    // 1 MHz capture (2 MS/s, hardware decim 2): dial-centered views to
+    // 480 kHz with the DC spike still out of frame (see kLoOffsetHz).
+    constexpr double kSampleRate = 2000000.0;
+    constexpr int    kDecim =
+        static_cast<int>(kSampleRate) / kSdrCaptureHz;
+    const int spanHz = kSdrCaptureHz;
+    pan_->setSpanHz(spanHz);
+    sdrSpanHz_ = spanHz;                              // CW zap peak finder
+    pan_->setDialOffsetHz(kLoOffsetHz);
+    spectrum_.setOutput([this](const std::vector<float>& db) {
+        if (std::getenv("TTC_SELFTEST")) {          // headless evidence the FFT is live
+            static int frames = 0;
+            if (++frames % 20 == 1) {
+                float mn = 1e9f, mx = -1e9f;
+                for (float v : db) { mn = std::min(mn, v); mx = std::max(mx, v); }
+                std::fprintf(stderr, "[spectrum] frame %d  bins=%zu  min %.1f dB  peak %.1f dB\n",
+                             frames, db.size(), mn, mx);
+                if (std::getenv("TTC_DCDUMP")) {    // profile the center hump
+                    const int c = static_cast<int>(db.size()) / 2;
+                    for (int o = -20; o <= 20; o += 2)
+                        std::fprintf(stderr, "[dc] %+5d Hz  %.1f dB\n", o * 61, db[c + o]);
+                }
+            }
+        }
+        // To the pacer: a short queue, newest kept (more than ~12 frames =
+        // the GUI fell behind; a backlog is pure lag, the smoothing is
+        // time-based so a dropped frame costs nothing).
+        PanadapterWidget::profEmitted.fetch_add(1, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lk(specQMux_);
+            specQ_.push_back(db);
+            if (int(specQ_.size()) > PanadapterWidget::profMaxQueue.load())
+                PanadapterWidget::profMaxQueue.store(int(specQ_.size()));
+            while (specQ_.size() > 12) {
+                specQ_.pop_front();
+                PanadapterWidget::profDropped.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    });
+    specPresent_ = [this, spanHz](std::vector<float>& copy) {
+        {
+            pan_->setSpectrum(copy);
+            // SDR-source S-meter: integrate power across the RX passband.
+            // These bins never pass through the radio's AGC or RF gain, so
+            // the reading stays honest with RF gain backed down (the Omni
+            // VII's own meter pins at the RF-gain floor — unfixable there).
+            // gRdB is exact dB by API definition and the LNA states map to
+            // published RSP2 gain figures, so riding the SDR gain slider
+            // shifts nothing once the one-time cal offset is stored.
+            int lo = 0, hi = 0;
+            edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
+            const int    n     = static_cast<int>(copy.size());
+            // sdrSpanHz_, not the captured constant: replaying an old
+            // 500 ksps capture rescales the member, and a baked 1 MHz
+            // span would integrate the wrong bins (review-found).
+            const double binHz = double(sdrSpanHz_ > 0 ? sdrSpanHz_
+                                                       : spanHz) / n;
+            int i0 = n / 2 + static_cast<int>(std::floor((lo - loOffHz_) / binHz));
+            int i1 = n / 2 + static_cast<int>(std::ceil((hi - loOffHz_) / binHz));
+            i0 = std::clamp(i0, 0, n - 1);
+            i1 = std::clamp(i1, i0, n - 1);
+            double acc = 0.0;
+            for (int i = i0; i <= i1; ++i)
+                acc += std::pow(10.0, copy[i] / 10.0);
+            if (acc <= 0.0) return;
+            // RSP2 LNA-state gain reduction, 0-420 MHz table (SDRplay API spec).
+            static const int kRsp2LnaDb[] = {0, 10, 15, 21, 24, 34, 39, 45, 64};
+            const double meas = 10.0 * std::log10(acc)
+                + sdr_.gainReduction()
+                + kRsp2LnaDb[std::clamp(sdr_.lnaState(), 0, 8)];
+            // Clipped frames are hash, not signal: while the ADC reports
+            // overload (the first ms of TX before the panic slam lands),
+            // freeze the display instead of painting the splash. ONLY when
+            // the TX monitor is enabled AND a transmission is actually in
+            // play — chronic RX overload must stay VISIBLE and must not
+            // starve the meter (live-found twice: the SWBC hour held the
+            // gate shut and the S-meter read S1 against the Orion's S9).
+            {
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                if (txMonEnabled_.load(std::memory_order_relaxed)
+                    && nowMs - txCtxMs_.load(std::memory_order_relaxed) < 2000
+                    && nowMs - sdr_.lastOverloadMs() < 150) return;
+            }
+            lastSdrMeasDb_ = meas;
+            smeter_->setSdrLevel(meas + sdrCalDb_);
+            lastSpectrum_ = std::move(copy);          // CW zap reads this
+        }
+    };
+    spectrum_.setSampleClocked(true);
+    spectrum_.setSampleRateHz(spanHz);
+    startSpecPacer();
+    // CW reader taps the same IQ stream (SDR thread; a no-op until the CW
+    // window turns it on). The tuned carrier is always -kLoOffsetHz from
+    // the SDR LO, so the decoder's mixer never moves.
+    cwDec_ = new CwDecoder(double(spanHz), -double(kLoOffsetHz), this);
+    Q_ASSERT(spanHz == kSdrCaptureHz);     // skim_ mixes at this same constant
+    // The consumer chain — runs on the IQ WORKER thread, never on the
+    // USB callback (see iqWorker_ in the header for the scar story).
+    const auto fanOut = [this](const IqBlock& iq) {
+        spectrum_.addSamples(iq);
+        // During ADC clip (TX onset) the stream is broadband hash — keep
+        // it out of the decoders; the display freeze handles the eyes.
+        // Gated on the TX monitor toggle AND real TX context, like the
+        // freeze (RX overloads must not gag the skimmer all evening).
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        const bool clipped =
+            txMonEnabled_.load(std::memory_order_relaxed)
+            && nowMs - txCtxMs_.load(std::memory_order_relaxed) < 2000
+            && nowMs - sdr_.lastOverloadMs() < 150;
+        if (!clipped) {
+            cwDec_->processIq(iq.data(), iq.size());
+            skim_->processIq(iq.data(), iq.size());
+            skimStft_->processIq(iq.data(), iq.size());
+        }
+#ifdef HAVE_WDSP
+        if (sdrRx_) sdrRx_->processIq(iq.data(), iq.size());   // muted on TX
+#endif
+        iqRec_->feed(iq);
+        // Wideband peak for the Auto LNA loop (read+reset by a GUI timer).
+        float m = 0.0f;
+        for (const auto& z : iq)
+            m = std::max({m, std::abs(z.real()), std::abs(z.imag())});
+        float cur = iqPeak_.load(std::memory_order_relaxed);
+        while (m > cur && !iqPeak_.compare_exchange_weak(
+                              cur, m, std::memory_order_relaxed)) {}
+        iqProcessedCount_.fetch_add(iq.size(), std::memory_order_relaxed);
+    };
+    iqWorker_ = QThread::create([this, fanOut] {
+        std::unique_lock<std::mutex> lk(iqRingMux_);
+        while (!iqWorkerStop_.load(std::memory_order_relaxed)) {
+            iqRingCv_.wait_for(lk, std::chrono::milliseconds(200), [this] {
+                return !iqRing_.empty()
+                    || iqWorkerStop_.load(std::memory_order_relaxed);
+            });
+            while (!iqRing_.empty()) {
+                IqBlock blk = std::move(iqRing_.front());
+                iqRing_.pop_front();
+                iqRingSamples_ -= blk.size();
+                lk.unlock();
+                fanOut(blk);
+                lk.lock();
+            }
+        }
+    });
+    // Decoders must outrank GUI paints, or a busy repaint starves copy.
+    iqWorker_->start(QThread::HighPriority);
+    const auto iqHandler = [this](const IqBlock& iq) {
+        // USB callback: count, copy, go. Anything heavier here and the
+        // SDRplay service drops transfers under load. The cap is in
+        // SAMPLES: the API delivers small blocks (~1-4 k samples each),
+        // and a block-count cap turned the intended 1 s cushion into
+        // ~130 ms — any GUI-held lock stall longer than that spliced
+        // the stream (live-found: 74% processed on an optimized build).
+        iqSampleCount_.fetch_add(iq.size(), std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lg(iqRingMux_);
+            iqRing_.push_back(iq);
+            iqRingSamples_ += iq.size();
+            {
+                const int ms = int(iqRingSamples_ / 1000);   // 1 MS/s: samples/1000 = ms
+                if (ms > PanadapterWidget::profMaxIqMs.load()) PanadapterWidget::profMaxIqMs.store(ms);
+            }
+            const size_t cap = size_t(sdrSpanHz_ > 0 ? sdrSpanHz_
+                                                     : kSdrCaptureHz) * 2;
+            while (iqRingSamples_ > cap && iqRing_.size() > 1) {
+                iqRingSamples_ -= iqRing_.front().size();
+                iqRing_.pop_front();       // overload: drop oldest, 2 s in
+            }
+        }
+        iqRingCv_.notify_one();
+    };
+    // Replay mode: TTC_IQFILE feeds a band recording through the exact
+    // pipeline the RSP2 would (paced to real time; TTC_IQFAST=1 free-runs).
+    if (const char* rf = std::getenv("TTC_IQFILE")) {
+        QFile* f = new QFile(QString::fromLocal8Bit(rf), this);
+        char hdr[32];
+        double fRate = 0.0, fCenter = 0.0;
+        if (f->open(QIODevice::ReadOnly) && f->read(hdr, 32) == 32
+            && std::memcmp(hdr, "TTCIQ0", 6) == 0) {
+            std::memcpy(&fRate, hdr + 8, 8);
+            std::memcpy(&fCenter, hdr + 16, 8);
+            // v2 headers carry the dial; the v1 era captures (all 500
+            // ksps) rode a fixed 60 kHz LO offset. An old capture must
+            // also rescale the whole pipeline or every decoder runs at
+            // half time (dits read double; the rate changed 2026-07-31).
+            int fLoOff = fRate < 750000.0 ? 60000 : kLoOffsetHz;
+            if (hdr[6] == '2') {
+                double fDial = 0.0;
+                if (f->read(reinterpret_cast<char*>(&fDial), 8) == 8
+                    && fDial > 0.0)
+                    fLoOff = int(fCenter - fDial);
+            }
+            centerHz_ = uint64_t(fCenter) - fLoOff;
+            refreshTuneBox();
+            sdrLoHz_ = uint64_t(fCenter);       // replay LO is frozen classic
+            freqDisp_->setFrequency(centerHz_);
+            pan_->setCenterHz(centerHz_);
+            if (int(fRate) != spanHz) {
+                pan_->setSpanHz(int(fRate));
+                sdrSpanHz_ = int(fRate);
+                spectrum_.setSampleRateHz(fRate);    // frame period follows
+                startSpecPacer();
+                cwDec_->setInputRate(fRate);
+                skim_->setInputRate(fRate);
+                skimStft_->setInputRate(fRate);
+#ifdef HAVE_WDSP
+                if (sdrRx_) sdrRx_->setInputRate(fRate);
+#endif
+            }
+            setLoOff(fLoOff);
+            const bool fast = std::getenv("TTC_IQFAST") != nullptr;
+            const unsigned long paceUs =
+                static_cast<unsigned long>(16384.0 * 1e6 / fRate);
+            replayThread_ = QThread::create([this, f, fast, paceUs] {
+                std::vector<int16_t> raw(16384 * 2);
+                IqBlock blk(16384);
+                while (!replayStop_.load(std::memory_order_relaxed)) {
+                    const qint64 got = f->read(
+                        reinterpret_cast<char*>(raw.data()),
+                        qint64(raw.size() * 2));
+                    if (got < qint64(raw.size() * 2)) break;   // EOF
+                    for (size_t i = 0; i < blk.size(); ++i)
+                        blk[i] = {raw[2 * i] / 32767.0f,
+                                  raw[2 * i + 1] / 32767.0f};
+                    spectrum_.addSamples(blk);
+                    cwDec_->processIq(blk.data(), blk.size());
+                    skim_->processIq(blk.data(), blk.size());
+                    skimStft_->processIq(blk.data(), blk.size());
+#ifdef HAVE_WDSP
+                    if (sdrRx_) sdrRx_->processIq(blk.data(), blk.size());
+#endif
+                    if (!fast) QThread::usleep(paceUs);        // real time
+                }
+                std::fprintf(stderr, "[replay] end of file\n");
+            });
+            replayThread_->start();
+            statusBar()->showMessage(
+                QString("REPLAY %1 (%2 MHz)").arg(rf)
+                    .arg(centerHz_ / 1e6, 0, 'f', 4));
+        } else {
+            statusBar()->showMessage(QString("replay: bad file %1").arg(rf));
+        }
+    } else {
+        sdr_.setIqCallback(iqHandler);
+    }
+    sdr_.setDecimation(kDecim);
+    // TTC_NOSDR=1: no SDR at all (layout guard: deterministic screenshots,
+    // and it never touches the RSP2 a running console owns).
+    if (!replayThread_ && !std::getenv("TTC_NOSDR") && sdr_.apiOk()
+        && sdr_.start(static_cast<double>(centerHz_ + kLoOffsetHz), kSampleRate)) {
+        sdrLoHz_ = centerHz_ + kLoOffsetHz;
+        statusBar()->showMessage(QString("RSP2 panadapter %1 MHz, span %2 kHz  |  rigctld :4532")
+                                     .arg(centerHz_ / 1e6, 0, 'f', 4).arg(spanHz / 1000));
+        // Delivery meter: a silently starving USB stream is a night-
+        // killer — a shared hub segment once delivered 37% of samples
+        // and every decoder garbled identically while the radio path
+        // read clean (live-found 2026-08-07, a full evening of decoder
+        // suspicion later). The console now watches its own feed.
+        {
+            auto* iqRate = new QTimer(this);
+            iqRate->setInterval(5000);
+            connect(iqRate, &QTimer::timeout, this, [this] {
+                static uint64_t last = 0, lastP = 0;
+                const uint64_t now =
+                    iqSampleCount_.load(std::memory_order_relaxed);
+                const uint64_t nowP =
+                    iqProcessedCount_.load(std::memory_order_relaxed);
+                const uint64_t d = now - last, dp = nowP - lastP;
+                last = now;
+                lastP = nowP;
+                if (d == 0) return;            // stream not running
+                const double nom = double(sdrSpanHz_ > 0 ? sdrSpanHz_ : 1);
+                const double pct = 100.0 * double(d) / 5.0 / nom;
+                const double ppct = 100.0 * double(dp) / 5.0 / nom;
+                if (std::getenv("TTC_SELFTEST"))
+                    std::fprintf(stderr,
+                                 "[iqrate] usb %.0f%%  processed %.0f%%\n",
+                                 pct, ppct);
+                if (pct < 95.0)
+                    statusBar()->showMessage(
+                        QString("⚠ SDR delivering %1% of samples — USB "
+                                "starving? decoders unreliable")
+                            .arg(pct, 0, 'f', 0), 6000);
+                else if (ppct < 95.0)
+                    statusBar()->showMessage(
+                        QString("⚠ IQ worker at %1% — CPU overloaded, "
+                                "decoders lagging")
+                            .arg(ppct, 0, 'f', 0), 6000);
+            });
+            iqRate->start();
+        }
+        // Unattended capture: TTC_RECIQ=<secs> records from startup (pair
+        // with TTC_SELFTEST a little longer to quit cleanly after).
+        // TTC_RECIQ_AFTER=<secs> delays the start — the dial begins on
+        // the built-in default until the first CAT poll lands, and that
+        // sync counts as a dial move, which stops a recording already
+        // running (live-found: a 180 s capture cut at 65 s with the
+        // startup 7150 in the header).
+        if (const char* rs = std::getenv("TTC_RECIQ")) {
+            const int secs = atoi(rs);
+            const char* ra = std::getenv("TTC_RECIQ_AFTER");
+            const int after = ra ? atoi(ra) : 0;
+            QTimer::singleShot(after * 1000, this, [this, secs] {
+                recIqAct_->setChecked(true);
+                QTimer::singleShot(secs * 1000, this, [this] {
+                    if (recIqAct_->isChecked())
+                        recIqAct_->setChecked(false);
+                });
+            });
+        }
+    } else if (!replayThread_) {
+        statusBar()->showMessage("SDR unavailable: " + QString::fromStdString(sdr_.lastError()));
+    }
+    // Headless verification: TTC_SKIMVIEW=<png path> opens the SKIM
+    // waterfall at startup and grabs it near the end of the selftest —
+    // pairs with TTC_IQFILE so the view can be eyeballed against a
+    // ground-truth capture without a WM.
+    if (const char* sv = std::getenv("TTC_SKIMVIEW")) {
+        const QString png = QString::fromLocal8Bit(sv);
+        QTimer::singleShot(0, this, [this] { openSkimView(); });
+        if (png.endsWith(QLatin1String(".png"))) {
+            int delayMs = 20000;
+            if (const char* st = std::getenv("TTC_SELFTEST"))
+                delayMs = std::max(1000, atoi(st) * 1000 - 2000);
+            QTimer::singleShot(delayMs, this, [this, png] {
+                if (skimView_) skimView_->grab().save(png);
+            });
+        }
+    }
+    // TTC_PANSPAN=<Hz>: zoom the panadapter to that span shortly after
+    // startup (headless trace-look review on a capture, e.g. 12000 to see
+    // an SSB voice's harmonic comb for De-comb).
+    if (const char* ps = std::getenv("TTC_PANSPAN")) {
+        const int span = atoi(ps);
+        if (span > 0)
+            QTimer::singleShot(2500, this, [this, span] { pan_->setViewSpanHz(span); });
+    }
+    // TTC_CONTEST=1: flip contest mode on at startup (pairs with
+    // TTC_SCREENSHOT to review the deck headless; a pre-seeded
+    // contest.db + contest/currentId make it open on a real contest).
+    if (std::getenv("TTC_CONTEST"))
+        QTimer::singleShot(0, this, [this] {
+            if (contestBtn_) contestBtn_->setChecked(true);  // real path
+        });
+#endif
+
+    // Open the radio so click-to-tune / drag-to-filter actually reach it, and
+    // poll its VFO so the panadapter follows the physical dial. Device path:
+    // TTC_RADIO_DEV env > radio/device setting. There is no built-in default —
+    // an unconfigured station gets Station setup, not a guess at its wiring.
+    const char* devEnv = std::getenv("TTC_RADIO_DEV");
+    const std::string radioDev = devEnv
+        ? devEnv
+        : QSettings().value("radio/device").toString().toStdString();
+    radioDevUsed_ = QString::fromStdString(radioDev);
+    radioUp_ = radio_->open(radioDev);
+    if (radioUp_) {
+        radio_->queryFrequency(Rx::Main);            // one-shot sync at startup
+        radio_->queryFrequency(Rx::Sub);             // VFO B readout
+        radio_->queryVfoAssignment();                // routing matrices
+        radio_->queryAntennaRouting();
+        radio_->queryMode(Rx::Main);
+        radio_->queryMode(Rx::Sub);                  // transfers carry the mode
+        radio_->queryFilter(Rx::Sub);                // B's on-screen filter width
+        radio_->queryFilter(Rx::Main);
+        radio_->queryAgc(Rx::Main);                  // sync the control sidebar
+        radio_->queryAgcThreshold(Rx::Main);
+        radio_->queryAgcHang(Rx::Main);
+        radio_->queryAgcDecay(Rx::Main);
+        radio_->queryRfGain(Rx::Main);
+        radio_->queryAttenuator(Rx::Main);
+        radio_->queryPreamp(Rx::Main);
+        radio_->queryDspLevels(Rx::Main);            // syncs NR/NB/AN/hw-NB sliders
+        radio_->queryNotch(Rx::Main);                // syncs notch center/width/engage
+        radio_->queryTxPower();                      // syncs the TX bar
+        radio_->queryTxAudio();
+        radio_->queryAfVolume(Rx::Sub);              // AUDIO panel (?UM in TxAudio)
+        radio_->queryAudioRouting();
+        // The startup burst can flood the Orion's UART servicing and drop a
+        // few query responses — re-ask for the audio state once it settles.
+        // (Seen live: mic slider stuck at 0 against the radio's 51 because
+        // the barrage ate the ?TM answer.)
+        QTimer::singleShot(2500, this, [this] {
+            radio_->queryAfVolume(Rx::Main);
+            radio_->queryAfVolume(Rx::Sub);
+            radio_->queryAudioRouting();
+            radio_->queryTxAudio();                  // mic / proc / TX BW / monitor
+        });
+        radio_->queryAuxInputGain();
+        radio_->queryTuner();
+        radio_->queryVfoLock('A');
+        radio_->queryVfoLock('B');
+        awaitingFreq_ = true;
+        freqQueryAge_.start();
+        auto* poll = new QTimer(this);
+        connect(poll, &QTimer::timeout, this, [this] {
+            if (!radio_->connected()) return;
+            ++pollTick_;
+            // 1 s rotation at 200 ms/tick, sized to the Orion's ~100 ms UART
+            // servicing cycle: 2 Hz S-meter, 2 Hz frequency, mode and filter
+            // alternating at 0.5 Hz each. Every 5 s one S-meter slot is lent
+            // to the AGC/RF-gain/attenuator round-robin so front-panel knob
+            // changes eventually reflect in the sidebar.
+            const int phase = pollTick_ % 5;
+            // Burst (B): while the dial is actively moving, lend the two
+            // S-meter slots to frequency so the pan tracks the knob at ~4 Hz
+            // instead of 2. Pure slot reallocation — total query rate is
+            // unchanged, so no extra UART load; the S-meter just goes stale
+            // for the <800 ms you're spinning, which you can't read anyway.
+            const bool burst =
+                sinceDialMove_.isValid() && sinceDialMove_.elapsed() < 800;
+            if ((phase == 1 || phase == 3) && !burst) {
+                if (pollTick_ % 25 == 3) {
+                    // Sidetone pitch rides OUTSIDE the wheel: it steers the
+                    // reader's mixer, the zero-beat target and the pitch
+                    // meter's notch guard, so a front-panel change has to
+                    // land in seconds, not the ~70 s a full 14-slot lap
+                    // takes. One query — the other six stay on the wheel,
+                    // because this link also carries the S-meter and dial.
+                    const bool cwOpen = cwWin_ && cwWin_->isVisible();
+                    if (cwOpen) radio_->queryCwPitch();
+                    switch ((pollTick_ / 25) % 14) {
+                        case 0:  radio_->queryAgc(Rx::Main);
+                                 radio_->queryAgcThreshold(Rx::Main); break;
+                        case 9:  radio_->queryAgcHang(Rx::Main);
+                                 radio_->queryAgcDecay(Rx::Main);     break;
+                        case 1:  radio_->queryRfGain(Rx::Main);     break;
+                        case 2:  radio_->queryAttenuator(Rx::Main); break;
+                        case 3:  radio_->queryPreamp(Rx::Main);     break;
+                        case 4:  radio_->queryTxPower();            break;
+                        case 5:  radio_->queryVfoAssignment();      break;
+                        case 6:  radio_->queryAntennaRouting();     // Orion ?KA
+                                 radio_->queryAntenna();            // Omni ?C1V
+                                 break;
+                        case 7:  radio_->queryAfVolume(Rx::Main);   // front-panel knobs
+                                 radio_->queryAfVolume(Rx::Sub);    break;
+                        case 8:  radio_->queryAudioRouting();       break;
+                        case 10: radio_->queryTxFilter();           // front-panel TX
+                                 radio_->querySpeechProc();         // audio changes
+                                 radio_->queryMicGain();
+                                 break;
+                        case 11: radio_->queryVfoLock('A');         // front-panel lock
+                                 radio_->queryVfoLock('B');         // button presses
+                                 break;
+                        case 12: if (cwOpen) radio_->queryCw();     // the rest of
+                                 break;                             // the CW panel
+                        default: radio_->queryNotch(Rx::Main);      break;
+                    }
+                } else {
+                    radio_->querySMeter();
+                }
+                return;
+            }
+            if (phase == 2) {
+                switch ((pollTick_ / 5) % 5) {       // main mode/filter, VFO B side
+                    case 0:  radio_->queryMode(Rx::Main);      break;
+                    case 1:  radio_->queryFilter(Rx::Main);    break;
+                    case 2:  radio_->queryFrequency(Rx::Sub);  break;
+                    case 3:  radio_->queryMode(Rx::Sub);       break;
+                    default: radio_->queryFilter(Rx::Sub);     break;
+                }
+                return;
+            }
+            // Only one ?AF in flight: the Orion's response tail runs ~110 ms. Re-arm
+            // after 600 ms anyway in case a response was dropped.
+            if (awaitingFreq_ && freqQueryAge_.elapsed() < 600) return;
+            radio_->queryFrequency(Rx::Main);
+            awaitingFreq_ = true;
+            freqQueryAge_.restart();
+        });
+        poll->start(200);
+    } else {
+        statusBar()->showMessage("radio: could not open " + QString::fromStdString(radioDev));
+    }
+
+    // Capability gating — gray out what the connected radio can't do rather
+    // than leave live-looking controls that silently do nothing. Omni 8:
+    // single receiver, no hardware NB, no manual notch/SAF, and the whole
+    // TX-audio/power/tuner group answers only in REMOTE mode.
+    // TX CAT controls track their own capability (Omni VII: REMOTE only),
+    // not the receiver count — a single-receiver radio in remote mode still
+    // drives power/mic/proc/tune.
+    txBar_->setCatTxControlsEnabled(radio_->caps().catTxControls);
+    if (!radio_->caps().dualReceiver) {
+        panel_->setReducedCatSet(true);
+        volSl_[1]->setEnabled(false);              // one receiver: B has no audio
+        volLbl_[1]->setEnabled(false);
+        muteBtn_[1]->setEnabled(false);
+        audioPanel_->setEnabled(false);            // Orion output routing / monitor
+        routing_->setSplitOnly(true);              // ANT + sub rows are Orion-only
+
+        // Omni VII over Ethernet: the dead B row becomes the PC volume —
+        // the computer-side playback level of the RIP receive audio. Two
+        // different jobs side by side: the A slider is the radio's AF (feeds
+        // the 8-bit RIP stream — keep it healthy-high for S/N), this one is
+        // how loud the computer plays it. Gain is applied in-process in
+        // RipAudio; the old B handlers (sub-AF, a no-op on the Omni anyway)
+        // are disconnected first.
+        if (radioDevUsed_.startsWith("udp:")) {
+            // Re-apply saved TX shaping (EQ tilt + low-end rolloff) once per
+            // connect — but only if the operator has ever set them, so an
+            // untouched radio keeps its own menu values.
+            {
+                QSettings s;
+                if (s.contains("tx/eqDb"))
+                    radio_->setTxEq(s.value("tx/eqDb").toInt());
+                if (s.contains("tx/rolloffHz"))
+                    radio_->setTxRolloff(s.value("tx/rolloffHz").toInt());
+            }
+            // The routing panel's antenna matrix becomes the Omni's *C1V
+            // relay (RX column + TX column) — probe-verified: binary d0,
+            // ?C1V answers and the relay really switches. Buttons light from
+            // the radio's answer, not the click.
+            routing_->setOmniMode(true);
+            connect(routing_, &RoutingPanel::omniAntennaEdited, this,
+                    [this](int sel) {
+                        radio_->setAntenna(sel);
+                        radio_->queryAntenna();      // confirm from the radio
+                        static const char* names[] = {
+                            "ANT 1 (RX+TX)", "ANT 2 (RX+TX)",
+                            "RX aux, TX ANT 1", "RX aux, TX ANT 2"};
+                        statusBar()->showMessage(
+                            QString("antenna: %1").arg(names[sel]));
+                    });
+            connect(radio_, &RadioController::antennaReported, routing_,
+                    &RoutingPanel::showOmniAntenna);
+            radio_->queryAntenna();          // light the buttons from the radio
+            // DVR over Ethernet: the radio's RX audio exists only as the RIP
+            // stream (the SignaLink carries the Orion), so off-air record
+            // taps what you hear — the RIP playback sink's monitor. Over-air
+            // playback (VK/retransmit) would key the Omni while playing into
+            // the Orion's line-in = dead air; radioSink_ stays empty so those
+            // paths refuse (with a remote-aware message at the two sites).
+            const QString ripSink =
+                QSettings().value("radio/ripSink").toString().trimmed();
+            radioSource_ = (ripSink.isEmpty() ? QStringLiteral("@DEFAULT_SINK@")
+                                              : ripSink) + ".monitor";
+            radioSink_.clear();
+
+            volSl_[1]->disconnect();
+            muteBtn_[1]->disconnect();
+            const int pc = QSettings().value("radio/ripVolume", 100).toInt();
+            volSl_[1]->setEnabled(true);
+            volLbl_[1]->setEnabled(true);
+            muteBtn_[1]->setEnabled(true);
+            {
+                const QSignalBlocker b(volSl_[1]);
+                volSl_[1]->setValue(pc);
+            }
+            volLbl_[1]->setText(QString::number(pc));
+            vol_[1] = pc;
+            volSl_[1]->setStyleSheet(
+                "QSlider::groove:horizontal { height: 5px; background: #2a3644;"
+                " border-radius: 2px; }"
+                "QSlider::handle:horizontal { width: 14px; margin: -5px 0;"
+                " border-radius: 7px; background: #5dbf7a; }");
+            volSl_[1]->setToolTip(
+                "PC volume — how loud the computer plays the radio's RIP\n"
+                "receive audio. The A slider is the radio's AF, which also\n"
+                "feeds the 8-bit stream: keep AF healthy-high for clean\n"
+                "audio and trim your listening level here.");
+            muteBtn_[1]->setToolTip("Mute the computer's RIP audio "
+                                    "(radio AF untouched)");
+            connect(volSl_[1], &QSlider::valueChanged, this, [this](int v) {
+                volLbl_[1]->setText(QString::number(v));
+                vol_[1] = v;
+                if (muted_[1]) {                    // touch = unmute
+                    muted_[1] = false;
+                    const QSignalBlocker b(muteBtn_[1]);
+                    muteBtn_[1]->setChecked(false);
+                }
+                QSettings().setValue("radio/ripVolume", v);
+                radio_->setRipVolume(v);
+                statusBar()->showMessage(QString("PC volume -> %1").arg(v));
+            });
+            connect(muteBtn_[1], &QToolButton::toggled, this, [this](bool on) {
+                muted_[1] = on;
+                if (on) {
+                    preMute_[1] = vol_[1];
+                    radio_->setRipVolume(0);
+                } else {
+                    radio_->setRipVolume(preMute_[1]);
+                    vol_[1] = preMute_[1];
+                    const QSignalBlocker b(volSl_[1]);
+                    volSl_[1]->setValue(preMute_[1]);
+                    volLbl_[1]->setText(QString::number(preMute_[1]));
+                }
+                statusBar()->showMessage(
+                    QString("PC audio %1").arg(on ? "MUTED" : "unmuted"));
+            });
+        }
+    }
+
+    // External RF wattmeter. Opt-in: a station without one never opens a
+    // port and the SWR sweep keeps reading the radio, so this is invisible
+    // unless you have the hardware. meter/model picks the instrument:
+    // "lp100a" (TelePost LP-100A, vector — sweeps get R+jX and the Smith
+    // chart) or "powermaster" (Array Solutions PowerMaster, fast scalar —
+    // SWR curves only). The meter/* keys default from the older lp100a/*
+    // keys so existing configs keep working untouched. Device precedence
+    // matches the radio's: env > setting, with no built-in default.
+    {
+        QSettings s;
+        const bool en =
+            s.value("meter/enabled", s.value("lp100a/enabled", false)).toBool();
+        if (en) {
+            const QString model =
+                s.value("meter/model", "lp100a").toString();
+            const char* mEnv = std::getenv("TTC_LPMETER_DEV");
+            meterDevUsed_ = mEnv ? QString::fromLatin1(mEnv)
+                : s.value("meter/device", s.value("lp100a/device")).toString();
+            const QString name = model == "powermaster"
+                ? QStringLiteral("PowerMaster") : QStringLiteral("LP-100A");
+            meterName_ = name;
+            if (model == "powermaster")
+                txMeter_ = new ttc::PmMeter(this);
+            else
+                txMeter_ = new ttc::LpMeter(this);
+            // Tuner form: SWR follows the meter only while it sees a
+            // carrier (valid), so the field holds at key-up.
+            connect(txMeter_, &ttc::TxMeter::reading, this,
+                    [this](const ttc::TxMeter::Reading& r) {
+                if (tuneEntryDlg_ && r.valid) tuneEntryDlg_->setLiveSwr(r.swr);
+                // The SmartMTR face reads TX from the meter (10 Hz, |Z|/phase).
+                smeter_->setExtTx(r.watts, r.swr, r.zOhm, r.phaseDeg, r.valid, r.zValid,
+                                  meterName_);
+            });
+            if (meterHost_) meterHost_->attachTxMeter(txMeter_);
+            if (meterBox_) meterBox_->attachTxMeter(txMeter_);
+            connect(txMeter_, &ttc::TxMeter::aliveChanged, this,
+                    [this, name](bool up) {
+                statusBar()->showMessage(
+                    QString("%1 wattmeter %2")
+                        .arg(name, up ? "connected" : "went quiet"), 6000);
+                // Connection transitions are rare and the first thing you
+                // want when a headless run says the sweep read the radio.
+                fprintf(stderr, "[meter] %s %s on %s\n",
+                        name.toLocal8Bit().constData(),
+                        up ? "connected" : "went quiet",
+                        meterDevUsed_.toLocal8Bit().constData());
+            });
+            // Note: the console never changes either meter's mode or
+            // display — operator's decision (2026-08-01), matching the
+            // vendors' own practice. LpMeter::seekMode() exists, verified,
+            // if that ever changes.
+            if (!txMeter_->start(meterDevUsed_)) {
+                txMeter_->deleteLater();
+                txMeter_ = nullptr;
+                meterDevUsed_.clear();
+                meterName_.clear();
+                statusBar()->showMessage(
+                    name + ": could not open its serial port — the SWR "
+                           "sweep will read the radio instead", 10000);
+            } else {
+                // A USB serial port OPENS whether or not the instrument is
+                // powered at the far end, so start() succeeding proves
+                // nothing — only a parsed frame does (live-found: the
+                // FT4232H channel opened happily with the LP-100A silent,
+                // and the SWR sweep drew the radio's curve while Setup
+                // still said the meter was enabled). Give it a few polls,
+                // then say so once. Without this a configured-but-dead
+                // meter is indistinguishable from no meter at all.
+                QTimer::singleShot(6000, this, [this, name] {
+                    if (!txMeter_ || txMeter_->isAlive()) return;
+                    statusBar()->showMessage(
+                        name + " is enabled on " + meterDevUsed_
+                            + " but is not answering — check that it is "
+                              "powered and cabled; SWR sweeps will read the "
+                              "radio instead", 15000);
+                    fprintf(stderr, "[meter] %s SILENT on %s\n",
+                            name.toLocal8Bit().constData(),
+                            meterDevUsed_.toLocal8Bit().constData());
+                });
+            }
+        }
+    }
+
+    // First run on a new station: open the setup dialog once the window is
+    // up (alpha testers must point the console at THEIR hardware — the
+    // settings defaults are this station's). Completing it stamps
+    // setup/done; afterwards it lives in SDR menu → Station setup…
+    // Never under selftest: a modal dialog wedges the offscreen harness
+    // (its clean config always looks like a first run).
+    if (!QSettings().contains("setup/done") && !std::getenv("TTC_SELFTEST"))
+        QTimer::singleShot(800, this, &MainWindow::openSetup);
+    layout_->finish();                  // restore the saved box arrangement
+    // The SOLAR box answers to the DISPLAY tick, not to a saved box state:
+    // after finish(), or restoreState() would have the last word.
+    layout_->setSideBoxVisible(
+        "solar", QSettings().value("display/solar", true).toBool());
+    // DISPLAY panel's sidebar picker: unticked buttons stay out of the
+    // grid (sidebar/hidden, shared by both views). DISPLAY itself can't
+    // be unticked — it is the way back to this list.
+    {
+        QStringList hidden = QSettings().value("sidebar/hidden").toStringList();
+        hidden.removeAll(QStringLiteral("DISPLAY"));
+        layout_->setHiddenSideButtons(hidden);
+        QStringList names = layout_->sideButtonNames();
+        names.removeAll(QStringLiteral("DISPLAY"));
+        dispPanel_->setSidebarButtons(names, hidden);
+        connect(dispPanel_, &DisplayPanel::sidebarHiddenChanged, this,
+                [this](const QStringList& h) {
+                    // Names this view doesn't have (the other view's boxes)
+                    // keep their saved state.
+                    QStringList all = QSettings().value("sidebar/hidden").toStringList();
+                    const QStringList mine = layout_->sideButtonNames();
+                    all.erase(std::remove_if(all.begin(), all.end(),
+                                             [&](const QString& n) { return mine.contains(n); }),
+                              all.end());
+                    all += h;
+                    QSettings().setValue("sidebar/hidden", all);
+                    layout_->setHiddenSideButtons(h);
+                });
+    }
+}
+
+// Re-read spots/{host,port,login} and point the feed at them, live.
+void MainWindow::applyClusterSettings() {
+    QSettings s;
+    const QString  host  = s.value("spots/host", "dxc.ve7cc.net").toString();
+    const quint16  port  = static_cast<quint16>(s.value("spots/port", 23).toUInt());
+    const QString  login = s.value("spots/login",
+                                   s.value("station/callsign", "")).toString();
+    spotClient_.configure(host, port, login);
+    if (spotSrcAct_)
+        spotSrcAct_->setText(QString("source: %1:%2 as %3")
+                                 .arg(host).arg(port).arg(login));
+    if (spotsOnAct_ && spotsOnAct_->isChecked()) {
+        spotClient_.setEnabled(false);           // drop the old node
+        spotClient_.setEnabled(true);            // ... and log in to the new one
+    }
+}
+
+void MainWindow::openSetup() {
+    const QString keyerDev =
+        (cwWin_ && cwWin_->keyerOpen())
+            ? QSettings().value("cw/port").toString() : QString();
+    SetupDialog dlg(radioDevUsed_, keyerDev, meterDevUsed_, radioUp_, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        // The keyer choice applies NOW: it is the one setting whose whole
+        // point is "make CW come out of a different thing", and silently
+        // deferring it reads as the selector doing nothing.
+        if (cwWin_) cwWin_->reloadKeyer();
+        // The cluster node applies NOW too: the point of the node list is
+        // rolling through them when one goes quiet, and a restart per try
+        // is not rolling through anything. Reconnecting is just configure
+        // + an off/on of the client, which re-runs the login sequence.
+        applyClusterSettings();
+        statusBar()->showMessage(
+            "setup saved — the keyer and the cluster node apply now; "
+            "radio changes apply on the next launch", 8000);
+    }
+}
+
+MainWindow::~MainWindow() {
+    stopManualTune();                            // never leave a carrier up
+    if (liveMic_) setLiveMic(false);             // front mic back for next time
+    dvr_->stop();                                // finalize an in-flight take
+    if (dvrTxPlayback_) {
+        radio_->setPtt(false);                   // never leave the rig keyed
+        if (dvrAutoDig_) setDigitalMode(false);  // nor on line-in with mic parked
+    }
+    saveBandMemory();                            // remember this band across runs
+    if (iqRec_ && iqRec_->active()) iqRec_->stop();  // finalize the file
+    if (replayThread_) {                         // same teardown-order rule
+        replayStop_.store(true, std::memory_order_relaxed);
+        replayThread_->wait(2000);
+    }
+#ifdef HAVE_SDRPLAY
+    // Stop the SDRplay streaming thread (Uninit drains callbacks) BEFORE the
+    // spectrum_/dsp members it references are destroyed. Without this, member
+    // teardown order frees the FFT under a still-running callback (use-after-free).
+    sdr_.stop();
+    // Then the fan-out worker (producer is quiet now), same rule: it
+    // references spectrum_/decoders and must die before they do.
+    if (iqWorker_) {
+        iqWorkerStop_.store(true, std::memory_order_relaxed);
+        iqRingCv_.notify_all();
+        iqWorker_->wait(2000);
+    }
+#endif
+    // Tool windows are parentless top-levels on Windows (own taskbar entry
+    // and z-order; see toolWinParent in MainWindowTools.cpp) — nothing
+    // deletes them but us. Last, with every IQ producer quiet, matching
+    // where child destruction ran when they were parented (on Linux they
+    // still are, and these deletes just run a moment early).
+    delete cwWin_;    cwWin_ = nullptr;
+    delete skimWin_;  skimWin_ = nullptr;
+    delete skimView_; skimView_ = nullptr;
+    delete digiWin_;  digiWin_ = nullptr;
+}
+
+// One choke point for the VOACAP overlay: run the engine only when the
+// inputs can matter, and never twice for the same (UTC hour, band, SSN)
+// key. The overlay draws only on map backdrops, but the forecast is
+// computed whenever enabled so switching to a map shows it instantly.
+void MainWindow::maybeRunVoacap() {
+    if (!voacapEnabled_ || voacap_.busy()) return;
+    const QString missing = Voacap::engineMissing();
+    if (!missing.isEmpty()) {
+        if (!voacapWarned_) {
+            voacapWarned_ = true;
+            statusBar()->showMessage("VOACAP overlay: " + missing, 12000);
+        }
+        return;
+    }
+    const int ssn = solarClient_.data().ssn;
+    if (ssn <= 0) {
+        // Starving for solar data is a state the operator can't see —
+        // say it once instead of silently skipping every recheck.
+        if (!voacapSsnWarned_) {
+            voacapSsnWarned_ = true;
+            statusBar()->showMessage(
+                "VOACAP: waiting for solar data (SSN) from NOAA", 8000);
+        }
+        return;
+    }
+    voacapSsnWarned_ = false;
+    if (curBand_ < 0 || is60m(curBand_)) return;
+    double la = 0.0, lo = 0.0;
+    const QString grid =
+        QSettings().value("station/grid", "").toString().trimmed();
+    if (!CtyLookup::gridToLatLon(grid, la, lo)) return;
+    const int hour = QDateTime::currentDateTimeUtc().time().hour();
+    const quint64 key = quint64(hour) * 1000000ull
+        + quint64(curBand_) * 1000ull + quint64(ssn);
+    if (key == voacapKey_) return;
+    voacapKey_ = key;
+    const double fMHz =
+        (kBands[curBand_].loHz + kBands[curBand_].hiHz) / 2.0 / 1e6;
+    voacap_.request(la, lo, fMHz, ssn, std::clamp(lastTxPwr_, 1, 200));
+}
+
+#ifdef HAVE_SDRPLAY
+// The GUI side of the spectrum pacer (see specQ_): one frame per tick on a
+// precise timer whose interval steers the queue toward 2 frames of slack —
+// a little faster when frames pile up (a late tick, the sample clock a hair
+// ahead), a little slower when it runs dry. Steering instead of dropping:
+// the first cut shed ~3 frames/s whenever a tick ran late, and each shed
+// frame was a visible skip in the 3D scroll (live, 2026-10-16). Frames are
+// only thrown away after a real stall (> 8 queued).
+void MainWindow::startSpecPacer() {
+    if (!specPresent_) return;                     // before the SDR chain exists
+    if (!specPacer_) {
+        specPacer_ = new SpecPacerTimer(this);
+        specPacer_->setTimerType(Qt::PreciseTimer);
+        specPacer_->setSingleShot(true);
+        connect(specPacer_, &SpecPacerTimer::timeout, this, [this] {
+            // One frame per tick; beyond 3 queued (the display is 60 Hz, the
+            // FFT 61; a late tick) the extras are CONSUMED in the same tick —
+            // their data still reaches the averaging, waterfall and 3D rows,
+            // they just share one repaint. Nothing is thrown away.
+            std::vector<std::vector<float>> take;
+            size_t left = 0;
+            {
+                std::lock_guard<std::mutex> lk(specQMux_);
+                const size_t n = specQ_.empty() ? 0 : std::max<size_t>(1, specQ_.size() - 2);
+                for (size_t i = 0; i < n && i < specQ_.size(); ++i)
+                    take.push_back(std::move(specQ_[i]));
+                specQ_.erase(specQ_.begin(), specQ_.begin() + qsizetype(take.size()));
+                left = specQ_.size();
+            }
+            const double scale = std::clamp(1.0 - 0.12 * (double(left) - 2.0), 0.6, 1.25);
+            setPacerInterval(spectrum_.framePeriodMs() * scale);
+            specPacer_->start();
+            for (auto& f : take) specPresent_(f);
+        });
+    }
+    setPacerInterval(spectrum_.framePeriodMs());
+    specPacer_->start();
+}
+
+// QChronoTimer (Qt 6.8+) takes the 16.384 ms frame period exactly; a plain
+// QTimer (older Qt) rounds to whole ms and the queue steering absorbs it.
+void MainWindow::setPacerInterval(double ms) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    specPacer_->setInterval(std::chrono::nanoseconds(qint64(ms * 1e6)));
+#else
+    specPacer_->setInterval(std::max(1, int(std::lround(ms))));
+#endif
+}
+#endif  // HAVE_SDRPLAY
+
+} // namespace ttc

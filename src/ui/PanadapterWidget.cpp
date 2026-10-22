@@ -1,0 +1,2615 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "ui/PanadapterWidget.h"
+#include "ui/PanGpuView.h"
+
+#include <QElapsedTimer>
+#include <QHash>
+#include <cstdio>
+
+#include <QPainter>
+#include <QPainterPath>
+#include <QLinearGradient>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QMouseEvent>
+#include <QSettings>
+#include <QUrl>
+#include <QWheelEvent>
+#include <algorithm>
+#include <climits>
+#include <cmath>
+#include <cstring>
+
+namespace ttc {
+
+namespace {
+constexpr int   kMinViewSpanHz = 4000;   // deep enough to edit a CW filter
+                                         // (doubled 2026-07-31: bigger labels +
+                                         // license-class letters live in it now)
+constexpr int   kDbAxisW       = 40;     // grab width of the left dB scale
+constexpr float kPeakDecayDb   = 0.15f;  // peak-hold droop per frame (~2-3 dB/s)
+constexpr float kNoRow         = -300.0f;
+
+// Color palettes. All stops interpolate linearly; t=0 is the scale bottom
+// (noise floor), t=1 the top. "Enhanced" is the vivid KE9NS-PowerSDR-style
+// ramp — signals climb through blue/cyan/green into yellow/orange/red so
+// strength reads as color, not just height.
+struct Stop { float t; int r, g, b; };
+const Stop kEnhanced[] = {
+    {0.00f,   0,   0,   0}, {0.12f,  25,   0,  60}, {0.25f,   0,  30, 160},
+    {0.40f,   0, 120, 230}, {0.52f,   0, 200, 180}, {0.62f,  40, 210,  50},
+    {0.72f, 230, 230,  40}, {0.82f, 255, 140,  20}, {0.92f, 255,  40,  30},
+    {1.00f, 255, 255, 255},
+};
+const Stop kClassic[] = {
+    {0.00f,   0,   0,   0}, {0.20f,   0,   0, 120}, {0.40f,   0, 160, 200},
+    {0.60f,   0, 200,  80}, {0.75f, 230, 220,  40}, {0.90f, 240,  60,  30},
+    {1.00f, 255, 255, 255},
+};
+const Stop kThermal[] = {
+    {0.00f,   0,   0,   0}, {0.30f,  90,   0,  10}, {0.55f, 200,  40,   0},
+    {0.75f, 255, 150,   0}, {0.90f, 255, 230,  60}, {1.00f, 255, 255, 255},
+};
+const Stop kGray[] = {
+    {0.00f,   0,   0,   0}, {1.00f, 255, 255, 255},
+};
+// AetherSDR's waterfall colormaps (default-dark theme), appended — the
+// palette index is stored, so never reorder.
+const Stop kAether[] = {
+    {0.00f,   0,   0,   0}, {0.15f,   0,   0, 128}, {0.30f,   0,  64, 255},
+    {0.45f,   0, 200, 255}, {0.60f,   0, 220,   0}, {0.80f, 255, 255,   0},
+    {1.00f, 255,   0,   0},
+};
+const Stop kBlueGreen[] = {
+    {0.00f,   0,   0,   0}, {0.25f,   0,  30, 120}, {0.50f,   0, 100, 180},
+    {0.75f,   0, 200, 130}, {1.00f, 220, 255, 220},
+};
+const Stop kFire[] = {
+    {0.00f,   0,   0,   0}, {0.25f, 128,   0,   0}, {0.50f, 220,  80,   0},
+    {0.75f, 255, 200,   0}, {1.00f, 255, 255, 220},
+};
+const Stop kPlasma[] = {
+    {0.00f,   0,   0,   0}, {0.25f,  80,   0, 140}, {0.50f, 200,   0, 120},
+    {0.75f, 240, 120,   0}, {1.00f, 255, 255,  80},
+};
+const Stop kPurple[] = {
+    {0.00f,   0,   0,   0}, {0.15f,   0,   0, 255}, {0.30f,   0, 255,   0},
+    {0.45f, 255, 255,   0}, {0.60f, 255,   0,   0}, {0.75f, 128,   0, 128},
+    {1.00f, 255, 255, 255},
+};
+const Stop kGlacier[] = {
+    {0.00f,   5,  24,  60}, {0.30f,  10,  90, 210}, {0.55f,  60, 160, 255},
+    {0.80f, 168, 220, 255}, {1.00f, 255, 255, 255},
+};
+struct Palette { const Stop* stops; size_t n; };
+const Palette kPalettes[] = {
+    {kEnhanced, std::size(kEnhanced)},
+    {kClassic,  std::size(kClassic)},
+    {kThermal,  std::size(kThermal)},
+    {kGray,     std::size(kGray)},
+    {kAether,   std::size(kAether)},
+    {kBlueGreen, std::size(kBlueGreen)},
+    {kFire,     std::size(kFire)},
+    {kPlasma,   std::size(kPlasma)},
+    {kPurple,   std::size(kPurple)},
+    {kGlacier,  std::size(kGlacier)},
+};
+
+// A "nice" grid step (1/2/5 x 10^k) giving ~8 divisions across the view.
+double niceStep(double span) {
+    const double raw = span / 8.0;
+    const double mag = std::pow(10.0, std::floor(std::log10(raw)));
+    for (double m : {1.0, 2.0, 5.0, 10.0})
+        if (raw <= m * mag) return m * mag;
+    return 10.0 * mag;
+}
+} // namespace
+
+QStringList PanadapterWidget::paletteNames() {
+    // Stored by index: append only. 4.. are AetherSDR's colormaps.
+    return {"Enhanced", "Classic", "Thermal", "Grayscale",
+            "Aether", "Blue-Green", "Fire", "Plasma", "Purple", "Glacier"};
+}
+
+QStringList PanadapterWidget::backgroundNames() {
+    // Stored-enum rule: indices persist in settings — append only. 2..5 =
+    // world-map backdrops (5 = "Map: Custom…", a FIXED index, image path in
+    // display/mapCustomPath). 6 = "Ship" — artwork chosen BY NAME from the
+    // DisplayPanel's fleet gallery (~/Pictures/starships; the filename is
+    // the name), cover-cropped and dimmed under the trace (path lands in
+    // display/shipImagePath; the Day slider doubles as brightness).
+    // Code-drawn ship blueprints sailed here briefly and were struck from
+    // the register as tacky.
+    // 7 = "Globe: QTH" — orthographic Earth centered on the station grid,
+    // live grayline + night lights, appended 2026-08-02.
+    return {"Dark", "Blue Rays", "Map: Classic", "Map: Vegetation",
+            "Map: Night lights", "Map: Custom…", "Ship", "Globe: QTH"};
+}
+
+namespace {
+// "Blue with lighting from above" (KE9NS): deep blue vertical gradient plus a
+// few soft light shafts slanting down from the top, rendered once per size.
+QImage renderBlueRays(int w, int h) {
+    QImage img(w, h, QImage::Format_RGB32);
+    QPainter p(&img);
+    QLinearGradient base(0, 0, 0, h);
+    base.setColorAt(0.0, QColor(16, 42, 78));
+    base.setColorAt(0.55, QColor(8, 20, 40));
+    base.setColorAt(1.0, QColor(3, 8, 16));
+    p.fillRect(QRect(0, 0, w, h), base);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setCompositionMode(QPainter::CompositionMode_Plus);   // additive glow
+    // Three rounded pools of light from above (KE9NS look): radial gradients
+    // centered just above the top edge, so each lobe reads as a soft dome
+    // rather than a hard-edged beam. Fixed table = never flickers on rebuild.
+    struct Lamp { float x, r, bright; };
+    static const Lamp lamps[] = {
+        {0.18f, 0.70f, 1.00f}, {0.50f, 0.85f, 0.85f}, {0.82f, 0.65f, 0.95f},
+    };
+    for (const Lamp& L : lamps) {
+        QRadialGradient g(QPointF(L.x * w, -0.10 * h), L.r * h);
+        g.setColorAt(0.00, QColor(130, 190, 255, int(150 * L.bright)));
+        g.setColorAt(0.40, QColor(90, 150, 230, int(60 * L.bright)));
+        g.setColorAt(1.00, QColor(0, 0, 0, 0));
+        p.fillRect(QRect(0, 0, w, h), g);
+    }
+    return img;
+}
+
+// "Ship: Custom…" backdrop: the operator's chosen artwork (any image on
+// disk), cover-cropped to fill the spectrum area, dimmed to backdrop
+// strength (brightPct = the Day slider), with the same fade-to-dark floor
+// the maps use so the trace baseline stays readable. Nothing is committed
+// to the repo — the path lives in QSettings display/shipImagePath.
+QImage renderShipImage(int w, int h, const QImage& art, int brightPct) {
+    if (art.isNull()) return renderBlueRays(w, h);
+    QImage img(w, h, QImage::Format_RGB32);
+    img.fill(QColor(6, 9, 16));
+    QPainter p(&img);
+    QImage scaled = art.scaled(w, h, Qt::KeepAspectRatioByExpanding,
+                               Qt::SmoothTransformation);
+    p.drawImage(QPoint((w - scaled.width()) / 2, (h - scaled.height()) / 2),
+                scaled);
+    // Dim to backdrop strength (Day slider %, same feel as the maps).
+    const int dim = 255 - std::clamp(brightPct, 5, 100) * 255 / 100;
+    p.fillRect(QRect(0, 0, w, h), QColor(4, 7, 14, dim));
+    const int fadeH = std::min(h / 4, 60);
+    QLinearGradient fade(0, h - fadeH, 0, h);
+    fade.setColorAt(0.0, QColor(12, 16, 22, 0));
+    fade.setColorAt(1.0, QColor(12, 16, 22, 235));
+    p.fillRect(QRect(0, h - fadeH, w, fadeH), fade);
+    return img;
+}
+
+// The map sun, KE9NS-sized: a bold disc you can spot from across the
+// shack, not a pinhead (rays tried 2026-08-08, operator called them off —
+// clean disc only). Like his, it reacts to the live GOES X-ray class —
+// a C flare warms it, M swells it orange, X goes angry red — so the map
+// itself says "flare in progress". Returns the disc reach in pixels so
+// callers can keep captions clear of it; the glow halo extends further
+// (kSunGlow vs kSunReach of the disc radius) — seam-wrap tests must use
+// the halo, or the glow pops in at the dateline instead of leading in.
+constexpr double kSunGlow  = 3.2;           // halo radius, in disc radii
+constexpr double kSunReach = 1.15;          // caption clearance, ditto
+double drawMapSun(QPainter& p, QPointF c, double core, const QString& xray) {
+    double k = 1.0;                         // flare response: size multiplier
+    QColor hot(255, 176, 32);               // quiet-sun disc
+    QColor rim(120, 70, 0);
+    const QChar cls = xray.isEmpty() ? QChar('A') : xray.at(0).toUpper();
+    if      (cls == 'C') { k = 1.12; hot = QColor(255, 152, 26); }
+    else if (cls == 'M') { k = 1.32; hot = QColor(255, 112, 22);
+                           rim = QColor(130, 40, 0); }
+    else if (cls == 'X') { k = 1.55; hot = QColor(255, 72, 26);
+                           rim = QColor(140, 20, 0); }
+    const double r = core * k;
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+    QRadialGradient glow(c, r * kSunGlow);
+    glow.setColorAt(0.0, QColor(hot.red(), hot.green(), 40, 165));
+    glow.setColorAt(1.0, QColor(hot.red(), hot.green(), 40, 0));
+    p.setPen(Qt::NoPen);
+    p.setBrush(glow);
+    p.drawEllipse(c, r * kSunGlow, r * kSunGlow);
+    QRadialGradient disc(c, r);             // hot center, toasted limb
+    disc.setColorAt(0.00, QColor(255, 238, 160));
+    disc.setColorAt(0.55, hot);
+    disc.setColorAt(1.00, hot.darker(112));
+    p.setBrush(disc);
+    p.setPen(QPen(rim, 1));
+    p.drawEllipse(c, r, r);
+    p.restore();
+    return r * kSunReach;
+}
+
+// World map with live grayline: an equirectangular NASA basemap, shaded
+// for use as a backdrop, with the night side darkened from the current UTC
+// subsolar point (soft twilight band = the grayline). KE9NS proportions:
+// the map fills only the upper band of the spectrum area and fades to dark
+// where the trace floor lives. dayPct/nightPct = user brightness (percent).
+QImage renderWorldMap(int w, int h, const QImage& earth,
+                      int dayPct, int nightPct, bool drawSun,
+                      int sfi, int aIdx, double kIdx, const QString& xray) {
+    if (earth.isNull()) return renderBlueRays(w, h);  // basemap missing
+    const int mapH = std::max(1, static_cast<int>(h * 0.84));
+    QImage img = earth.scaled(w, mapH, Qt::IgnoreAspectRatio,
+                              Qt::SmoothTransformation);
+    // Subsolar point from UTC (declination approx; equation of time ignored —
+    // a display grayline, not an almanac).
+    const QDateTime utc = QDateTime::currentDateTimeUtc();
+    const int doy = utc.date().dayOfYear();
+    const double hours = utc.time().hour() + utc.time().minute() / 60.0;
+    const double decl = 23.44 * std::sin(2.0 * M_PI * (doy - 81) / 365.25)
+                        * M_PI / 180.0;
+    const double subLon = (12.0 - hours) * 15.0 * M_PI / 180.0;
+    std::vector<double> sinLatSinD(mapH), cosLatCosD(mapH), cosDLon(w);
+    for (int y = 0; y < mapH; ++y) {
+        const double lat = (90.0 - 180.0 * (y + 0.5) / mapH) * M_PI / 180.0;
+        sinLatSinD[y] = std::sin(lat) * std::sin(decl);
+        cosLatCosD[y] = std::cos(lat) * std::cos(decl);
+    }
+    for (int x = 0; x < w; ++x) {
+        const double lon = (360.0 * (x + 0.5) / w - 180.0) * M_PI / 180.0;
+        cosDLon[x] = std::cos(lon - subLon);
+    }
+    // KE9NS grayline zones (spot.cs SUNANGLE/Darken): flat brightness steps,
+    // not a glow — day above the horizon, a wide dusk/dawn band while the sun
+    // sits 0..6 degrees below (SZA 90..96), dark night core beyond that.
+    // Boundary smoothsteps widened (Thetis-style soft terminator) so the
+    // zones blend instead of showing hard edges. Levels are user-set: night
+    // floor at nightPct, full day at dayPct, dusk band 45 % of the way up.
+    const double duskLo = std::sin(-6.0 * M_PI / 180.0);   // night below this
+    const double nLvl = std::clamp(nightPct, 0, 100) / 100.0;
+    const double dLvl = std::clamp(dayPct, 10, 120) / 100.0;
+    auto smooth = [](double lo, double hi, double v) {
+        const double t = std::clamp((v - lo) / (hi - lo), 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    };
+    for (int y = 0; y < mapH; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            const double sinElev = sinLatSinD[y] + cosLatCosD[y] * cosDLon[x];
+            const double tDusk = smooth(duskLo - 0.05, duskLo + 0.05, sinElev);
+            const double tDay  = smooth(-0.04, 0.04, sinElev);
+            const double bright = nLvl + (dLvl - nLvl) * (0.45 * tDusk + 0.55 * tDay);
+            const int f = static_cast<int>(bright * 256.0);
+            const QRgb c = line[x];
+            line[x] = qRgb(std::min(255, (qRed(c)   * f) >> 8),
+                           std::min(255, (qGreen(c) * f) >> 8),
+                           std::min(255, (qBlue(c)  * f) >> 8));
+        }
+    }
+    // Sun marker at the subsolar point (already computed for the grayline),
+    // with the KE9NS/Thetis-style space-weather caption beside it. Rides the
+    // same "Solar data panel" toggle as the corner readout.
+    if (drawSun) {
+        const double latDeg = decl * 180.0 / M_PI;
+        double lonDeg = (12.0 - hours) * 15.0;
+        while (lonDeg > 180.0) lonDeg -= 360.0;
+        while (lonDeg < -180.0) lonDeg += 360.0;
+        const double sx = (lonDeg + 180.0) / 360.0 * w;
+        const double sy = (90.0 - latDeg) / 180.0 * mapH;
+        QPainter sp(&img);
+        const double reach = drawMapSun(sp, QPointF(sx, sy), 11.0, xray);
+        // Around 00 UTC the subsolar point rides the dateline = the map
+        // seam; draw the wrapped copy while ANY of the sun would clip —
+        // that's the halo (kSunGlow), not just the disc, or the glow ends
+        // in a hard vertical edge and pops across between minute renders.
+        const double halo = reach * (kSunGlow / kSunReach);
+        if (sx < halo)     drawMapSun(sp, QPointF(sx + w, sy), 11.0, xray);
+        if (sx > w - halo) drawMapSun(sp, QPointF(sx - w, sy), 11.0, xray);
+        if (sfi > 0) {
+            QFont f = sp.font();
+            f.setPixelSize(10);
+            f.setBold(true);
+            sp.setFont(f);
+            QString cap = QString("SFI %1").arg(sfi);
+            if (aIdx >= 0) cap += QString("  A %1").arg(aIdx);
+            if (kIdx >= 0) cap += QString("  K %1").arg(kIdx, 0, 'f', 1);
+            const int tw = sp.fontMetrics().horizontalAdvance(cap);
+            double tx = sx + reach + 4;             // flip side near the edge
+            if (tx + tw > w - 4) tx = sx - reach - 4 - tw;
+            sp.setPen(QColor(0, 0, 0, 190));        // shadow for readability
+            sp.drawText(QPointF(tx + 1, sy + 4 + 1), cap);
+            sp.setPen(QColor(255, 214, 90));
+            sp.drawText(QPointF(tx, sy + 4), cap);
+        }
+    }
+    // Composite: map up top, dark trace floor below, soft fade between.
+    QImage out(w, h, QImage::Format_RGB32);
+    out.fill(QColor(12, 16, 22));
+    QPainter p(&out);
+    p.drawImage(0, 0, img);
+    const int fadeH = std::min(mapH / 4, 60);
+    QLinearGradient fade(0, mapH - fadeH, 0, mapH);
+    fade.setColorAt(0.0, QColor(12, 16, 22, 0));
+    fade.setColorAt(1.0, QColor(12, 16, 22, 255));
+    p.fillRect(QRect(0, mapH - fadeH, w, fadeH), fade);
+    return out;
+}
+
+// Globe geometry, shared by the renderer and the overlay projections so
+// VOACAP rings land exactly on the ball they were computed for.
+void globeGeom(int w, int h, int& cx, int& cy, int& R) {
+    R  = int(std::min(h * 0.475, w * 0.45));
+    cx = w / 2;
+    cy = h / 2 + int(h * 0.02);
+}
+
+// The Earth from space, orthographic, centered on the QTH — the exact
+// hemisphere this station's signals actually see, with the grayline
+// crawling across it live. Day pixels from earth.jpg, night pixels from
+// earth_night.jpg (city lights), blended through the same soft-twilight
+// idea as the flat maps; a breath of atmosphere past the limb sells the
+// ball. Re-rendered once a minute by the bgMinute_ cache like the maps.
+QImage renderGlobeBackdrop(int w, int h, double lat0d, double lon0d,
+                           int dayPct, int nightPct, bool drawSun,
+                           const QString& xray) {
+    static QImage day, night;
+    if (day.isNull()) {
+        day   = QImage(":/earth.jpg").convertToFormat(QImage::Format_RGB32);
+        night = QImage(":/earth_night.jpg")
+                    .convertToFormat(QImage::Format_RGB32);
+    }
+    QImage out(w, h, QImage::Format_RGB32);
+    out.fill(QColor(4, 6, 10));
+    if (day.isNull()) return out;
+
+    // Fixed-seed starfield: still, not twinkling — re-render is per minute
+    // and shimmering stars behind a spectrum trace would be noise.
+    {
+        QPainter sp(&out);
+        quint32 seed = 0x565u;                      // hull number, of course
+        auto rnd = [&seed] {
+            seed = seed * 1664525u + 1013904223u;
+            return seed >> 16;
+        };
+        for (int i = 0; i < 170; ++i) {
+            const int sx = int(rnd() % uint(std::max(1, w)));
+            const int sy = int(rnd() % uint(std::max(1, h)));
+            const int b  = 40 + int(rnd() % 90);
+            sp.setPen(QColor(b, b, std::min(255, b + 25)));
+            sp.drawPoint(sx, sy);
+            if (i % 23 == 0) sp.drawPoint(sx + 1, sy);   // a few doubles
+        }
+    }
+
+    int cx, cy, R;
+    globeGeom(w, h, cx, cy, R);
+    const double lat0 = lat0d * M_PI / 180.0, lon0 = lon0d * M_PI / 180.0;
+    const QDateTime utc = QDateTime::currentDateTimeUtc();
+    const double hours = utc.time().hour() + utc.time().minute() / 60.0;
+    const double decl = 23.44 * std::sin(2.0 * M_PI * (utc.date().dayOfYear() - 81)
+                                         / 365.25) * M_PI / 180.0;
+    const double subLon = (12.0 - hours) * 15.0 * M_PI / 180.0;
+    // Brightness knobs ride the existing MAP DAY / MAP NIGHT sliders,
+    // normalized so the defaults (78/18) give the photo look.
+    const double dayGain   = std::clamp(dayPct / 78.0, 0.25, 1.6);
+    const double nightGain = std::clamp(nightPct / 18.0, 0.2, 3.0);
+
+    const double sinLat0 = std::sin(lat0), cosLat0 = std::cos(lat0);
+    for (int y = std::max(0, cy - R); y < std::min(h, cy + R + 1); ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(out.scanLine(y));
+        for (int x = std::max(0, cx - R); x < std::min(w, cx + R + 1); ++x) {
+            const double dx = (x + 0.5 - cx) / double(R);
+            const double dy = (cy - (y + 0.5)) / double(R);   // +y = north
+            const double rho2 = dx * dx + dy * dy;
+            if (rho2 >= 1.0) continue;
+            const double cosc = std::sqrt(1.0 - rho2);        // view angle
+            // Inverse orthographic: pixel -> lat/lon on the near hemisphere.
+            const double la = std::asin(cosc * sinLat0 + dy * cosLat0);
+            const double lo = lon0
+                + std::atan2(dx, cosc * cosLat0 - dy * sinLat0);
+            int mx = int((lo / M_PI + 1.0) * 0.5 * day.width()) % day.width();
+            if (mx < 0) mx += day.width();
+            const int my = std::clamp(
+                int((0.5 - la / M_PI) * day.height()), 0, day.height() - 1);
+            const QRgb dc = day.pixel(mx, my);
+            const QRgb nc = night.isNull() ? qRgb(0, 0, 0)
+                                           : night.pixel(mx, my);
+            // Grayline: soft twilight band, same spirit as the flat maps.
+            const double sinElev = std::sin(la) * std::sin(decl)
+                + std::cos(la) * std::cos(decl) * std::cos(lo - subLon);
+            double t = (sinElev + 0.10) / 0.16;               // -0.10..0.06
+            t = std::clamp(t, 0.0, 1.0);
+            t = t * t * (3.0 - 2.0 * t);                      // smoothstep
+            // Gentle limb shading curves the ball without hiding the map.
+            const double limb = 0.55 + 0.45 * cosc;
+            const double dayB = t * dayGain * limb;
+            auto mix = [&](int dch, int nch, int ambient) {
+                const double v = dch * dayB
+                    + nch * (1.0 - t) * nightGain * (0.5 + 0.5 * limb)
+                    + ambient * (1.0 - t);
+                return std::min(255, int(v));
+            };
+            line[x] = qRgb(mix(qRed(dc), qRed(nc), 6),
+                           mix(qGreen(dc), qGreen(nc), 9),
+                           mix(qBlue(dc), qBlue(nc), 18));
+        }
+    }
+
+    QPainter p(&out);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    // Atmosphere: a thin scattering shell hugging the limb, additive so
+    // it glows against space exactly like the photos do.
+    {
+        QRadialGradient atm(QPointF(cx, cy), R * 1.07);
+        atm.setColorAt(0.870, QColor(90, 150, 255, 0));
+        atm.setColorAt(0.925, QColor(110, 170, 255, 40));
+        atm.setColorAt(0.935, QColor(150, 200, 255, 95));
+        atm.setColorAt(0.965, QColor(120, 180, 255, 45));
+        atm.setColorAt(1.000, QColor(80, 140, 255, 0));
+        p.setCompositionMode(QPainter::CompositionMode_Plus);
+        p.setPen(Qt::NoPen);
+        p.setBrush(atm);
+        p.drawEllipse(QPointF(cx, cy), R * 1.07, R * 1.07);
+        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    }
+    // Home marker: the disc center IS the QTH; a quiet ring, not a billboard.
+    p.setPen(QPen(QColor(255, 120, 120, 200), 1.5));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QPointF(cx, cy), 4.5, 4.5);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(255, 160, 160, 230));
+    p.drawEllipse(QPointF(cx, cy), 1.6, 1.6);
+
+    // Subsolar sun, only when it is on this side of the planet.
+    if (drawSun) {
+        const double coscS = std::sin(lat0) * std::sin(decl)
+            + std::cos(lat0) * std::cos(decl) * std::cos(subLon - lon0);
+        if (coscS > 0.05) {
+            const double sx = cx + R * std::cos(decl) * std::sin(subLon - lon0);
+            const double sy = cy - R * (cosLat0 * std::sin(decl)
+                - sinLat0 * std::cos(decl) * std::cos(subLon - lon0));
+            // Clip a hair past the limb: a hard disc edge poking into space
+            // would read as a bug; glow bleeding into the atmosphere is glare.
+            QPainterPath limb;
+            limb.addEllipse(QPointF(cx, cy), R * 1.07, R * 1.07);
+            p.save();
+            p.setClipPath(limb);
+            drawMapSun(p, QPointF(sx, sy), 9.5, xray);
+            p.restore();
+        }
+    }
+
+    // Same trace-floor fade as the flat maps, so the spectrum stays boss.
+    const int fadeH = std::min(h / 4, 60);
+    QLinearGradient fade(0, h - fadeH, 0, h);
+    fade.setColorAt(0.0, QColor(12, 16, 22, 0));
+    fade.setColorAt(1.0, QColor(12, 16, 22, 255));
+    p.fillRect(QRect(0, h - fadeH, w, fadeH), fade);
+    return out;
+}
+} // namespace
+
+const QImage& PanadapterWidget::backgroundImage(int w, int h) {
+    const bool isMap = ds_.background >= 2 && ds_.background <= 5;
+    const bool isShip = ds_.background == 6;       // Ship: Custom…
+    const bool isGlobe = ds_.background == 7;      // Globe: QTH
+    const qint64 minute = (isMap || isGlobe)
+        ? QDateTime::currentSecsSinceEpoch() / 60 : 0;      // grayline advances
+    if (bgMode_ != ds_.background || bgW_ != w || bgH_ != h
+        || bgMinute_ != minute
+        || bgDay_ != ds_.mapDay || bgNight_ != ds_.mapNight
+        || bgSun_ != ds_.showSolar
+        || (isShip && QSettings().value("display/shipImagePath").toString()
+                          != mapSrcKey_)) {      // re-pick applies live
+        if (isMap) {
+            // Pick + decode the basemap only when the source changes; the
+            // custom entry re-reads its path so a new pick applies live.
+            QString key;
+            switch (ds_.background) {
+                case 2: key = ":/earth.jpg"; break;
+                case 3: key = ":/earth_veg.jpg"; break;
+                case 4: key = ":/earth_night.jpg"; break;
+                default:
+                    key = QSettings().value("display/mapCustomPath").toString();
+            }
+            if (key != mapSrcKey_) {
+                mapSrc_ = QImage(key).convertToFormat(QImage::Format_RGB32);
+                mapSrcKey_ = key;
+            }
+            bgCache_ = renderWorldMap(w, h, mapSrc_, ds_.mapDay, ds_.mapNight,
+                                      ds_.showSolar, solSfi_, solA_, solK_,
+                                      solXray_);
+        } else if (isShip) {
+            // Same decode-once cache as the maps; a new picker choice
+            // changes the key and reloads live.
+            const QString key =
+                QSettings().value("display/shipImagePath").toString();
+            if (key != mapSrcKey_) {
+                mapSrc_ = QImage(key).convertToFormat(QImage::Format_RGB32);
+                mapSrcKey_ = key;
+            }
+            bgCache_ = renderShipImage(w, h, mapSrc_, ds_.mapDay);
+        } else if (isGlobe) {
+            bgCache_ = renderGlobeBackdrop(w, h, qthLat_, qthLon_,
+                                           ds_.mapDay, ds_.mapNight,
+                                           ds_.showSolar, solXray_);
+        } else {
+            bgCache_ = renderBlueRays(w, h);
+        }
+        bgMode_ = ds_.background;
+        bgW_ = w;
+        bgH_ = h;
+        bgMinute_ = minute;
+        bgDay_ = ds_.mapDay;
+        bgNight_ = ds_.mapNight;
+        bgSun_ = ds_.showSolar;
+    }
+    return bgCache_;
+}
+
+PanadapterWidget::PanadapterWidget(QWidget* parent) : QWidget(parent) {
+    setMinimumSize(640, 320);
+    setMouseTracking(true);
+    dbMax_ = ds_.refDb;
+    dbMin_ = ds_.refDb - ds_.rangeDb;
+    wfDbMax_ = ds_.wfRefDb;
+    wfDbMin_ = ds_.wfRefDb - ds_.rangeDb;
+}
+
+void PanadapterWidget::setSpanHz(int spanHz) {
+    fullSpanHz_ = std::max(1000, spanHz);
+    viewSpanHz_ = std::clamp(viewSpanHz_, kMinViewSpanHz, maxViewSpanHz());
+    changed(__func__);
+}
+
+int PanadapterWidget::minViewSpanHz() const { return kMinViewSpanHz; }
+
+void PanadapterWidget::setDialOffsetHz(int hz) {
+    if (hz == dialOffsetHz_) return;
+    dialOffsetHz_ = hz;
+    clampViewShift();
+    viewSpanHz_ = std::clamp(viewSpanHz_, kMinViewSpanHz, maxViewSpanHz());
+    wfDirty_ = true;
+    changed(__func__);
+}
+
+void PanadapterWidget::setViewSpanHz(int spanHz) {
+    // Slider-driven zoom: no viewSpanChanged emit, or the slider would loop.
+    // PowerSDR CTUN rule: zooming IN first centers the view on the VFO (the
+    // signal of interest is what's being zoomed on); zooming out never does.
+    if (spanHz < viewSpanHz_ && viewShiftHz_ != 0) viewShiftHz_ = 0;
+    viewSpanHz_ = std::clamp(spanHz, kMinViewSpanHz, maxViewSpanHz());
+    clampViewShift();
+    changed(__func__);
+}
+
+void PanadapterWidget::setViewShiftHz(int hz) {
+    if (hz == viewShiftHz_) return;
+    viewShiftHz_ = hz;
+    clampViewShift();
+    wfDirty_ = true;
+    changed(__func__);
+}
+
+void PanadapterWidget::clampViewShift() {
+    // The view (centered at dial + viewShift) must stay inside the capture
+    // (centered at LO = dial + dialOffset): |shift - dialOffset| bounded by
+    // the capture margin left over after the view span. The classic
+    // dial-centered view (shift 0) is always left alone — the paint-time
+    // bin clamp covers any degenerate startup geometry.
+    if (viewShiftHz_ == 0) return;
+    const int lim = std::max(0, (fullSpanHz_ - viewSpanHz_) / 2);
+    viewShiftHz_ =
+        std::clamp(viewShiftHz_, dialOffsetHz_ - lim, dialOffsetHz_ + lim);
+}
+
+void PanadapterWidget::setCenterHz(uint64_t hz) {
+    if (hz == centerHz_) return;
+    centerHz_ = hz;
+    changed(__func__);
+}
+
+namespace {
+// Great-circle bearing (deg from north) and distance (km) between two points.
+void greatCircle(double lat1d, double lon1d, double lat2d, double lon2d,
+                 double& bearingDeg, double& distKm) {
+    const double la1 = lat1d * M_PI / 180.0, la2 = lat2d * M_PI / 180.0;
+    const double dLon = (lon2d - lon1d) * M_PI / 180.0;
+    bearingDeg = std::atan2(std::sin(dLon) * std::cos(la2),
+                            std::cos(la1) * std::sin(la2)
+                                - std::sin(la1) * std::cos(la2) * std::cos(dLon))
+                 * 180.0 / M_PI;
+    if (bearingDeg < 0.0) bearingDeg += 360.0;
+    const double c = std::acos(std::clamp(
+        std::sin(la1) * std::sin(la2)
+            + std::cos(la1) * std::cos(la2) * std::cos(dLon), -1.0, 1.0));
+    distKm = 6371.0 * c;
+}
+
+} // namespace
+
+void PanadapterWidget::setQth(double latDeg, double lonDeg) {
+    qthLat_ = latDeg;
+    qthLon_ = lonDeg;
+    bgMode_ = -1;                                  // globe backdrop recenters
+    changed(__func__);
+}
+
+void PanadapterWidget::setSolarInfo(int sfi, int aIdx, double kIdx, int ssn,
+                                    const QString& xray) {
+    solSfi_ = sfi;
+    solA_   = aIdx;
+    solK_   = kIdx;
+    solSsn_ = ssn;
+    solXray_ = xray;
+    bgMinute_ = -1;                                // sun caption re-renders
+    changed(__func__);
+}
+
+void PanadapterWidget::setSpots(const QVector<SpotLabel>& s) {
+    // The spot feeds re-push the whole list several times a second (live-
+    // measured: 22-30 per 5 s), mostly unchanged. Identical = nothing to do;
+    // otherwise only the top layer (where spots are drawn) is stale.
+    const auto same = [](const SpotLabel& a, const SpotLabel& b) {
+        return a.call == b.call && a.hz == b.hz && a.atSecs == b.atSecs && a.kind == b.kind
+            && a.tag == b.tag && a.status == b.status && a.alert == b.alert
+            && a.needC == b.needC && a.needB == b.needB && a.needM == b.needM
+            && a.contest == b.contest && a.mapHidden == b.mapHidden
+            && a.spotter == b.spotter && a.comment == b.comment;
+    };
+    if (s.size() == spots_.size()
+        && std::equal(s.cbegin(), s.cend(), spots_.cbegin(), same))
+        return;
+    spots_ = s;
+    changedTop();
+    if (!gpu_) update();
+}
+
+void PanadapterWidget::setMarkers(const QVector<FreqMarker>& m) {
+    markers_ = m;
+    changed(__func__);
+}
+
+// Pinned frequency markers (SDR-Console/Thetis style): a dashed amber line
+// through the spectrum with its label flag at the top — visually distinct
+// from spot markers (solid, colored by source) and from the notch. They
+// never move or expire; that permanence is the point (skeds, nets, W1AW).
+void PanadapterWidget::drawMarkers(QPainter& p, int hSpec) {
+    if (markers_.isEmpty() || centerHz_ == 0 || hSpec < 40) return;
+    QFont f = p.font();
+    f.setPixelSize(11);
+    f.setBold(true);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+    const qint64 c = static_cast<qint64>(centerHz_);
+    for (const auto& m : markers_) {
+        const qint64 off = m.hz - c;
+        if (std::llabs(off - viewShiftHz_) > viewSpanHz_ / 2) continue;
+        const int x = hzToX(static_cast<int>(off));
+        QPen pen(QColor(255, 176, 64, 200), 1, Qt::DashLine);
+        p.setPen(pen);
+        p.drawLine(x, 14, x, hSpec - 2);
+        const QString text = m.label.isEmpty()
+            ? QString("%1").arg(m.hz / 1000.0, 0, 'f', 1)
+            : m.label;
+        const int tw = fm.horizontalAdvance(text);
+        QRect box(x - tw / 2 - 4, 1, tw + 8, 13);
+        box.moveLeft(std::clamp(box.left(), 0, width() - box.width()));
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(60, 42, 12, 215));
+        p.drawRoundedRect(box, 2, 2);
+        p.setPen(QColor(255, 190, 90));
+        p.drawText(box, Qt::AlignCenter, text);
+    }
+    p.setBrush(Qt::NoBrush);
+}
+
+// Hover cursor (PowerSDR crosshair idea, minus the useless horizontal
+// half — the Apache forums asked for exactly this): a dashed line under
+// the mouse across spectrum AND waterfall, the frequency at the cursor
+// riding it, and — the part PowerSDR doesn't have — a bright tick where
+// a CW-zap click would actually land (live snap preview), so the
+// operator sees BEFORE clicking whether the zap grabs the intended
+// signal or its louder neighbor.
+void PanadapterWidget::drawCursor(QPainter& p, int hSpec) {
+    cursorRect_ = QRect();                         // what was drawn (GPU partial upload)
+    if (!ds_.showCursor || hoverX_ < 0 || drag_ != Drag::None
+        || centerHz_ == 0)
+        return;
+    const int offHz = xToHz(hoverX_);
+    p.setPen(QPen(QColor(150, 205, 235, 130), 1, Qt::DashLine));
+    p.drawLine(hoverX_, 14, hoverX_, height());
+    // frequency at the cursor, scale-format (7.028.4)
+    const qint64 f = static_cast<qint64>(centerHz_) + offHz;
+    const QString txt = QString("%1.%2.%3")
+        .arg(f / 1000000)
+        .arg((f / 1000) % 1000, 3, 10, QChar('0'))
+        .arg((f % 1000) / 100);
+    QFont fo = p.font(); fo.setPixelSize(10); fo.setBold(true); p.setFont(fo);
+    const QFontMetrics fm(fo);
+    const int tw = fm.horizontalAdvance(txt);
+    const bool leftSide = hoverX_ + 10 + tw > width();
+    const QRect box(leftSide ? hoverX_ - tw - 12 : hoverX_ + 6, 16,
+                    tw + 6, 14);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(10, 16, 24, 200));
+    p.drawRect(box);
+    p.setPen(QColor(235, 216, 100));
+    p.drawText(box, Qt::AlignCenter, txt);
+    cursorRect_ = QRect(hoverX_ - 1, 12, 3, height() - 12).united(box.adjusted(-2, -2, 2, 2));
+    // zap snap preview: where the click would actually land
+    if (snapFn_) {
+        const int snapped = snapFn_(offHz);
+        if (snapped != INT_MIN) {
+            const int sx = hzToX(snapped);
+            p.setPen(QPen(QColor(120, 255, 170, 220), 2));
+            p.drawLine(sx, 34, sx, 34 + 16);
+            if (std::abs(sx - hoverX_) > 3)        // caret when it differs
+                p.drawLine(hoverX_, 42, sx, 42);
+            cursorRect_ = cursorRect_.united(QRect(QPoint(std::min(sx, hoverX_) - 3, 31),
+                                                   QPoint(std::max(sx, hoverX_) + 3, 53)));
+        }
+    }
+}
+
+// UTC timestamps down the waterfall's left edge, one every ~48 px: history
+// depth at a glance, and a scroll-back capture ("who called at :05?") reads
+// like a log. Uses each ROW's recorded time, so speed changes and stalls
+// stay honest instead of assuming a constant scroll rate.
+void PanadapterWidget::drawWfTimes(QPainter& p, int wfTop) {
+    const int wfH = height() - wfTop;
+    if (!ds_.showWfTime || wfH < 40 || wfTimes_.empty() || wfCount_ < 2)
+        return;
+    QFont f = p.font();
+    f.setPixelSize(10);
+    f.setBold(false);
+    p.setFont(f);
+    for (int y = 12; y < std::min(wfH, wfCount_); y += 48) {
+        const qint64 t = wfTimes_[static_cast<size_t>(
+            ((wfHead_ - 1 - y) % kWfHistRows + kWfHistRows) % kWfHistRows)];
+        if (t <= 0) continue;
+        const QString s =
+            QDateTime::fromMSecsSinceEpoch(t).toUTC().toString("hh:mm:ss");
+        p.setPen(QColor(220, 230, 240, 130));
+        p.drawLine(0, wfTop + y, 3, wfTop + y);
+        p.setPen(QColor(0, 0, 0, 170));
+        p.drawText(7, wfTop + y + 4, s);           // soft shadow
+        p.setPen(QColor(215, 225, 235, 175));
+        p.drawText(6, wfTop + y + 3, s);
+    }
+}
+
+void PanadapterWidget::setCallsign(const QString& call) {
+    callsign_ = call;
+    changed(__func__);
+}
+
+void PanadapterWidget::setVfoBVisible(bool on) {
+    vfoBVisible_ = on;
+    changed(__func__);
+}
+
+void PanadapterWidget::setVfoLocks(bool a, bool b) {
+    lockA_ = a;
+    lockB_ = b;
+}
+
+void PanadapterWidget::setVfoB(uint64_t hz, char role, int loHz, int hiHz) {
+    if (drag_ == Drag::VfoB || drag_ == Drag::BLoEdge || drag_ == Drag::BHiEdge
+        || drag_ == Drag::BSymEdge) return;        // don't snap it mid-drag
+    if (hz == vfoBHz_ && role == vfoBRole_ && loHz == vfoBLo_ && hiHz == vfoBHi_)
+        return;
+    vfoBHz_ = hz;
+    vfoBRole_ = role;
+    vfoBLo_ = loHz;
+    vfoBHi_ = hiHz;
+    changed(__func__);
+}
+
+bool PanadapterWidget::overVfoB(int x) const {
+    if (!vfoBVisible_ || !vfoBHz_ || !centerHz_) return false;
+    const qint64 off = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
+    if (std::llabs(off) > viewSpanHz_) return false;
+    const int xb  = hzToX(static_cast<int>(off));
+    const int xLo = hzToX(static_cast<int>(off) + vfoBLo_);
+    const int xHi = hzToX(static_cast<int>(off) + vfoBHi_);
+    return x >= std::min(xLo, xb) - 4 && x <= std::max(xHi, xb) + 4;
+}
+
+// KE9NS-style spot markers, horizontal-stack flavor (his spotter as of
+// v2.8.0.330: horizontal calls on dark boxes since .261, vertical indicator
+// optional since .269 and shortened to half height in .300). A short low-key
+// line marks the exact frequency; the callsign is drawn HORIZONTALLY on a
+// dark box, packed into the topmost row where it doesn't cover another call —
+// readable at contest density, where rotated labels turn into a picket
+// fence. Labels sit right of the marker on USB bands and left on LSB
+// (160/80/40) so the signal itself stays clear. Left-click tunes there,
+// right-click looks the call up on QRZ; fresh spots draw brighter than ones
+// about to expire.
+void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
+    spotHits_.clear();
+    if (spots_.isEmpty() || centerHz_ == 0 || hSpec < 60) return;
+    QFont f = p.font();
+    f.setPixelSize(13);            // KE9NS-size calls (his labels measure ~9 px
+    f.setBold(true);               // cap height on the reference shot; 10 was
+    p.setFont(f);                  // squinting territory at operating distance)
+    const QFontMetrics fm(f);
+    const qint64 half = viewSpanHz_ / 2;
+    struct Vis { int x; const SpotLabel* s; bool lsb; };
+    std::vector<Vis> vis;
+    for (const SpotLabel& s : spots_) {
+        if (s.mapHidden) continue;
+        const qint64 off = s.hz - static_cast<qint64>(centerHz_);
+        if (off < viewShiftHz_ - half || off > viewShiftHz_ + half) continue;
+        const bool lsb = s.hz < 5250000                  // voice below 10 MHz is
+                      || (s.hz > 6000000 && s.hz < 8000000); // LSB (60 m excepted) —
+                                                      // FreeDV too (its calling table)
+        vis.push_back({hzToX(static_cast<int>(off)), &s, lsb});
+    }
+    if (vis.empty()) return;
+    std::sort(vis.begin(), vis.end(),
+              [](const Vis& a, const Vis& b) { return a.x < b.x; });
+    const int topY = 18;
+    const int rowH = fm.height() + 2;
+    const int maxRows = std::clamp((hSpec / 2 - topY) / rowH, 1, 8);
+    // Marker lines first so every label draws over them (KE9NS draw order).
+    p.setPen(QColor(150, 120, 255, 80));
+    const int lineBot = std::min(topY + maxRows * rowH + 8, hSpec);
+    for (const Vis& v : vis) p.drawLine(v.x, topY, v.x, lineBot);
+    // Pack each label into the topmost row with room at its x. The input is
+    // x-sorted, so per row it's enough to remember the rightmost occupied
+    // edge; sorting also keeps row assignments stable frame to frame. When a
+    // pileup fills every row at some x, further calls there are dropped
+    // (their marker line still shows) instead of smearing over each other.
+    std::vector<int> rowEdge(maxRows, INT_MIN);
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    for (const Vis& v : vis) {
+        const int wCall = fm.horizontalAdvance(v.s->call);
+        const int wTag  = v.s->tag.isEmpty() ? 0
+                        : fm.horizontalAdvance(v.s->tag) + 4;
+        // The country/band/mode dot triplet (HRD's three checkboxes,
+        // living on the band map): only takes room once the log knows.
+        const bool dots = v.s->needC != '?' || v.s->needB != '?'
+                          || v.s->needM != '?';
+        const int wDots = dots ? 21 : 0;
+        const int w = wCall + wTag + wDots;
+        int xt = v.lsb ? v.x - w - 5 : v.x + 5;
+        xt = std::clamp(xt, 2, std::max(2, width() - w - 2));
+        int row = -1;
+        for (int r = 0; r < maxRows; ++r)
+            if (xt - 4 > rowEdge[r]) { row = r; break; }
+        if (row < 0) continue;
+        rowEdge[row] = xt + w;
+        const QRect box(xt - 3, topY + row * rowH, w + 6, rowH - 1);
+        // Fade with age toward expiry (unknown age = fresh).
+        const qint64 age = v.s->atSecs > 0
+            ? std::clamp<qint64>(now - v.s->atSecs, 0, 1200) : 0;
+        const int alpha = 255 - static_cast<int>(age * 115 / 1200);
+        const QColor kindC = v.s->kind == 'P' ? QColor(74, 222, 128)  // POTA
+                           : v.s->kind == 'F' || v.s->kind == 'J'
+                                              ? QColor(96, 200, 255) // FT8
+                           : v.s->kind == 'S' ? QColor(205, 140, 255)// skimmer
+                           : v.s->kind == 'V' ? QColor(255, 140, 0)  // FreeDV
+                                              : QColor(255, 216, 50);// DX
+        // Worked-before coloring (cqrlog DX-cluster convention): the CALL
+        // text carries the logbook status; the source kind stays readable
+        // as a small left edge bar in the kind color.
+        QColor c = v.s->status == 'N' ? QColor(255, 92, 70)   // new one!
+                 : v.s->status == 'B' ? QColor(255, 190, 60)  // new band
+                 : v.s->status == 'W' ? QColor(130, 222, 140) // worked
+                 : v.s->status == 'C' ? QColor(150, 162, 178) // confirmed
+                                      : kindC;                // no log data
+        // Contest mode overrides: the map answers one question now —
+        // what is this spot WORTH — so the contest palette wins over
+        // the lifetime-logbook colors while a contest is open.
+        if (v.s->contest)
+            c = v.s->contest == 'M' ? QColor(255, 82, 82)     // new mult
+              : v.s->contest == 'N' ? QColor(93, 178, 240)    // workable
+              : v.s->contest == 'Z' ? QColor(74, 74, 74)      // zero pts
+                                    : QColor(108, 122, 136);  // worked
+        c.setAlpha(alpha);
+        p.fillRect(box, QColor(8, 10, 16, 185));         // dark box (.261 idea)
+        if (v.s->alert) {                                // DX-watch hit
+            p.setPen(QPen(QColor(255, 150, 40, alpha), 1));
+            p.drawRect(box.adjusted(0, 0, -1, -1));
+        }
+        if (v.s->status != '?') {                        // kind edge bar
+            QColor kc = kindC;
+            kc.setAlpha(alpha);
+            p.fillRect(QRect(box.left(), box.top(), 2, box.height()), kc);
+        }
+        p.setPen(c);
+        p.drawText(xt, box.top() + fm.ascent(), v.s->call);
+        if (wTag) {                                      // park ref, muted gray
+            p.setPen(QColor(150, 162, 178, alpha));
+            p.drawText(xt + wCall + 4, box.top() + fm.ascent(), v.s->tag);
+        }
+        if (dots) {
+            const auto needColor = [alpha](char st) {
+                QColor dc = st == 'C' ? QColor(130, 222, 140)
+                          : st == 'W' ? QColor(255, 190, 60)
+                          : st == 'N' ? QColor(255, 92, 70)
+                                      : QColor(95, 108, 124);
+                dc.setAlpha(alpha);
+                return dc;
+            };
+            const int dy = box.top() + box.height() / 2 - 2;
+            int dx = xt + wCall + wTag + 6;
+            p.setPen(Qt::NoPen);
+            for (const char st : {v.s->needC, v.s->needB, v.s->needM}) {
+                p.setBrush(needColor(st));
+                p.drawEllipse(QRect(dx, dy, 4, 4));
+                dx += 6;
+            }
+            p.setBrush(Qt::NoBrush);
+        }
+        spotHits_.push_back({box, v.s->hz, v.s->call, v.s->lat, v.s->lon,
+                             v.s->kind, v.s->tag});
+    }
+}
+
+void PanadapterWidget::setDisplaySettings(const DisplaySettings& s) {
+    const bool scaleChanged = s.refDb != ds_.refDb || s.rangeDb != ds_.rangeDb
+                              || s.palette != ds_.palette;
+    if (s.peakHold && !ds_.peakHold) peaks_ = avg_;   // fresh start, no stale peaks
+    ds_ = s;
+    ds_.avgFrames = std::max(1, ds_.avgFrames);
+    ds_.wfSpeed   = std::max(1, ds_.wfSpeed);
+    ds_.split     = std::clamp(ds_.split, 0.15f, 0.85f);
+    ds_.lineWidth = std::clamp(ds_.lineWidth, 1.0f, 4.0f);
+    ds_.smoothPx  = std::clamp(ds_.smoothPx, 0, 16);   // AetherSDR's ceiling
+    ds_.decombHz  = std::clamp(ds_.decombHz, 0, 600);
+    dbMax_ = ds_.refDb;
+    dbMin_ = ds_.refDb - std::max(10.0f, ds_.rangeDb);
+    wfDbMax_ = ds_.wfRefDb;
+    wfDbMin_ = ds_.wfRefDb - std::max(10.0f, ds_.rangeDb);
+    if (scaleChanged)
+        wfDirty_ = true;       // history re-renders in the new scale/palette
+    changed(__func__);
+}
+
+void PanadapterWidget::setPassband(int loHz, int hiHz) {
+    if (drag_ != Drag::None) return;               // never fight an active edge drag
+    pbLoHz_ = std::min(loHz, hiHz);
+    pbHiHz_ = std::max(loHz, hiHz);
+    changed(__func__);
+}
+
+void PanadapterWidget::setBandZones(const QVector<BandZone>& zones) {
+    zones_ = zones;
+    changed(__func__);
+}
+
+void PanadapterWidget::setBwAnchor(int a) {
+    bwAnchor_ = a < 0 ? -1 : (a > 0 ? 1 : 0);
+}
+
+void PanadapterWidget::setNotch(bool on, int rfOffsetHz, int widthHz, bool peak) {
+    if (drag_ == Drag::Notch) return;              // never fight an active drag
+    notchOn_ = on;
+    notchPeak_ = peak;
+    notchRfHz_ = rfOffsetHz;
+    notchWidthHz_ = widthHz;
+    changed(__func__);
+}
+
+bool PanadapterWidget::overNotch(int x) const {
+    if (!notchOn_) return false;
+    const int halfPx = (hzToX(notchRfHz_ + notchWidthHz_ / 2)
+                        - hzToX(notchRfHz_ - notchWidthHz_ / 2)) / 2;
+    return std::abs(x - hzToX(notchRfHz_)) <= std::max(6, halfPx + 3);
+}
+
+int PanadapterWidget::spectrumHeight() const {
+    return static_cast<int>((height() - kScaleBandH) * ds_.split);
+}
+
+bool PanadapterWidget::inScaleBand(int y) const {
+    const int hSpec = spectrumHeight();
+    return y >= hSpec - 2 && y < hSpec + kScaleBandH + 2;
+}
+
+bool PanadapterWidget::inDbAxis(int x, int y) const {
+    return x < kDbAxisW && y < spectrumHeight() - 2;
+}
+
+bool PanadapterWidget::inWfDbAxis(int x, int y) const {
+    return x < kDbAxisW && y > spectrumHeight() + kScaleBandH + 2;
+}
+
+QRgb PanadapterWidget::mapColor(float t) const {
+    const Palette& pal =
+        kPalettes[std::clamp(ds_.palette, 0, int(std::size(kPalettes)) - 1)];
+    t = std::clamp(t, 0.0f, 1.0f);
+    for (size_t i = 1; i < pal.n; ++i) {
+        if (t <= pal.stops[i].t) {
+            const Stop& a = pal.stops[i - 1];
+            const Stop& b = pal.stops[i];
+            const float f = (t - a.t) / (b.t - a.t);
+            return qRgb(int(a.r + f * (b.r - a.r)),
+                        int(a.g + f * (b.g - a.g)),
+                        int(a.b + f * (b.b - a.b)));
+        }
+    }
+    return qRgb(255, 255, 255);
+}
+
+void PanadapterWidget::pushWaterfallRow(const std::vector<float>& db) {
+    const int n = static_cast<int>(db.size());
+    if (n < 2) return;
+    if (wfBins_ != n) {                            // bin-count change: reset history
+        wfBins_ = n;
+        wfHist_.assign(static_cast<size_t>(kWfHistRows) * n, kNoRow);
+        wfTimes_.assign(kWfHistRows, 0);
+        wfHead_ = wfCount_ = wfPending_ = 0;
+        wfSerial_ = 0;
+        ++wfReset_;
+        wfDirty_ = true;
+    }
+    std::memcpy(&wfHist_[static_cast<size_t>(wfHead_) * n], db.data(),
+                sizeof(float) * n);
+    wfTimes_[static_cast<size_t>(wfHead_)] = QDateTime::currentMSecsSinceEpoch();
+    wfHead_ = (wfHead_ + 1) % kWfHistRows;
+    ++wfSerial_;                                   // GPU: rows to upload
+    if (ds_.showWfTime) gpuDirtyLabels_ = true;    // the timestamps move
+    wfCount_ = std::min(wfCount_ + 1, kWfHistRows);
+    ++wfPending_;
+}
+
+// Crisp column mapping: each pixel column takes the MAX of its bin range, so
+// narrow signals never vanish on wide spans and nothing is smoothed away.
+void PanadapterWidget::renderWfLine(const float* src, QRgb* dst, int w,
+                                    int binLo, int binHi) const {
+    const int nv = binHi - binLo;
+    const float invRange = 1.0f / (wfDbMax_ - wfDbMin_);
+    for (int j = 0; j < w; ++j) {
+        int b0 = binLo + static_cast<int>(static_cast<int64_t>(j) * nv / w);
+        int b1 = binLo + static_cast<int>(static_cast<int64_t>(j + 1) * nv / w);
+        if (b1 <= b0) b1 = b0 + 1;
+        float m = src[b0];
+        for (int b = b0 + 1; b < b1; ++b) m = std::max(m, src[b]);
+        dst[j] = mapColor((m - wfDbMin_) * invRange);
+    }
+}
+
+void PanadapterWidget::ensureWaterfallImage(int w, int h, int binLo, int binHi) {
+    if (w < 1 || h < 1 || wfBins_ < 2) return;
+    const bool geomChanged = wfImg_.width() != w || wfImg_.height() != h
+                             || binLo != lastBinLo_ || binHi != lastBinHi_;
+    auto histRow = [this](int back) {
+        return &wfHist_[static_cast<size_t>(
+            ((wfHead_ - 1 - back) % kWfHistRows + kWfHistRows) % kWfHistRows) * wfBins_];
+    };
+    if (geomChanged || wfDirty_) {                 // full re-render from history
+        wfImg_ = QImage(w, h, QImage::Format_RGB32);
+        for (int y = 0; y < h; ++y) {
+            QRgb* line = reinterpret_cast<QRgb*>(wfImg_.scanLine(y));
+            if (y < wfCount_) renderWfLine(histRow(y), line, w, binLo, binHi);
+            else              std::fill(line, line + w, qRgb(0, 0, 0));
+        }
+        lastBinLo_ = binLo;
+        lastBinHi_ = binHi;
+        wfDirty_ = false;
+    } else if (wfPending_ > 0) {                   // scroll + render only new rows
+        const int rows = std::min(wfPending_, h);
+        const int bpl = wfImg_.bytesPerLine();
+        std::memmove(wfImg_.bits() + static_cast<size_t>(bpl) * rows, wfImg_.bits(),
+                     static_cast<size_t>(bpl) * (h - rows));
+        for (int y = 0; y < rows; ++y)
+            renderWfLine(histRow(y), reinterpret_cast<QRgb*>(wfImg_.scanLine(y)),
+                         w, binLo, binHi);
+    }
+    wfPending_ = 0;
+}
+
+void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
+    const size_t n = magsDb.size();
+    spectrum_ = magsDb;
+    profTaken.fetch_add(1, std::memory_order_relaxed);
+    // Real time since the last frame (20 fps = 50 ms is the reference every
+    // per-frame constant below was tuned at).
+    if (!frameClock_.isValid()) frameClock_.start();
+    const qint64 nowNs = frameClock_.nsecsElapsed();
+    const float dtMs = lastFrameNs_ ? std::clamp((nowNs - lastFrameNs_) / 1e6f, 1.0f, 250.0f) : 50.0f;
+    lastFrameNs_ = nowNs;
+    const float k = dtMs / 50.0f;
+    if (avg_.size() != n) {                        // bin count changed: hard reset
+        avg_ = magsDb;
+        peaks_ = magsDb;
+    } else {
+        // EMA with the 20 fps constant (1/avgFrames per 50 ms) in SECONDS.
+        const float a20 = 1.0f / std::max(1.0f, float(ds_.avgFrames));
+        const float a = 1.0f - std::pow(1.0f - a20, k);
+        for (size_t i = 0; i < n; ++i) {
+            avg_[i] += (magsDb[i] - avg_[i]) * a;
+            if (ds_.peakHold)
+                peaks_[i] = std::max(peaks_[i] - kPeakDecayDb * k, avg_[i]);
+        }
+    }
+    // Waterfall speed: max-merge frames into one committed row every
+    // wfSpeed x 50 ms, so slow scroll keeps every blip instead of dropping
+    // frames, and rows/s is the same at any frame rate.
+    if (wfAccum_.size() != n) {
+        wfAccum_ = magsDb;
+        wfAccumN_ = 1;
+        wfAccumMs_ = dtMs;
+    } else {
+        for (size_t i = 0; i < n; ++i) wfAccum_[i] = std::max(wfAccum_[i], magsDb[i]);
+        ++wfAccumN_;
+        wfAccumMs_ += dtMs;
+    }
+    if (view3d_ && gpu_ && n >= 2) {
+        if (raw3dAcc_.size() != n) raw3dAcc_.assign(n, kNoRow);
+        for (size_t i = 0; i < n; ++i) raw3dAcc_[i] = std::max(raw3dAcc_[i], magsDb[i]);
+    }
+    if (view3d_ && gpu_ && n >= 2 && (acc3dMs_ += dtMs) >= k3dRowMs) {
+        acc3dMs_ = std::min(acc3dMs_ - k3dRowMs, k3dRowMs);
+        push3dRow();
+        std::fill(raw3dAcc_.begin(), raw3dAcc_.end(), kNoRow);
+    }
+    const float rowMs = std::max(1, ds_.wfSpeed) * 50.0f;
+    if (wfAccumMs_ >= rowMs - 0.5f * dtMs) {       // nearest frame to the row time
+        pushWaterfallRow(wfAccum_);
+        std::fill(wfAccum_.begin(), wfAccum_.end(), kNoRow);
+        wfAccumN_ = 0;
+        wfAccumMs_ = std::min(wfAccumMs_ - rowMs, rowMs);
+    }
+    frame();
+}
+
+int PanadapterWidget::hzToX(int hz) const {
+    // hz is an RF offset from the DIAL; the screen is centered on the view
+    // center (dial + viewShift). With shift 0 this is the classic mapping.
+    const double frac =
+        (hz - viewShiftHz_ + viewSpanHz_ / 2.0) / viewSpanHz_;
+    return static_cast<int>(std::lround(frac * width()));
+}
+
+int PanadapterWidget::xToHz(int x) const {
+    const double frac = static_cast<double>(x) / std::max(1, width());
+    return static_cast<int>(
+        std::lround(frac * viewSpanHz_ - viewSpanHz_ / 2.0)) + viewShiftHz_;
+}
+
+// Regulatory zone boxes (KE9NS BandText style): translucent green segments
+// with a label riding the top edge, drawn wherever an allocation falls inside
+// the view. Spectrum area only, under the trace and passband tints.
+void PanadapterWidget::drawBandZones(QPainter& p, int hSpec) {
+    if (zones_.isEmpty() || !centerHz_) return;
+    QFont f = p.font();
+    f.setPixelSize(10);
+    p.setFont(f);
+    const qint64 c = static_cast<qint64>(centerHz_);
+    const qint64 vLo = viewShiftHz_ - viewSpanHz_ / 2;
+    const qint64 vHi = viewShiftHz_ + viewSpanHz_ / 2;
+    for (const auto& z : zones_) {
+        const qint64 lo = z.loHz - c, hi = z.hiHz - c;
+        if (hi < vLo || lo > vHi) continue;
+        const int xLo = hzToX(static_cast<int>(std::max(lo, vLo)));
+        const int xHi = hzToX(static_cast<int>(std::min(hi, vHi)));
+        p.fillRect(QRect(QPoint(xLo, 0), QPoint(xHi, hSpec)), QColor(60, 190, 90, 22));
+        p.setPen(QPen(QColor(80, 210, 110, 130), 1));
+        p.drawLine(xLo, 0, xLo, hSpec);
+        p.drawLine(xHi, 0, xHi, hSpec);
+        p.drawLine(xLo, 1, xHi, 1);
+        p.setPen(QColor(140, 235, 160, 200));
+        p.drawText(QRect(xLo + 3, 3, std::max(10, xHi - xLo - 5), 13),
+                   Qt::AlignLeft | Qt::AlignTop, z.label);
+    }
+}
+
+void PanadapterWidget::drawFreqGrid(QPainter& p, int hSpec) {
+    if (!ds_.showGrid) return;
+    if (centerHz_ == 0) {                          // no dial info: plain grid only
+        p.setPen(QColor(255, 255, 255, 22));
+        for (int i = 1; i < 10; ++i)
+            p.drawLine(width() * i / 10, 0, width() * i / 10, hSpec);
+        return;
+    }
+    // Gridlines on absolute "nice" frequencies (labels live on the scale band).
+    // KE9NS density: fainter minor lines at the scale band's minor-tick step
+    // between the major lines, so the grid reads every 1/5 of a label step.
+    const double step = niceStep(viewSpanHz_);
+    const double f0 =
+        static_cast<double>(centerHz_) + viewShiftHz_ - viewSpanHz_ / 2.0;
+    const double f1 =
+        static_cast<double>(centerHz_) + viewShiftHz_ + viewSpanHz_ / 2.0;
+    const double minor = step / 5.0;
+    if (hzToX(static_cast<int>(minor)) - hzToX(0) > 14) {
+        p.setPen(QColor(255, 255, 255, 14));
+        for (double fq = std::ceil(f0 / minor) * minor; fq <= f1; fq += minor) {
+            const qint64 q = static_cast<qint64>(std::llround(fq));
+            if (q % static_cast<qint64>(std::llround(step)) == 0) continue;
+            const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
+            p.drawLine(x, 0, x, hSpec);
+        }
+    }
+    p.setPen(QColor(255, 255, 255, 34));
+    for (double fq = std::ceil(f0 / step) * step; fq <= f1; fq += step) {
+        const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
+        p.drawLine(x, 0, x, hSpec);
+    }
+}
+
+// KE9NS/PowerSDR-style frequency scale: a dedicated strip between the spectrum
+// and the waterfall with ticks + MHz labels. The strip is also the split
+// handle — drag it up/down to resize spectrum vs waterfall.
+namespace {
+// US band-plan segments for the scale-strip tint, colored to the ARRL
+// "US Amateur Radio Bands" chart: RTTY/data = red, phone/image = green,
+// CW-only = blue, Novice/Tech SSB = amber, 60 m USB channels = cyan.
+enum class PMode { Data, Phone, Cw, SsbNT, Usb60 };
+struct PlanSeg { qint64 lo, hi; PMode mode; };
+constexpr PlanSeg kUsPlan[] = {
+    {1800000, 2000000, PMode::Phone},                                 // 160
+    {3500000, 3600000, PMode::Data},   {3600000, 4000000, PMode::Phone}, // 80/75
+    {5330500, 5406400, PMode::Usb60},                                 // 60 (channels)
+    {7000000, 7125000, PMode::Data},   {7125000, 7300000, PMode::Phone}, // 40
+    {10100000, 10150000, PMode::Data},                                // 30 (no phone)
+    {14000000, 14150000, PMode::Data}, {14150000, 14350000, PMode::Phone}, // 20
+    {18068000, 18110000, PMode::Data}, {18110000, 18168000, PMode::Phone}, // 17
+    {21000000, 21200000, PMode::Data}, {21200000, 21450000, PMode::Phone}, // 15
+    {24890000, 24930000, PMode::Data}, {24930000, 24990000, PMode::Phone}, // 12
+    {28000000, 28300000, PMode::Data}, {28300000, 29700000, PMode::Phone}, // 10
+    {50000000, 50100000, PMode::Cw},   {50100000, 54000000, PMode::Phone}, // 6
+};
+// ARRL chart colors (opaque; a translucent copy tints the strip).
+inline QColor planColor(PMode m) {
+    switch (m) {
+        case PMode::Data:  return QColor(214,  67,  67);   // RTTY and data (red)
+        case PMode::Phone: return QColor( 58, 182, 105);   // phone and image (green)
+        case PMode::Cw:    return QColor( 96, 152, 236);   // CW only (blue)
+        case PMode::SsbNT: return QColor(232, 196,  66);   // Novice/Tech SSB (amber)
+        case PMode::Usb60: return QColor( 78, 200, 230);   // 60 m USB (cyan)
+    }
+    return QColor(120, 120, 120);
+}
+// US license-class privilege edges: the frequency where a class first gains
+// privileges on that band — phone AND the CW/data side (ARRL chart E/A/G/T
+// markers; CW side added 2026-08-08, it only showed phone before). "E" at a
+// band bottom = Extra-exclusive floor until the next mark; "A/G/T" = those
+// classes' CW begins (Tech CW rides the old Novice segments on 80/40/15).
+// Bands with no interior class split (160/30/17/12, 60 m channels) get no
+// marks — the band-plan tint next door already says who's there.
+struct PrivEdge { qint64 hz; const char* cls; };
+constexpr PrivEdge kUsPriv[] = {
+    {3500000, "E"},  {3525000, "A/G/T"},                      // 80 m CW
+    {3600000, "E"},  {3700000, "A"},  {3800000, "G"},         // 75 m phone
+    {7000000, "E"},  {7025000, "A/G/T"},                      // 40 m CW
+    {7125000, "E/A"},{7175000, "G"},                          // 40 m phone
+    {14000000,"E"},  {14025000,"A/G"},                        // 20 m CW
+    {14150000,"E"},  {14175000,"A"},  {14225000,"G"},         // 20 m phone
+    {21000000,"E"},  {21025000,"A/G/T"},                      // 15 m CW
+    {21200000,"E"},  {21225000,"A"},  {21275000,"G"},         // 15 m phone
+    {28300000,"G+"}, {28500000,"N/T"},                        // 10 m phone / N-T SSB top
+    {50100000,"all"},                                         // 6 m phone
+};
+} // namespace
+
+void PanadapterWidget::drawPrivileges(QPainter& p, int hSpec) {
+    // License-class edges live IN the scale strip (operator call 2026-07-31:
+    // the old full-height dashed guides cluttered the spectrum; KE9NS's
+    // under-the-VFO band text has no room on our width budget). A bright
+    // tick at each US class phone edge plus the class letter in the strip's
+    // upper half — the band-plan tint next door already tells the rest.
+    // Draw AFTER drawScaleBand so the marks sit on top of the tint.
+    if (!ds_.showPrivileges || centerHz_ == 0) return;
+    const qint64 half = viewSpanHz_ / 2;
+    const qint64 vc = qint64(centerHz_) + viewShiftHz_;   // view center RF
+    QFont f = p.font();
+    f.setPixelSize(13);
+    f.setBold(true);
+    p.setFont(f);
+    for (const PrivEdge& e : kUsPriv) {
+        if (e.hz < vc - half || e.hz > vc + half)
+            continue;
+        const int x = hzToX(int(e.hz - qint64(centerHz_)));
+        p.fillRect(QRect(x, hSpec + 1, 2, kScaleBandH - 2),
+                   QColor(120, 235, 160, 200));
+        p.setPen(QColor(10, 20, 14, 200));                // dark halo
+        p.drawText(x + 5, hSpec + 15, QString::fromLatin1(e.cls));
+        p.setPen(QColor(160, 245, 190));
+        p.drawText(x + 4, hSpec + 14, QString::fromLatin1(e.cls));
+    }
+}
+
+void PanadapterWidget::setPropForecast(const QVector<PropContour>& contours,
+                                       const QString& legend) {
+    propContours_ = contours;
+    propLegend_ = legend;
+    changed(__func__);
+}
+
+// VOACAP coverage contours over the world-map backdrops (KE9NS's map
+// mode feature, his S-level colors: blue S9+, green S7, yellow S5,
+// orange S3, gray S1). Uses the same equirect mapping as the sun marker:
+// the map fills the top 84 % of the spectrum area.
+void PanadapterWidget::drawVoacap(QPainter& p, int hSpec) {
+    const bool mapBg = ds_.background >= 2 && ds_.background <= 5;
+    const bool globeBg = ds_.background == 7;
+    if (!ds_.showVoacap || !(mapBg || globeBg) || propLegend_.isEmpty())
+        return;
+    const int mapH = std::max(1, int(hSpec * 0.84));
+    // Globe geometry for the orthographic projection (globe mode). A point
+    // on the far hemisphere gets vis=false and its segments are skipped —
+    // rings just wrap out of sight around the limb, like they should.
+    int gcx = 0, gcy = 0, gR = 1;
+    if (globeBg) globeGeom(width(), hSpec, gcx, gcy, gR);
+    const double la0 = qthLat_ * M_PI / 180.0, lo0 = qthLon_ * M_PI / 180.0;
+    const auto px = [&](const QPointF& ll) {
+        return QPointF((ll.x() + 180.0) / 360.0 * width(),
+                       (90.0 - ll.y()) / 180.0 * mapH);
+    };
+    const auto pxGlobe = [&](const QPointF& ll, bool& vis) {
+        const double la = ll.y() * M_PI / 180.0;
+        const double lo = ll.x() * M_PI / 180.0;
+        const double cosc = std::sin(la0) * std::sin(la)
+            + std::cos(la0) * std::cos(la) * std::cos(lo - lo0);
+        vis = cosc > 0.02;
+        return QPointF(
+            gcx + gR * std::cos(la) * std::sin(lo - lo0),
+            gcy - gR * (std::cos(la0) * std::sin(la)
+                        - std::sin(la0) * std::cos(la) * std::cos(lo - lo0)));
+    };
+    const auto colorFor = [](float s) {
+        if (s >= 9.0f) return QColor(80, 160, 255);
+        if (s >= 7.0f) return QColor(90, 220, 120);
+        if (s >= 5.0f) return QColor(255, 215, 70);
+        if (s >= 3.0f) return QColor(255, 150, 60);
+        return QColor(170, 175, 185);
+    };
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QFont f = p.font();
+    f.setPixelSize(11);
+    f.setBold(true);
+    p.setFont(f);
+    for (const PropContour& c : propContours_) {
+        if (c.ll.size() < 3) continue;
+        const QColor col = colorFor(c.sLevel);
+        // Draw segment-wise so a contour crossing the date line doesn't
+        // smear a horizontal band across the whole map (flat), and so a
+        // ring can duck behind the limb cleanly (globe).
+        QVector<QPointF> pts;
+        QVector<bool> vis;
+        pts.reserve(c.ll.size() + 1);
+        vis.reserve(c.ll.size() + 1);
+        for (const QPointF& ll : c.ll) {
+            bool v = true;
+            pts.append(globeBg ? pxGlobe(ll, v) : px(ll));
+            vis.append(v);
+        }
+        pts.append(pts.first());
+        vis.append(vis.first());
+        for (int pass = 0; pass < 2; ++pass) {
+            p.setPen(pass == 0 ? QPen(QColor(col.red(), col.green(),
+                                             col.blue(), 60), 6)
+                               : QPen(QColor(col.red(), col.green(),
+                                             col.blue(), 210), 2));
+            for (int i = 1; i < pts.size(); ++i) {
+                if (!vis[i - 1] || !vis[i]) continue;   // behind the limb
+                if (!globeBg
+                    && std::abs(pts[i].x() - pts[i - 1].x()) > width() / 2.0)
+                    continue;                       // date-line jump
+                p.drawLine(pts[i - 1], pts[i]);
+            }
+        }
+        // Label the ring on its eastern lobe — first visible point at or
+        // after it, so globe rings that dip behind the limb still label.
+        int li = int(c.ll.size()) / 4;              // az ~90 degrees
+        while (li < vis.size() && !vis[li]) ++li;
+        if (li >= vis.size() - 1) continue;
+        const QPointF lp = pts[li];
+        if (lp.y() > 12 && lp.y() < (globeBg ? hSpec - 4 : mapH - 4)) {
+            const QString t = QString("S%1").arg(int(c.sLevel));
+            p.setPen(QColor(0, 0, 0, 200));
+            p.drawText(lp + QPointF(4, 4), t);
+            p.setPen(col);
+            p.drawText(lp + QPointF(3, 3), t);
+        }
+    }
+    // QTH star + legend chip. On the globe the QTH is the disc center by
+    // construction, and the backdrop already carries its home ring.
+    const QPointF q = globeBg ? QPointF(gcx, gcy)
+                              : px(QPointF(qthLon_, qthLat_));
+    p.setPen(QPen(QColor(255, 255, 255, 200), 1));
+    p.setBrush(QColor(255, 80, 80));
+    QPolygonF star;
+    for (int i = 0; i < 8; ++i) {
+        const double r = (i % 2) ? 3.5 : 8.0, a = i * M_PI / 4.0;
+        star << q + QPointF(r * std::cos(a), r * std::sin(a));
+    }
+    p.drawPolygon(star);
+    p.setBrush(Qt::NoBrush);
+    if (!propLegend_.isEmpty()) {
+        f.setPixelSize(12);
+        p.setFont(f);
+        const int tw = p.fontMetrics().horizontalAdvance(propLegend_) + 16;
+        const QRect box(kDbAxisW + 6, mapH - 24, tw, 20);
+        p.setPen(QColor(120, 160, 210, 120));
+        p.fillRect(box, QColor(10, 14, 20, 190));
+        p.drawRect(box);
+        p.setPen(QColor(160, 200, 255, 230));
+        p.drawText(box.adjusted(8, 0, 0, 0),
+                   Qt::AlignLeft | Qt::AlignVCenter, propLegend_);
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
+}
+
+void PanadapterWidget::setSwrRuns(const QVector<SwrRun>& runs) {
+    swrRuns_ = runs;
+    changed(__func__);
+}
+
+void PanadapterWidget::setShowSwr(bool on) {
+    if (on == showSwr_) return;
+    showSwr_ = on;
+    changed(__func__);
+}
+
+// SWR sweep curves (right-click TUNE): amber, newest run bright with a
+// minimum marker, up to one older run dim behind it (antenna before/after).
+// Log scale 1..5 over the lower ~3/4 of the spectrum, 2:1 dashed reference,
+// small right-edge scale. Absolute-Hz points + hzToX = glued to frequency.
+void PanadapterWidget::drawSwr(QPainter& p, int hSpec) {
+    if (!showSwr_ || swrRuns_.isEmpty() || centerHz_ == 0) return;
+    const double yTop = hSpec * 0.18, yBot = hSpec * 0.92;
+    const auto swrY = [&](double s) {
+        s = std::clamp(s, 1.0, 5.0);
+        return yBot - std::log(s) / std::log(5.0) * (yBot - yTop);
+    };
+    p.setRenderHint(QPainter::Antialiasing, true);
+    // 2:1 reference, dashed dull red.
+    p.setPen(QPen(QColor(255, 120, 120, 90), 1, Qt::DashLine));
+    const int y2 = int(swrY(2.0));
+    p.drawLine(kDbAxisW, y2, width() - 4, y2);
+    // Right-edge mini scale.
+    QFont f = p.font();
+    f.setPixelSize(11);
+    f.setBold(true);
+    p.setFont(f);
+    for (double s : {1.5, 2.0, 3.0, 4.0}) {
+        const int y = int(swrY(s));
+        p.setPen(QColor(255, 190, 60, 200));
+        p.drawLine(width() - 8, y, width(), y);
+        p.drawText(QRectF(width() - 46, y - 8, 34, 15),
+                   Qt::AlignRight | Qt::AlignVCenter, QString::number(s, 'g', 2));
+    }
+    // Catmull-Rom through the sample points (the vendor's own Plot program
+    // offers the same "Spline" draw): the DATA stays the raw 48 stops, only
+    // the ink between them flows. Facets at whole-band widths (~38 px per
+    // step) read as "skipping"; the spline reads as an antenna.
+    const auto smooth = [](const QPolygonF& pts) {
+        QPainterPath path;
+        if (pts.size() < 3) {
+            if (!pts.isEmpty()) {
+                path.moveTo(pts.first());
+                for (const QPointF& q : pts) path.lineTo(q);
+            }
+            return path;
+        }
+        path.moveTo(pts.first());
+        for (int i = 0; i + 1 < pts.size(); ++i) {
+            const QPointF p0 = pts[std::max(0, i - 1)];
+            const QPointF p1 = pts[i];
+            const QPointF p2 = pts[i + 1];
+            const QPointF p3 = pts[std::min(int(pts.size()) - 1, i + 2)];
+            path.cubicTo(p1 + (p2 - p0) / 6.0, p2 - (p3 - p1) / 6.0, p2);
+        }
+        return path;
+    };
+    const int n = int(swrRuns_.size());
+    for (int i = std::min(n, 2) - 1; i >= 0; --i) {   // oldest first, newest on top
+        const SwrRun& run = swrRuns_[i];
+        if (run.pts.size() < 2) continue;
+        QPolygonF poly;
+        qint64 minHz = 0;
+        double minSwr = 99.0;
+        for (const auto& pt : run.pts) {
+            poly << QPointF(hzToX(int(pt.hz - qint64(centerHz_))), swrY(pt.swr));
+            if (pt.swr < minSwr) { minSwr = pt.swr; minHz = pt.hz; }
+        }
+        const QPainterPath path = smooth(poly);
+        if (i == 0) {                                  // newest: glow + bright
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(QColor(255, 150, 30, 55), 8));
+            p.drawPath(path);
+            p.setPen(QPen(QColor(255, 170, 40, 235), 3));
+            p.drawPath(path);
+            // Minimum diamond + value label.
+            const QPointF m(hzToX(int(minHz - qint64(centerHz_))), swrY(minSwr));
+            QPolygonF dia;
+            dia << m + QPointF(0, -7) << m + QPointF(6, 0)
+                << m + QPointF(0, 7) << m + QPointF(-6, 0);
+            p.setPen(QPen(QColor(120, 70, 0), 1));
+            p.setBrush(QColor(255, 230, 120));
+            p.drawPolygon(dia);
+            p.setBrush(Qt::NoBrush);
+            f.setPixelSize(13);
+            p.setFont(f);
+            const QString lbl = QString("%1 @ %2")
+                .arg(minSwr, 0, 'f', 2).arg(minHz / 1e6, 0, 'f', 3);
+            p.setPen(QColor(20, 12, 0, 220));
+            p.drawText(QPointF(m.x() + 13, m.y() - 11), lbl);
+            p.setPen(QColor(255, 220, 120));
+            p.drawText(QPointF(m.x() + 12, m.y() - 12), lbl);
+        } else {                                       // older: thin + dim
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(QColor(255, 190, 60, 80), 2));
+            p.drawPath(path);
+        }
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
+}
+
+void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
+    p.fillRect(QRect(0, hSpec, width(), kScaleBandH), QColor(20, 27, 36));
+    // Band-plan tint under the ticks, ARRL colors (red data / green phone /
+    // blue CW / amber N-T SSB / cyan 60 m). Bolder than before: a stronger
+    // fill plus a full-opacity 2 px accent bar so the segments read at a
+    // glance instead of a faint wash.
+    if (ds_.showBandPlan && centerHz_ != 0) {
+        const qint64 half = viewSpanHz_ / 2;
+        const qint64 vLo = viewShiftHz_ - half, vHi = viewShiftHz_ + half;
+        for (const PlanSeg& s : kUsPlan) {
+            const qint64 lo = s.lo - qint64(centerHz_);
+            const qint64 hi = s.hi - qint64(centerHz_);
+            if (hi < vLo || lo > vHi)
+                continue;
+            const int x0 = std::max(0, hzToX(int(std::max(lo, vLo))));
+            const int x1 = std::min(width(), hzToX(int(std::min(hi, vHi))));
+            if (x1 <= x0) continue;
+            QColor c = planColor(s.mode);
+            c.setAlpha(95);                                    // strip body
+            p.fillRect(QRect(x0, hSpec + 1, x1 - x0, kScaleBandH - 3), c);
+            c.setAlpha(235);                                   // accent bar
+            p.fillRect(QRect(x0, hSpec + kScaleBandH - 3, x1 - x0, 2), c);
+        }
+    }
+    p.setPen(QColor(255, 255, 255, 50));
+    p.drawLine(0, hSpec, width(), hSpec);
+    p.drawLine(0, hSpec + kScaleBandH - 1, width(), hSpec + kScaleBandH - 1);
+    if (centerHz_ == 0) return;
+    const double step = niceStep(viewSpanHz_);
+    const double f0 =
+        static_cast<double>(centerHz_) + viewShiftHz_ - viewSpanHz_ / 2.0;
+    const double f1 =
+        static_cast<double>(centerHz_) + viewShiftHz_ + viewSpanHz_ / 2.0;
+    QFont f = p.font();
+    f.setPixelSize(10);
+    f.setBold(true);
+    p.setFont(f);
+    // Minor ticks every step/5 when there's room for them.
+    const double minor = step / 5.0;
+    if (hzToX(static_cast<int>(minor)) - hzToX(0) > 8) {
+        p.setPen(QColor(160, 175, 190, 110));
+        for (double fq = std::ceil(f0 / minor) * minor; fq <= f1; fq += minor) {
+            const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
+            p.drawLine(x, hSpec, x, hSpec + 3);
+        }
+    }
+    // KE9NS-style labels: yellow, MHz.kkk.h format (e.g. 7.280.0 — the last
+    // digit is hundreds of Hz). 13 px on the doubled strip (operator asked
+    // for readable), riding the lower half; class letters get the upper.
+    f.setPixelSize(13);
+    p.setFont(f);
+    for (double fq = std::ceil(f0 / step) * step; fq <= f1; fq += step) {
+        const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
+        p.setPen(QColor(200, 215, 230, 200));
+        p.drawLine(x, hSpec, x, hSpec + 8);
+        const qint64 hz  = static_cast<qint64>(std::llround(fq));
+        const qint64 mhz = hz / 1000000;
+        const int    khz = static_cast<int>((hz / 1000) % 1000);
+        const int    hun = static_cast<int>((hz % 1000) / 100);
+        p.setPen(QColor(255, 216, 50));
+        p.drawText(x + 3, hSpec + kScaleBandH - 4,
+                   QString("%1.%2.%3").arg(mhz)
+                       .arg(khz, 3, 10, QLatin1Char('0')).arg(hun));
+    }
+}
+
+void PanadapterWidget::drawDbScale(QPainter& p, int hSpec) {
+    QFont f = p.font();
+    f.setPixelSize(9);
+    p.setFont(f);
+    const float range = dbMax_ - dbMin_;
+    const int step = range > 80.0f ? 20 : 10;      // KE9NS-density when zoomed in
+    // Minor lines at half the label step (KE9NS grid density), unlabeled.
+    if (ds_.showGrid) {
+        p.setPen(QColor(255, 255, 255, 12));
+        const int half = step / 2;
+        for (int db = static_cast<int>(std::ceil(dbMin_ / half)) * half;
+             db < static_cast<int>(dbMax_); db += half) {
+            if (db % step == 0) continue;          // majors drawn below
+            const int y = static_cast<int>(hSpec * (1.0f - (db - dbMin_) / range));
+            if (y < 20 || y > hSpec - 6) continue;
+            p.drawLine(0, y, width(), y);
+        }
+    }
+    for (int db = static_cast<int>(std::ceil(dbMin_ / step)) * step;
+         db < static_cast<int>(dbMax_); db += step) {
+        const int y = static_cast<int>(hSpec * (1.0f - (db - dbMin_) / range));
+        if (y < 20 || y > hSpec - 6) continue;     // keep clear of the text row
+        if (ds_.showGrid) {                        // labels stay (axis is a control)
+            p.setPen(QColor(255, 255, 255, 26));
+            p.drawLine(0, y, width(), y);
+        }
+        p.setPen(QColor(255, 216, 50, 200));
+        p.drawText(4, y - 2, QString::number(db));
+    }
+}
+
+namespace {
+// TTC_PANPROF=1: per-stage paint cost, printed every 5 s (ms per frame and
+// frames per second) — the baseline for the GPU panadapter work.
+struct PanProf {
+    bool on = qEnvironmentVariableIsSet("TTC_PANPROF");
+    static constexpr int kStages = 7;
+    const char* names[kStages] = {"backdrop", "waterfall", "fill", "mid",
+                                  "trace", "top", "total"};
+    double acc[kStages] = {};
+    int frames = 0;
+    QElapsedTimer window, lap, whole;
+    void begin() { if (!on) return; if (!window.isValid()) window.start(); lap.start(); whole.start(); }
+    void mark(int i) { if (!on) return; acc[i] += lap.nsecsElapsed() / 1e6; lap.restart(); }
+    void end() {
+        if (!on) return;
+        acc[kStages - 1] += whole.nsecsElapsed() / 1e6;
+        ++frames;
+        if (window.elapsed() < 5000) return;
+        const double secs = window.elapsed() / 1000.0;
+        std::fprintf(stderr, "[panprof] %.1f fps |", frames / secs);
+        for (int i = 0; i < kStages; ++i)
+            std::fprintf(stderr, " %s %.2f", names[i], acc[i] / std::max(frames, 1));
+        std::fprintf(stderr, " ms/frame | paint %.0f%% of a core\n",
+                     100.0 * acc[kStages - 1] / (secs * 1000.0));
+        std::fill(std::begin(acc), std::end(acc), 0.0);
+        frames = 0;
+        window.restart();
+    }
+};
+PanProf gPanProf;
+}  // namespace
+
+// The panadapter as layers — the CPU paint below calls them in order, and
+// the GPU view (PanGpuView) draws the same QPainter layers into cached
+// overlay images and does the waterfall, fill and trace on the card:
+//   under   background, map backdrop, VOACAP, callsign watermark
+//   wf      waterfall (+ its timestamps / WF ref label)
+//   fill    KE9NS gradient under the trace
+//   mid     grid, dB scale, band zones, passband, notch, scale strip,
+//           privileges, SWR, VFO lines + flags
+//   trace   peak-hold + the live trace
+//   top     markers, spots, cursor
+void PanadapterWidget::paintEvent(QPaintEvent*) {
+    if (gpu_) return;                              // PanGpuView draws the layers
+    gPanProf.begin();
+    QPainter p(this);
+    const int hSpec = spectrumHeight();
+    paintUnder(p, hSpec);
+    const PanView v = panView();
+    gPanProf.mark(0);
+    paintWaterfallCpu(p, hSpec, v);
+    gPanProf.mark(1);
+    const std::vector<float> colT = columnLevels(v);
+    paintFillCpu(p, hSpec, colT);
+    gPanProf.mark(2);
+    paintMid(p, hSpec);
+    gPanProf.mark(3);
+    paintTraceCpu(p, hSpec, v, colT);
+    gPanProf.mark(4);
+    paintTop(p, hSpec, v.n);
+    // (No top-left span/gesture cheat-sheet: the span is on the zoom slider
+    // and the gestures are muscle memory by now — removed 2026-08-26 at the
+    // operator's request, it only ate spectrum.)
+    gPanProf.mark(5);
+    gPanProf.end();
+}
+
+QColor PanadapterWidget::traceColor(int i) {
+    static const QColor kTraceColors[] = {
+        QColor(210, 245, 215),                     // soft (the original)
+        QColor(242, 244, 248),                     // white
+        QColor(80, 230, 120),                      // green
+        QColor(255, 216, 50),                      // yellow
+        QColor(96, 200, 255),                      // cyan
+    };
+    return kTraceColors[std::clamp(i, 0, 4)];
+}
+
+QColor PanadapterWidget::heatColor(float t) {
+    // AetherSDR FftHeatMap::heatColor.
+    t = std::clamp(t, 0.0f, 1.0f);
+    float r, g, b;
+    if (t < 0.25f)      { const float s = t / 0.25f;          r = 0; g = s;     b = 1; }
+    else if (t < 0.5f)  { const float s = (t - 0.25f) / 0.25f; r = 0; g = 1;     b = 1 - s; }
+    else if (t < 0.75f) { const float s = (t - 0.5f) / 0.25f;  r = s; g = 1;     b = 0; }
+    else                { const float s = (t - 0.75f) / 0.25f; r = 1; g = 1 - s; b = 0; }
+    return QColor::fromRgbF(r, g, b);
+}
+
+void PanadapterWidget::set3D(bool on) {
+    if (on == view3d_) return;
+    view3d_ = on;
+    dss_.clear();                                  // start the stack fresh
+    acc3dMs_ = 0.0f;
+    raw3dAcc_.clear();
+    row3dClock_.invalidate();
+    dssFloorAnchorValid_ = false;
+    floor3dMedian_ = -500.0f;
+    changed(__func__);
+}
+
+void PanadapterWidget::view3dFrame(double& centerMhz, double& bandwidthMhz) const {
+    const PanView v = panView();
+    const double hzPerBin = double(fullSpanHz_) / std::max(1, v.n);
+    // Absolute RF when the dial is known; a fixed stand-in otherwise (the
+    // frames only need to agree with each other, and be > 0).
+    const double capHz = centerHz_ ? double(centerHz_) + dialOffsetHz_ : 100e6;
+    centerMhz = (capHz + ((v.binLo + v.binHi - 1) / 2.0 - v.n / 2.0) * hzPerBin) / 1e6;
+    bandwidthMhz = (v.binHi - v.binLo) * hzPerBin / 1e6;
+}
+
+void PanadapterWidget::push3dRow() {
+    const PanView v = panView();
+    const int n = v.n;
+    if (n < 2 || int(raw3dAcc_.size()) != n) return;
+    const double hzPerBin = double(fullSpanHz_) / n;
+    const double capHz = centerHz_ ? double(centerHz_) + dialOffsetHz_ : 100e6;
+    const auto frame = [&](int lo, int hi, double& c, double& bw) {
+        c = (capHz + ((lo + hi - 1) / 2.0 - n / 2.0) * hzPerBin) / 1e6;
+        bw = (hi - lo) * hzPerBin / 1e6;
+    };
+    double c = 0, bw = 0;
+    frame(v.binLo, v.binHi, c, bw);
+    const QVector<float> view(raw3dAcc_.begin() + v.binLo, raw3dAcc_.begin() + v.binHi);
+    // The overhang: as much of the capture either side as the widest row
+    // span can show (their kMaxRowSpanFactor); the edges clip it.
+    const int nv = v.binHi - v.binLo;
+    const int ext = int(std::ceil(nv * (DssRenderer::kMaxRowSpanFactor - 1.0f) / 2.0f));
+    const int sLo = std::max(0, v.binLo - ext), sHi = std::min(n, v.binHi + ext);
+    if (sLo < v.binLo || sHi > v.binHi) {
+        double sc = 0, sbw = 0;
+        frame(sLo, sHi, sc, sbw);
+        dss_.pushRowWithSupplemental(view, c, bw,
+                                     QVector<float>(raw3dAcc_.begin() + sLo, raw3dAcc_.begin() + sHi),
+                                     sc, sbw);
+    } else {
+        dss_.pushRow(view, c, bw);
+    }
+    row3dClock_.restart();
+    // The floor anchor's target: the view's median bin of the averaged
+    // trace (the console's noise-floor estimate; theirs is the radio's).
+    std::vector<float> m(avg_.begin() + v.binLo, avg_.begin() + v.binHi);
+    if (m.size() >= 8) {
+        std::nth_element(m.begin(), m.begin() + m.size() / 2, m.end());
+        floor3dMedian_ = m[m.size() / 2];
+    }
+}
+
+float PanadapterWidget::dss3dFloorDbm() {
+    const float target = floor3dMedian_;
+    if (std::isfinite(target) && target > -500.0f) {
+        if (!dssFloorAnchorValid_ || std::abs(target - dssFloorAnchor_) > 18.0f) {
+            dssFloorAnchor_ = target;
+            dssFloorAnchorValid_ = true;
+        } else {
+            constexpr float kAnchorAlpha = 0.04f;
+            dssFloorAnchor_ = (1.0f - kAnchorAlpha) * dssFloorAnchor_ + kAnchorAlpha * target;
+        }
+    }
+    const float floor = dssFloorAnchorValid_ ? dssFloorAnchor_ : ds_.refDb - ds_.rangeDb;
+    return std::round(floor * 2.0f) / 2.0f - float(std::clamp(ds_.dssFloor, 0, 24));
+}
+
+void PanadapterWidget::changed(const char* who) {
+    if (qEnvironmentVariableIsSet("TTC_PANDBG") && who) {
+        static QHash<QString, int> n;
+        static QElapsedTimer t;
+        if (!t.isValid()) t.start();
+        ++n[QString::fromLatin1(who)];
+        if (t.elapsed() > 5000) {
+            for (auto it = n.cbegin(); it != n.cend(); ++it)
+                std::fprintf(stderr, "[pandbg] changed() by %s: %d in 5 s\n", qPrintable(it.key()), it.value());
+            n.clear();
+            t.restart();
+        }
+    }
+    gpuDirtyUnder_ = gpuDirtyMid_ = gpuDirtyTop_ = gpuDirtyLabels_ = gpuDirtyCursor_ = true;
+    if (gpu_) gpu_->update(); else update();
+}
+
+void PanadapterWidget::changedTop() {
+    gpuDirtyTop_ = true;
+    if (gpu_) gpu_->update();
+}
+
+void PanadapterWidget::changedCursor() {
+    gpuDirtyCursor_ = true;
+    if (gpu_) gpu_->update();
+}
+
+void PanadapterWidget::frame() {
+    // The zap preview follows the carrier under the cursor: refresh it a
+    // few times a second while hovering (the cursor layer is a small upload).
+    if (gpu_ && hoverX_ >= 0 && snapFn_ && ++cursorFrame_ % 4 == 0) gpuDirtyCursor_ = true;
+    if (gpu_) gpu_->update(); else update();
+}
+
+void PanadapterWidget::resizeEvent(QResizeEvent* e) {
+    QWidget::resizeEvent(e);
+    if (gpu_) gpu_->setGeometry(rect());
+    changed(__func__);
+}
+
+// The GPU panadapter (PanGpuView) on or off; any GPU failure drops back to
+// this widget's own CPU paint, for good, with a note on stderr.
+void PanadapterWidget::setGpuEnabled(bool on) {
+#ifndef HAVE_GPU_PAN
+    on = false;                                    // this build has no GPU path
+#endif
+    if (on == (gpu_ != nullptr)) return;
+#ifdef HAVE_GPU_PAN
+    if (on) {
+        gpu_ = new PanGpuView(this);
+        connect(gpu_, &QRhiWidget::renderFailed, this, [this] {
+            std::fprintf(stderr, "[pan] GPU panadapter failed — back to the CPU paint\n");
+            setGpuEnabled(false);
+            emit gpuFellBack();
+        });
+        gpu_->setGeometry(rect());
+        gpu_->lower();                             // any child controls stay on top
+        gpu_->show();
+    } else
+#endif
+    {
+        gpu_->deleteLater();
+        gpu_ = nullptr;
+    }
+    changed(__func__);
+}
+
+void PanadapterWidget::paintUnder(QPainter& p, int hSpec) {
+    p.fillRect(rect(), QColor(12, 16, 22));
+    if (ds_.background != 0 && hSpec > 1)          // KE9NS-style backdrop
+        p.drawImage(0, 0, backgroundImage(width(), hSpec));
+    drawVoacap(p, hSpec);                          // contours ride the map,
+                                                   // under trace and spots
+
+    // Station-callsign watermark: faint gray in the upper left (clear of the
+    // span readout), under everything the display draws on top.
+    if (ds_.showCall && !callsign_.isEmpty() && hSpec > 40) {
+        const QFont saved = p.font();
+        QFont f = saved;
+        f.setPixelSize(std::min(hSpec / 6, width() / 14));
+        f.setBold(true);
+        f.setLetterSpacing(QFont::PercentageSpacing, 112);
+        p.setFont(f);
+        p.setPen(QColor(200, 215, 230, 26));
+        p.drawText(QRect(kDbAxisW + 10, 20, width() - kDbAxisW - 20, hSpec - 24),
+                   Qt::AlignLeft | Qt::AlignTop, callsign_);
+        p.setFont(saved);
+    }
+
+}
+
+PanadapterWidget::PanView PanadapterWidget::panView() const {
+    const int n = static_cast<int>(spectrum_.size());
+    // Visible bin window: view span centered inside the full captured span.
+    int binLo = 0, binHi = n;
+    if (n >= 2) {
+        // The view is centered on dial + viewShift; the dial itself sits
+        // BELOW the capture center by dialOffsetHz_ (offset tuning), so the
+        // window lands at dialOffset - viewShift below the capture center.
+        const double frac = static_cast<double>(viewSpanHz_) / fullSpanHz_;
+        const double viewFrac =
+            0.5 - static_cast<double>(dialOffsetHz_ - viewShiftHz_) / fullSpanHz_;
+        binLo = static_cast<int>(n * (viewFrac - frac / 2.0));
+        binHi = static_cast<int>(n * (viewFrac + frac / 2.0));
+        binLo = std::clamp(binLo, 0, n - 2);
+        binHi = std::clamp(binHi, binLo + 2, n);
+    }
+
+    return {n, binLo, binHi};
+}
+
+void PanadapterWidget::paintWaterfallCpu(QPainter& p, int hSpec, const PanView& v) {
+    const int n = v.n, binLo = v.binLo, binHi = v.binHi;
+    // Waterfall (below the scale band): raw history, 1 row = 1 pixel line.
+    const int wfTop = hSpec + kScaleBandH;
+    if (wfBins_ >= 2 && n >= 2 && height() > wfTop) {
+        ensureWaterfallImage(width(), height() - wfTop, binLo, binHi);
+        if (!wfImg_.isNull()) p.drawImage(0, wfTop, wfImg_);
+        paintWfLabels(p, hSpec, v);
+    }
+}
+
+// The waterfall's timestamps and its "WF n dB" reference label — their own
+// GPU layer (they move with every row, the rest of the waterfall doesn't).
+void PanadapterWidget::paintWfLabels(QPainter& p, int hSpec, const PanView& v) {
+    const int wfTop = hSpec + kScaleBandH;
+    if (!(wfBins_ >= 2 && v.n >= 2 && height() > wfTop)) return;
+        drawWfTimes(p, wfTop);
+        if (std::abs(ds_.wfRefDb - ds_.refDb) > 0.5f) {
+            QFont wf = p.font(); wf.setPixelSize(9); wf.setBold(true);
+            p.setFont(wf);
+            p.setPen(QColor(0, 0, 0, 160));
+            p.drawText(kDbAxisW + 7, wfTop + 13,
+                       QString("WF %1 dB").arg(qRound(ds_.wfRefDb)));
+            p.setPen(QColor(200, 220, 240, 150));
+            p.drawText(kDbAxisW + 6, wfTop + 12,
+                       QString("WF %1 dB").arg(qRound(ds_.wfRefDb)));
+        }
+}
+
+std::vector<float> PanadapterWidget::columnLevels(const PanView& v) const {
+    const int n = v.n, binLo = v.binLo, binHi = v.binHi;
+    // Per-pixel-column signal level (0..1 of the scale): max of the column's
+    // bins when zoomed out (narrow signals never vanish), linear interpolation
+    // between bins when zoomed deep (no staircase). Drives both fill and trace,
+    // and gives a clean one-vertex-per-pixel line instead of sub-pixel jitter.
+    const float range = dbMax_ - dbMin_;
+    const int w = width();
+    std::vector<float> colT;
+    if (n >= 2 && w > 1) {
+        colT.resize(w);
+        const int nv = binHi - binLo;
+        const double hzPerPx = double(viewSpanHz_) / w;
+        const double binHz = double(fullSpanHz_) / n;
+        // Zoomed deep (bins coarser than pixels) De-comb runs on the view's
+        // own bins — far fewer points than columns, and where the comb
+        // really lives; the columns then interpolate the shaped bins.
+        const float* src = avg_.data();
+        int srcLo = binLo;
+        std::vector<float> shaped;
+        const bool decombBins = ds_.decombHz > 0 && nv < w;
+        if (decombBins) {
+            const int hi = std::min(binHi + 1, n);
+            shaped.assign(avg_.begin() + binLo, avg_.begin() + hi);
+            if (ds_.decombHz >= 2.0 * binHz) decomb_.apply(shaped, ds_.decombHz / binHz);
+            src = shaped.data();
+            srcLo = 0;
+        }
+        auto at = [&](int b) { return src[b - binLo + srcLo]; };
+        for (int x = 0; x < w; ++x) {
+            float v;
+            if (nv >= w) {
+                int b0 = binLo + static_cast<int>(static_cast<int64_t>(x) * nv / w);
+                int b1 = binLo + static_cast<int>(static_cast<int64_t>(x + 1) * nv / w);
+                if (b1 <= b0) b1 = b0 + 1;
+                v = avg_[b0];
+                for (int b = b0 + 1; b < b1; ++b) v = std::max(v, avg_[b]);
+            } else {
+                const double pos = binLo + static_cast<double>(x) * (nv - 1) / (w - 1);
+                const int b = static_cast<int>(pos);
+                const float f = static_cast<float>(pos - b);
+                v = at(b) * (1.0f - f) + at(std::min(b + 1, n - 1)) * f;
+            }
+            colT[x] = v;                           // dB until shaped
+        }
+        // AetherSDR's FFT De-comb, then FFT Smooth. Zoomed out, De-comb runs
+        // on the columns (each the max of its bins); its width must span two
+        // of them, or the trace cannot hold a comb at that spacing.
+        if (ds_.decombHz > 0 && !decombBins && ds_.decombHz >= 2.0 * hzPerPx)
+            decomb_.apply(colT, ds_.decombHz / hzPerPx);
+        if (ds_.smoothPx > 0) smoothTraceLinearPower(colT, ds_.smoothPx, smoothScratch_);
+        for (float& c : colT) c = std::clamp((c - dbMin_) / range, 0.0f, 1.0f);
+    }
+
+    return colT;
+}
+
+void PanadapterWidget::paintFillCpu(QPainter& p, int hSpec, const std::vector<float>& colT) {
+    const int w = width();
+    // KE9NS-style fill: color keyed to the dB AXIS, so the bands run
+    // horizontally and a signal climbs through blue -> green -> yellow -> red
+    // as it gets stronger (per-column coloring made vertical streaks instead).
+    // Gamma-compressed so the warm colors arrive partway up the scale, not
+    // only at the very top.
+    if (!colT.empty() && ds_.fillTrace && hSpec > 1) {
+        // Transparent above the trace so the backdrop (map/rays) shows through.
+        if (fillImg_.width() != w || fillImg_.height() != hSpec
+            || fillImg_.format() != QImage::Format_ARGB32_Premultiplied)
+            fillImg_ = QImage(w, hSpec, QImage::Format_ARGB32_Premultiplied);
+        std::vector<int> colY(w);
+        for (int x = 0; x < w; ++x)
+            colY[x] = static_cast<int>(hSpec * (1.0f - colT[x]));
+        if (ds_.traceStyle == 1) {
+            // AetherSDR heat fill: per column, the heat colour of its level at
+            // the trace (faint) fading to a dark-blue base at the bottom.
+            const float base[4] = {0.f, 0.f, 77.f / 255.f, kHeatFillAlpha};
+            std::vector<QColor> top(w);
+            for (int x = 0; x < w; ++x) top[x] = heatColor(colT[x]);
+            for (int y = 0; y < hSpec; ++y) {
+                QRgb* line = reinterpret_cast<QRgb*>(fillImg_.scanLine(y));
+                for (int x = 0; x < w; ++x) {
+                    if (y < colY[x]) { line[x] = qRgba(0, 0, 0, 0); continue; }
+                    const float f = float(y - colY[x]) / float(std::max(1, hSpec - colY[x]));
+                    const float ta = kHeatFillAlpha * kHeatTopAlpha;
+                    const float a = ta + f * (base[3] - ta);
+                    const float r = float(top[x].redF()) * (1 - f) + base[0] * f;
+                    const float g = float(top[x].greenF()) * (1 - f) + base[1] * f;
+                    const float b = float(top[x].blueF()) * (1 - f) + base[2] * f;
+                    line[x] = qRgba(int(r * a * 255), int(g * a * 255), int(b * a * 255), int(a * 255));
+                }
+            }
+            p.drawImage(0, 0, fillImg_);
+            return;
+        }
+        for (int y = 0; y < hSpec; ++y) {
+            const float t = 1.0f - static_cast<float>(y) / (hSpec - 1);
+            const QRgb c = mapColor(std::pow(t, kFillGamma));
+            QRgb* line = reinterpret_cast<QRgb*>(fillImg_.scanLine(y));
+            for (int x = 0; x < w; ++x)
+                line[x] = (y >= colY[x]) ? c : qRgba(0, 0, 0, 0);
+        }
+        p.drawImage(0, 0, fillImg_);
+    }
+}
+
+void PanadapterWidget::paintMid(QPainter& p, int hSpec) {
+    // Frequency gridlines and the (draggable) dB scale, over the fill.
+    drawFreqGrid(p, hSpec);
+    drawDbScale(p, hSpec);
+    drawBandZones(p, hSpec);
+    // Passband highlight across spectrum AND waterfall (SmartSDR-style).
+    const int xLo = hzToX(pbLoHz_), xHi = hzToX(pbHiHz_);
+    p.fillRect(QRect(QPoint(xLo, 0), QPoint(xHi, height())), QColor(60, 120, 200, 55));
+    p.setPen(QPen(QColor(120, 180, 255), 1));
+    p.drawLine(xLo, 0, xLo, height());
+    p.drawLine(xHi, 0, xHi, height());
+
+    // Manual-notch / SAF marker over the passband tint, full height. Orange =
+    // notch (rejecting that band), green = SAF (peaking it — same engine).
+    if (notchOn_) {
+        const QColor fill = notchPeak_ ? QColor(60, 200, 110, 70)
+                                       : QColor(255, 140, 0, 70);
+        const QColor line = notchPeak_ ? QColor(80, 225, 130)
+                                       : QColor(255, 160, 40);
+        const int xnLo = hzToX(notchRfHz_ - notchWidthHz_ / 2);
+        const int xnHi = hzToX(notchRfHz_ + notchWidthHz_ / 2);
+        p.fillRect(QRect(QPoint(xnLo, 0), QPoint(xnHi, height())), fill);
+        p.setPen(QPen(line, 1));
+        const int xnC = hzToX(notchRfHz_);
+        p.drawLine(xnC, 0, xnC, height());
+        p.drawText(xnC + 3, hSpec - 6, notchPeak_ ? "SAF" : "N");
+    }
+
+    // Frequency scale band on the divider (after the tints, so it stays clean),
+    // then the VFO markers crossing everything. Colors follow the routing
+    // panel: red = the transmitting VFO, green = the receiving one. Normal
+    // (TX+RX both on A) keeps the plain center marker and shows B, when it's
+    // in view, as a quiet blue sub-RX line.
+    drawScaleBand(p, hSpec);
+    drawPrivileges(p, hSpec);   // class marks paint over the strip tint
+    drawSwr(p, hSpec);          // SWR curves over the spectrum, under VFOs
+    {
+        const QFont savedFont = p.font();
+        auto flag = [&](int x, const QString& text, const QColor& c) {
+            QFont ff = savedFont;
+            ff.setPixelSize(9);
+            ff.setBold(true);
+            p.setFont(ff);
+            QRect r(x + 4, 18, p.fontMetrics().horizontalAdvance(text) + 8, 13);
+            if (r.right() > width() - 2) r.moveRight(x - 4);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(c.red(), c.green(), c.blue(), 200));
+            p.drawRoundedRect(r, 2, 2);
+            p.setPen(QColor(250, 252, 255));
+            p.drawText(r, Qt::AlignCenter, text);
+        };
+        // Role colors match the routing buttons: red = transmitting VFO,
+        // green = the main receiver's VFO, blue = a parked sub dial.
+        const QColor txRed(224, 93, 93), rxGreen(62, 207, 122), subBlue(93, 178, 240);
+        QColor aCol(200, 80, 80);
+        QString aText = "A";
+        if (vfoBRole_ == 'T')      { aCol = rxGreen; aText = "A RX"; }
+        else if (vfoBRole_ == 'R') { aCol = txRed;   aText = "A TX"; }
+        p.setPen(aCol);
+        const int xa = hzToX(0);        // A dial: center classic, floats in CTUN
+        p.drawLine(xa, 0, xa, height());
+        flag(xa, aText, aCol);
+        if (vfoBVisible_ && vfoBHz_ && centerHz_) { // VFO B, if inside the view
+            const qint64 off = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
+            const int xb = hzToX(static_cast<int>(off));
+            if (std::llabs(off - viewShiftHz_) < viewSpanHz_ / 2
+                && xb >= 0 && xb <= width()) {
+                // Full VFO look, same as the main passband: filter tint across
+                // spectrum + waterfall, edge lines, dial line, flag.
+                const QColor& c = vfoBRole_ == 'T' ? txRed
+                                : vfoBRole_ == 'R' ? rxGreen : subBlue;
+                const QString bText = vfoBRole_ == 'T' ? "B TX"
+                                    : vfoBRole_ == 'R' ? "B RX" : "B";
+                const int xLo = hzToX(static_cast<int>(off) + vfoBLo_);
+                const int xHi = hzToX(static_cast<int>(off) + vfoBHi_);
+                p.setBrush(Qt::NoBrush);
+                p.fillRect(QRect(QPoint(xLo, 0), QPoint(xHi, height())),
+                           QColor(c.red(), c.green(), c.blue(), 42));
+                p.setPen(QPen(QColor(c.red(), c.green(), c.blue(), 170), 1));
+                p.drawLine(xLo, 0, xLo, height());
+                p.drawLine(xHi, 0, xHi, height());
+                p.setPen(QPen(c, 1));
+                p.drawLine(xb, 0, xb, height());
+                flag(xb, bText, c);
+            }
+        }
+        p.setFont(savedFont);
+        // The flags set a fill brush; clear it or the trace path below is
+        // rendered as a giant filled polygon in the flag's color.
+        p.setBrush(Qt::NoBrush);
+    }
+
+}
+
+void PanadapterWidget::paintTraceCpu(QPainter& p, int hSpec, const PanView& v,
+                                     const std::vector<float>& colT) {
+    const int n = v.n, binLo = v.binLo, binHi = v.binHi;
+    const float range = dbMax_ - dbMin_;
+    const int w = width();
+    QPainterPath tracePath;
+    if (!colT.empty()) {
+        for (int x = 0; x < w; ++x) {
+            const double y = hSpec * (1.0 - colT[x]);
+            if (x == 0) tracePath.moveTo(x, y);
+            else        tracePath.lineTo(x, y);
+        }
+    }
+
+    // Peak-hold trace (under the live trace), then the spectrum trace itself.
+    if (n >= 2) {
+        if (ds_.peakHold && peaks_.size() == spectrum_.size()) {
+            p.setPen(QColor(235, 235, 245, 150));
+            const int nv = binHi - binLo;
+            QPointF prev;
+            for (int i = 0; i < nv; ++i) {
+                const double x = static_cast<double>(i) / (nv - 1) * width();
+                const float t = (peaks_[binLo + i] - dbMin_) / range;
+                const double y = hSpec * (1.0 - std::clamp(t, 0.0f, 1.0f));
+                QPointF pt(x, y);
+                if (i) p.drawLine(prev, pt);
+                prev = pt;
+            }
+        }
+        if (ds_.traceStyle == 1) {
+            // Heat trace: colour by height, so a vertical gradient pen is
+            // exactly the per-segment heat colour.
+            QLinearGradient g(0, hSpec, 0, 0);
+            for (float t : {0.f, 0.25f, 0.5f, 0.75f, 1.f}) g.setColorAt(t, heatColor(t));
+            QPen pen(QBrush(g), ds_.lineWidth);
+            pen.setJoinStyle(Qt::RoundJoin);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(pen);
+        } else {
+            QPen pen(traceColor(ds_.traceColor), ds_.lineWidth);
+            if (ds_.lineWidth > 1.0f) {
+                pen.setJoinStyle(Qt::RoundJoin);
+                p.setRenderHint(QPainter::Antialiasing, true);
+            }
+            p.setPen(pen);
+        }
+        p.drawPath(tracePath);
+        p.setRenderHint(QPainter::Antialiasing, false);
+    }
+}
+
+void PanadapterWidget::paintTop(QPainter& p, int hSpec, int n, bool withCursor) {
+    if (n >= 2) {
+        drawMarkers(p, hSpec);                     // pinned frequencies
+        drawSpots(p, hSpec);                       // cluster spots, on top
+        if (withCursor) drawCursor(p, hSpec);      // hover line + zap preview
+        // (The tuner card, solar block and compass rose live in the sidebar
+        // now — the contest logger's window covered them down here.)
+    } else {
+        p.setPen(QColor(120, 220, 140));
+        p.drawText(QRect(0, 0, width(), hSpec), Qt::AlignCenter,
+                   "panadapter — no IQ source (build with -DBUILD_SDRPLAY=ON)");
+    }
+
+}
+
+void PanadapterWidget::wheelEvent(QWheelEvent* e) {
+    const double steps = e->angleDelta().y() / 120.0;
+    if (steps == 0.0) return;
+    // NOTE: no wheel gesture on the dB axis — a plain wheel there used to
+    // adjust RANGE, which silently rescaled the colors whenever a wheel-tune
+    // happened near the left edge. Range lives in the DISPLAY panel; the axis
+    // drag still shifts REF.
+    if (e->modifiers() & Qt::ControlModifier) {     // Ctrl+wheel = zoom
+        const double factor = std::pow(1.25, -steps);
+        const int newSpan =
+            std::clamp(static_cast<int>(std::lround(viewSpanHz_ * factor)),
+                       kMinViewSpanHz, maxViewSpanHz());
+        // PowerSDR CTUN rule: zoom IN centers the view on the VFO first.
+        if (newSpan < viewSpanHz_ && viewShiftHz_ != 0) viewShiftHz_ = 0;
+        viewSpanHz_ = newSpan;
+        clampViewShift();
+        wfDirty_ = true;
+        emit viewSpanChanged(viewSpanHz_);
+        changed(__func__);
+    } else {
+        const int n = static_cast<int>(steps > 0 ? std::ceil(steps) : std::floor(steps));
+        // Wheel over the notch marker widens/narrows it; elsewhere it tunes
+        // (Shift = fine).
+        if (overNotch(static_cast<int>(e->position().x())))
+            emit notchWidthAdjustRequested(n);
+        else if (wheelVfo_ == 'B')                  // wheel follows last-tuned VFO
+            emit vfoBStepRequested(n, e->modifiers() & Qt::ShiftModifier);
+        else
+            emit tuneStepRequested(n, e->modifiers() & Qt::ShiftModifier);
+    }
+    e->accept();
+}
+
+void PanadapterWidget::leaveEvent(QEvent*) {
+    hoverX_ = -1;
+    changedCursor();
+    if (!gpu_) update();
+}
+
+void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
+    const int x = e->pos().x();
+    const int y = e->pos().y();
+    const int edgeTol = 6;
+    dragStartX_  = x;
+    dragStartY_  = y;
+    dragStartLo_ = pbLoHz_;
+    dragStartHi_ = pbHiHz_;
+    // Right-click on a spot callsign = QRZ lookup in the browser (KE9NS);
+    // anywhere else = drop VFO B on that frequency (get the TX dead on the
+    // station the DX just worked, one click).
+    if (e->button() == Qt::RightButton) {
+        drag_ = Drag::None;
+        for (const SpotHit& h : spotHits_)
+            if (h.rect.contains(e->pos())) {
+                QDesktopServices::openUrl(
+                    QUrl("https://www.qrz.com/db/" + h.call));
+                return;
+            }
+        if (inScaleBand(y)) {
+            // Toggle the divider's drag axis: vertical arrows = move the
+            // split (classic), horizontal arrows = drag the view side to
+            // side. The cursor flips right here so the mode change is
+            // visible under the finger that made it.
+            dividerPan_ = !dividerPan_;
+            setCursor(dividerPan_ ? Qt::SizeHorCursor : Qt::SizeVerCursor);
+            changed(__func__);
+            return;
+        }
+        if (!inDbAxis(x, y)) {
+            // Shift+right-click = pin/unpin a frequency marker here; plain
+            // right-click keeps its VFO B meaning.
+            if (e->modifiers() & Qt::ShiftModifier) {
+                if (centerHz_)
+                    emit markerToggleRequested(static_cast<qint64>(centerHz_)
+                                               + xToHz(x));
+                return;
+            }
+            wheelVfo_ = 'B';                        // wheel now nudges B
+            emit vfoBTuneRequested(xToHz(x));
+        }
+        return;
+    }
+    // The frequency-scale band IS the split handle (KE9NS-style) — or, if
+    // right-click flipped it, the view's side-to-side grab bar.
+    if (inScaleBand(y)) {
+        drag_ = Drag::Divider;
+        dragStartSplit_ = ds_.split;
+        dragStartShift_ = viewShiftHz_;
+        return;
+    }
+    // The notch is the narrowest target — give it priority over the passband
+    // edges it may sit on top of.
+    if (overNotch(x)) {
+        drag_ = Drag::Notch;
+        return;
+    }
+    // A click on a spot callsign tunes to the spotted frequency — and swings
+    // the rose to the station when its location is known (POTA park coords
+    // or cty.dat country placement).
+    for (const SpotHit& h : spotHits_) {
+        if (h.rect.contains(e->pos())) {
+            drag_ = Drag::None;
+            wheelVfo_ = 'A';
+            double bearing = -1.0, distKm = -1.0;
+            if (h.lat < 500.0) {
+                greatCircle(qthLat_, qthLon_, h.lat, h.lon, bearing, distKm);
+                emit roseTargetRequested(h.lat, h.lon, h.call);
+            }
+            // Ctrl+click = tune AND turn the antenna there (optional per
+            // click, never automatic; bearing from cty/POTA placement).
+            if (e->modifiers() & Qt::ControlModifier)
+                emit spotTurnRequested(bearing, h.call);
+            emit spotClicked(h.call, h.kind, h.tag);
+            // Our own WSJT-X decodes ('J') never retune: the dial is
+            // WSJT-X's, and moving it would pull the whole FT8 window.
+            if (h.kind == QChar('J')) return;
+            emit tuneRequested(static_cast<int>(h.hz - static_cast<qint64>(centerHz_)));
+            return;
+        }
+    }
+    // Left dB scale: vertical drag shifts the reference level (grid drag in
+    // PowerSDR). Checked after the notch but before the passband edges.
+    if (inWfDbAxis(x, y)) {
+        drag_ = Drag::WfDbAxis;
+        dragStartRef_ = ds_.wfRefDb;
+        return;
+    }
+    if (inDbAxis(x, y)) {
+        drag_ = Drag::DbAxis;
+        dragStartRef_ = ds_.refDb;
+        return;
+    }
+    bool onLo = std::abs(x - hzToX(pbLoHz_)) <= edgeTol;
+    bool onHi = std::abs(x - hzToX(pbHiHz_)) <= edgeTol;
+    if (onLo && onHi) {                             // narrow filter: closer edge wins
+        if (std::abs(x - hzToX(pbLoHz_)) <= std::abs(x - hzToX(pbHiHz_))) onHi = false;
+        else                                                              onLo = false;
+    }
+    if (onLo || onHi) {
+        // Plain edge = pure bandwidth (PBT untouched, matches the front-panel
+        // BW knob): the anchored zero-beat edge stays pinned, so in SSB only
+        // the outer edge is a width handle — a plain grab of the pinned edge
+        // adjusts that cut instead. Shift+edge = hi/lo-cut explicitly.
+        if (e->modifiers() & Qt::ShiftModifier) drag_ = onLo ? Drag::LoEdge : Drag::HiEdge;
+        else if (bwAnchor_ < 0 && onLo)         drag_ = Drag::LoEdge;
+        else if (bwAnchor_ > 0 && onHi)         drag_ = Drag::HiEdge;
+        else                                    drag_ = Drag::SymEdge;
+        emit passbandEditBegan(pbLoHz_, pbHiHz_);   // consumer anchors radio state
+        return;
+    }
+    // VFO B filter edges: same gesture language as A's (plain outer edge =
+    // width, plain zero-beat edge = cut, Shift = explicit cut) driving the
+    // sub RX filter. Checked before the B body grab so the edges win.
+    if (vfoBVisible_ && vfoBHz_ && centerHz_) {
+        const int bOff = static_cast<int>(static_cast<qint64>(vfoBHz_)
+                                          - static_cast<qint64>(centerHz_));
+        bool onBLo = std::abs(x - hzToX(bOff + vfoBLo_)) <= edgeTol;
+        bool onBHi = std::abs(x - hzToX(bOff + vfoBHi_)) <= edgeTol;
+        if (onBLo && onBHi) {                       // narrow filter: closer wins
+            if (std::abs(x - hzToX(bOff + vfoBLo_))
+                <= std::abs(x - hzToX(bOff + vfoBHi_))) onBHi = false;
+            else                                        onBLo = false;
+        }
+        if (onBLo || onBHi) {
+            if (e->modifiers() & Qt::ShiftModifier)
+                drag_ = onBLo ? Drag::BLoEdge : Drag::BHiEdge;
+            else if (bwAnchor_ < 0 && onBLo) drag_ = Drag::BLoEdge;
+            else if (bwAnchor_ > 0 && onBHi) drag_ = Drag::BHiEdge;
+            else                             drag_ = Drag::BSymEdge;
+            wheelVfo_ = 'B';
+            dragStartBLo_ = vfoBLo_;
+            dragStartBHi_ = vfoBHi_;
+            emit vfoBEditBegan(vfoBLo_, vfoBHi_);   // consumer anchors sub state
+            return;
+        }
+    }
+    // Grab VFO B (line or its passband tint) to slide it — split TX placement.
+    if (overVfoB(x)) {
+        if (lockB_) return;                         // locked: not a tune target
+        drag_ = Drag::VfoB;
+        wheelVfo_ = 'B';
+        dragStartBOff_ = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
+        return;
+    }
+    // Grab the A dial line to drag-tune the main VFO.
+    if (std::abs(x - hzToX(0)) <= 4 && centerHz_) {
+        if (lockA_) return;
+        drag_ = Drag::VfoA;
+        wheelVfo_ = 'A';
+        dragStartCenter_ = centerHz_;
+        return;
+    }
+    if (x > hzToX(pbLoHz_) && x < hzToX(pbHiHz_)) {
+        // Inside the passband: dragging moves the VFO itself (drag-to-tune);
+        // Ctrl+drag slides the PBT instead. Released without moving it's a
+        // click-to-tune. Decided on first move. A locked A still allows the
+        // Ctrl+PBT slide — the lock protects the dial, not the filter.
+        bodyPbt_ = e->modifiers() & Qt::ControlModifier;
+        if (lockA_ && !bodyPbt_) return;
+        drag_ = Drag::BodyPending;
+        dragStartCenter_ = centerHz_;
+        return;
+    }
+    drag_ = Drag::None;
+    wheelVfo_ = 'A';
+    if (lockA_) return;                             // locked: no click-to-tune
+    emit tuneRequested(xToHz(x),                    // click-to-tune
+                       e->modifiers().testFlag(Qt::ShiftModifier));
+}
+
+void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
+    if (drag_ == Drag::None) {
+        hoverX_ = e->pos().x();            // cursor line follows the mouse
+        // Hover feedback: vertical-drag targets, then every horizontal grab —
+        // VFO B (line/passband), the A dial line, and BOTH of A's filter
+        // edges (the outer edge used to miss the double arrow).
+        const int hx = e->pos().x(), hy = e->pos().y();
+        const bool onAEdge = std::abs(hx - hzToX(pbLoHz_)) <= 6
+                          || std::abs(hx - hzToX(pbHiHz_)) <= 6;
+        bool onSpot = false;                     // spot labels are clickable
+        for (const SpotHit& h : spotHits_)
+            if (h.rect.contains(e->pos())) { onSpot = true; break; }
+        if (inScaleBand(hy))
+            setCursor(dividerPan_ ? Qt::SizeHorCursor : Qt::SizeVerCursor);
+        else if (inDbAxis(hx, hy) || inWfDbAxis(hx, hy))
+            setCursor(Qt::SizeVerCursor);
+        else if (onSpot)
+            setCursor(Qt::PointingHandCursor);
+        else if (overVfoB(hx) || onAEdge
+                 || std::abs(hx - hzToX(0)) <= 4) setCursor(Qt::SizeHorCursor);
+        else                                     unsetCursor();
+        changedCursor();                         // GPU: the cursor's own layer
+        return;
+    }
+    const int x = e->pos().x();
+    const int hz = xToHz(x);
+    if (drag_ == Drag::Divider) {
+        if (dividerPan_) {
+            // Hand-drag the view: pull right and the frequencies under the
+            // cursor follow the hand, so the shift moves opposite the
+            // mouse. setViewShiftHz clamps to the capture like every other
+            // shift path — the view can never scroll onto empty bins.
+            const double hzPerPx =
+                double(viewSpanHz_) / std::max(1, width());
+            setViewShiftHz(dragStartShift_
+                           - int((e->pos().x() - dragStartX_) * hzPerPx));
+            return;
+        }
+        // Move the spectrum/waterfall split; the waterfall re-renders from raw
+        // history at the new height, so nothing smears.
+        const int usable = std::max(1, height() - kScaleBandH);
+        ds_.split = std::clamp(
+            dragStartSplit_ + static_cast<float>(e->pos().y() - dragStartY_) / usable,
+            0.15f, 0.85f);
+        changed(__func__);
+        emit displaySettingsEdited(ds_);
+        return;
+    }
+    if (drag_ == Drag::WfDbAxis) {
+        // Same feel as the spectrum's axis, scaled to the waterfall's own
+        // height; only the waterfall recolors — the trace stays put.
+        const int wfTop = spectrumHeight() + kScaleBandH;
+        const int wfH = std::max(1, height() - wfTop);
+        const float dDb = static_cast<float>(e->pos().y() - dragStartY_)
+                          * ds_.rangeDb / wfH;
+        ds_.wfRefDb = std::clamp(dragStartRef_ + dDb, -100.0f, -20.0f);
+        wfDbMax_ = ds_.wfRefDb;
+        wfDbMin_ = ds_.wfRefDb - ds_.rangeDb;
+        wfDirty_ = true;
+        changed(__func__);
+        emit displaySettingsEdited(ds_);
+        return;
+    }
+    if (drag_ == Drag::DbAxis) {
+        // Drag the scale down = numbers slide down = ref level rises.
+        const int hSpec = std::max(1, spectrumHeight());
+        const float dDb = static_cast<float>(e->pos().y() - dragStartY_)
+                          * ds_.rangeDb / hSpec;
+        ds_.refDb = std::clamp(dragStartRef_ + dDb, -100.0f, -20.0f);
+        dbMax_ = ds_.refDb;
+        dbMin_ = ds_.refDb - ds_.rangeDb;
+        wfDirty_ = true;
+        changed(__func__);
+        emit displaySettingsEdited(ds_);
+        return;
+    }
+    if (drag_ == Drag::Notch) {
+        notchRfHz_ = hz;
+        changed(__func__);
+        emit notchDragged(notchRfHz_);              // drag-to-notch
+        return;
+    }
+    if (drag_ == Drag::VfoB) {
+        const qint64 off = dragStartBOff_ + (hz - xToHz(dragStartX_));
+        vfoBHz_ = static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
+        changed(__func__);
+        emit vfoBDragged(static_cast<int>(off));    // consumer streams *BF
+        return;
+    }
+    if (drag_ == Drag::BSymEdge || drag_ == Drag::BLoEdge || drag_ == Drag::BHiEdge) {
+        // B's filter edges, in offsets from B's own dial — same math as A's
+        // edges including the SSB zero-beat anchor.
+        const int bOff = static_cast<int>(static_cast<qint64>(vfoBHz_)
+                                          - static_cast<qint64>(centerHz_));
+        const int hzB = hz - bOff;
+        if (drag_ == Drag::BSymEdge) {
+            if (bwAnchor_ < 0) {
+                vfoBLo_ = dragStartBLo_;
+                vfoBHi_ = std::max(hzB, dragStartBLo_ + 50);
+            } else if (bwAnchor_ > 0) {
+                vfoBHi_ = dragStartBHi_;
+                vfoBLo_ = std::min(hzB, dragStartBHi_ - 50);
+            } else {
+                const int center = (dragStartBLo_ + dragStartBHi_) / 2;
+                const int half = std::max(25, std::abs(hzB - center));
+                vfoBLo_ = center - half;
+                vfoBHi_ = center + half;
+            }
+        } else if (drag_ == Drag::BLoEdge) {
+            vfoBLo_ = std::min(hzB, vfoBHi_ - 50);
+        } else {
+            vfoBHi_ = std::max(hzB, vfoBLo_ + 50);
+        }
+        changed(__func__);
+        emit vfoBPassbandChanged(vfoBLo_, vfoBHi_);
+        return;
+    }
+    if (drag_ == Drag::VfoA) {
+        // Anchored to the grab-time dial: cursor movement maps 1:1 to Hz, so
+        // the view recentering underneath doesn't compound.
+        const qint64 delta = hz - xToHz(dragStartX_);
+        emit vfoADragged(static_cast<uint64_t>(
+            static_cast<qint64>(dragStartCenter_) + delta));
+        return;
+    }
+    if (drag_ == Drag::BodyPending) {
+        if (std::abs(x - dragStartX_) < 4) return;  // still just a click
+        if (!bodyPbt_) {
+            drag_ = Drag::VfoA;                     // drag the VFO, not the filter
+            wheelVfo_ = 'A';
+            const qint64 delta = hz - xToHz(dragStartX_);
+            emit vfoADragged(static_cast<uint64_t>(
+                static_cast<qint64>(dragStartCenter_) + delta));
+            return;                                 // MUST NOT fall into edge math
+        }
+        drag_ = Drag::Body;                         // Ctrl: classic PBT slide
+        emit passbandEditBegan(dragStartLo_, dragStartHi_);
+    }
+    if (drag_ == Drag::Body) {
+        // Slide the whole passband: width constant -> the consumer's delta
+        // decomposition sends pure PBT.
+        const int delta = hz - xToHz(dragStartX_);
+        pbLoHz_ = dragStartLo_ + delta;
+        pbHiHz_ = dragStartHi_ + delta;
+    } else if (drag_ == Drag::SymEdge) {
+        // Pure bandwidth, PBT untouched (front-panel BW knob). The preview
+        // must show what the radio actually does with the width: SSB grows
+        // away from the carrier (zero-beat edge pinned), CW/AM/FM widen
+        // symmetrically about the grab-time center.
+        if (bwAnchor_ < 0) {                        // USB: low edge is zero-beat
+            pbLoHz_ = dragStartLo_;
+            pbHiHz_ = std::max(hz, dragStartLo_ + 50);
+        } else if (bwAnchor_ > 0) {                 // LSB: high edge is zero-beat
+            pbHiHz_ = dragStartHi_;
+            pbLoHz_ = std::min(hz, dragStartHi_ - 50);
+        } else {
+            const int center = (dragStartLo_ + dragStartHi_) / 2;
+            const int half = std::max(25, std::abs(hz - center));
+            pbLoHz_ = center - half;
+            pbHiHz_ = center + half;
+        }
+    } else if (drag_ == Drag::LoEdge) {
+        pbLoHz_ = std::min(hz, pbHiHz_ - 50);
+    } else {
+        pbHiHz_ = std::max(hz, pbLoHz_ + 50);
+    }
+    changed(__func__);
+    emit passbandChanged(pbLoHz_, pbHiHz_);         // drag-to-filter
+}
+
+void PanadapterWidget::mouseDoubleClickEvent(QMouseEvent* e) {
+    // Double-click either filter edge: snap that VFO's PBT back to center
+    // (bandwidth kept). The first click only armed an edge drag, so nothing
+    // else fired. A's edges win when the passbands overlap.
+    const int x = e->pos().x();
+    const int edgeTol = 6;
+    if (overNotch(x)) return;
+    if (std::abs(x - hzToX(pbLoHz_)) <= edgeTol
+        || std::abs(x - hzToX(pbHiHz_)) <= edgeTol) {
+        drag_ = Drag::None;                        // cancel the armed drag
+        emit pbtZeroRequested();
+        return;
+    }
+    if (vfoBVisible_ && vfoBHz_ && centerHz_) {
+        const int bOff = static_cast<int>(static_cast<qint64>(vfoBHz_)
+                                          - static_cast<qint64>(centerHz_));
+        if (std::abs(x - hzToX(bOff + vfoBLo_)) <= edgeTol
+            || std::abs(x - hzToX(bOff + vfoBHi_)) <= edgeTol) {
+            drag_ = Drag::None;
+            emit vfoBPbtZeroRequested();
+        }
+    }
+}
+
+void PanadapterWidget::mouseReleaseEvent(QMouseEvent* e) {
+    // A press inside the passband that never moved is a click-to-tune.
+    if (drag_ == Drag::BodyPending) {
+        wheelVfo_ = 'A';
+        emit tuneRequested(xToHz(e->pos().x()),
+                           e->modifiers().testFlag(Qt::ShiftModifier));
+    }
+    drag_ = Drag::None;
+}
+
+} // namespace ttc

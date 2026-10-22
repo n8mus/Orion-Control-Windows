@@ -1,0 +1,14 @@
+<RCC>
+  <qresource prefix="/">
+    <file>earth.jpg</file>
+    <file>earth_veg.jpg</file>
+    <file>earth_night.jpg</file>
+    <file>cty.dat</file>
+    <file>icon.png</file>
+    <file>combo-down.png</file>
+    <file>combo-down-off.png</file>
+    <file>globe/globe.gl.min.js</file>
+    <file>globe/countries.json</file>
+    <file>globe/earth-blue-marble.jpg</file>
+  </qresource>
+</RCC>

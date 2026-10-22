@@ -1,0 +1,88 @@
+# Build + quick test tier on every push. No SDRplay on CI (proprietary,
+# user-installed) — the core app must always build without it. The layout
+# step enforces the layout budget on a pinned-font ruler; the reference check enforces the
+# repo's no-proprietary-software-references rule.
+name: CI
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ make qt6-base-dev qt6-serialport-dev qt6-websockets-dev libqt6sql6-sqlite \
+            libgl1-mesa-dev autoconf automake libtool curl fonts-dejavu-core \
+            libfftw3-dev patch
+
+      # Ubuntu doesn't package rnnoise — build the Xiph release from
+      # source (autogen fetches the model data).
+      - name: Build rnnoise
+        run: |
+          git clone --depth 1 https://gitlab.xiph.org/xiph/rnnoise.git /tmp/rnnoise
+          cd /tmp/rnnoise
+          ./autogen.sh
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build app + quick tests
+        run: |
+          cmake --build build -j"$(nproc)" --target tentec-console \
+            cwtest autogaintest trimtest skimtest watchtest sdrrxtest \
+            raderxtest radetxtest freedvtest not1mmtest rigctldtest wltest psktest \
+            containertest
+
+      - name: Quick test tier
+        run: |
+          ./build/autogaintest
+          ./build/trimtest
+          ./build/skimtest
+          ./build/watchtest
+          ./build/sdrrxtest      # SDR receive: WDSP chain on synthetic IQ (+ RADE)
+          ./build/raderxtest     # RADE on rade_c's off-air recording
+          ./build/radetxtest     # RADE transmit -> receive loopback (offline)
+          ./build/freedvtest     # FreeDV Reporter frames, offline
+          ./build/not1mmtest     # Not1MM dupe sheet, synthetic log
+          ./build/rigctldtest    # rigctld server vs Pat's (Winlink) client sequence
+          ./build/wltest         # Pat session watching, offline
+          ./build/psktest        # FreeDV reporting packets, offline
+          QT_QPA_PLATFORM=offscreen ./build/containertest   # Panel-layout boxes
+          TTC_CWLEGACY=1 ./build/cwtest --quick | tee cw.out
+          grep -q "TOTAL: 100%" cw.out
+
+      # Pinned-font ruler (DejaVu Sans 10 via TTC_SELFTEST): reads 1630
+      # on every platform today; the bar catches layout GROWTH. The
+      # operational 1808 budget on the dev box's default font is enforced
+      # there (see CLAUDE.md width budget).
+      - name: Layout budget (pinned ruler, max 1850 px)
+        run: |
+          out=$(QT_QPA_PLATFORM=offscreen TTC_SELFTEST=3 \
+                TTC_RIGCTLD_PORT=14599 TTC_RADIO=orion \
+                TTC_RADIO_DEV=/dev/null XDG_CONFIG_HOME=$(mktemp -d) \
+                ./build/tentec-console 2>&1 | grep "\[layout\]")
+          echo "$out"
+          min=$(echo "$out" | sed -n 's/.*layout-min \([0-9]*\)x.*/\1/p')
+          test -n "$min" && test "$min" -le 1850
+
+      # The opt-in Panel layout (ui/layout=panel) has to fit the same screen.
+      - name: Layout budget, Panel layout (pinned ruler, max 1850 px)
+        run: |
+          out=$(QT_QPA_PLATFORM=offscreen TTC_SELFTEST=3 TTC_LAYOUT=panel \
+                TTC_RIGCTLD_PORT=14599 TTC_RADIO=orion \
+                TTC_RADIO_DEV=/dev/null XDG_CONFIG_HOME=$(mktemp -d) \
+                ./build/tentec-console 2>&1 | grep "\[layout\]")
+          echo "$out"
+          min=$(echo "$out" | sed -n 's/.*layout-min \([0-9]*\)x.*/\1/p')
+          test -n "$min" && test "$min" -le 1850

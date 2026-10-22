@@ -1,0 +1,10 @@
+<RCC>
+  <qresource prefix="/meterfaces">
+    <file alias="s-meter-v1.json">meterfaces/s-meter-v1.json</file>
+    <file alias="cross-needle-v12.json">meterfaces/cross-needle-v12.json</file>
+    <file alias="analog-meter-themes-v1.json">meterfaces/analog-meter-themes-v1.json</file>
+  </qresource>
+  <qresource prefix="/aether">
+    <file alias="default-dark.json">aether/default-dark.json</file>
+  </qresource>
+</RCC>

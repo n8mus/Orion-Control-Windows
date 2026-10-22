@@ -1,0 +1,287 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "ui/LogbookWindow.h"
+
+#include <QFile>
+#include <QFileDialog>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QScrollBar>
+#include <QSettings>
+#include <QSqlQuery>
+#include <QSqlTableModel>
+#include <QStyledItemDelegate>
+#include <QTableView>
+#include <QTimer>
+#include <QVBoxLayout>
+
+#include "log/LogDb.h"
+#include "log/QslUploader.h"
+#include "ui/OnlineLogsDialog.h"
+
+namespace ttc {
+
+namespace {
+// Column order in the qso table (see LogDb's schema).
+enum Col { ColId = 0, ColTs, ColCall, ColBand, ColFreq, ColMode, ColRstS,
+           ColRstR, ColName, ColQth, ColGrid, ColCountry, ColCqz, ColItuz,
+           ColPota, ColComment, ColQsl, ColLotw, ColEqsl,
+           ColUpLotw, ColUpEqsl, ColUpQrz, ColUpClub, ColUpHrdlog,
+           ColHandle };   // v3, appended (see LogDb's schema note)
+
+// The table stores Hz; the operator reads MHz ("7.036 etc, don't need it
+// to the hz level"). Display-only — an edit still works in raw Hz.
+class MhzDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    QString displayText(const QVariant& v,
+                        const QLocale& locale) const override {
+        Q_UNUSED(locale);
+        const qlonglong hz = v.toLongLong();
+        return hz > 0 ? QString::number(hz / 1e6, 'f', 3) : QString();
+    }
+};
+} // namespace
+
+LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
+                             QslUploader* uploader, QWidget* parent)
+    : QDialog(parent), db_(db), cty_(cty), uploader_(uploader) {
+    setModal(false);
+    setWindowTitle("Logbook — " +
+                   QSettings().value("station/callsign", "").toString());
+    resize(880, 520);
+    setStyleSheet(
+        "QDialog { background: #141b24; color: #dde7f0; font-size: 14px; }"
+        "QLabel { color: #b8c8d8; font-size: 13px; }"
+        "QLineEdit { background: #1c2430; color: #eef4e2; border: 1px solid"
+        " #3a4a5e; border-radius: 3px; padding: 5px 8px; font-size: 14px; }"
+        "QPushButton { background: #24303e; color: #dde7f0; border: 1px solid"
+        " #3a4a5e; border-radius: 3px; padding: 6px 12px; font-size: 13px;"
+        " font-weight: bold; }"
+        "QPushButton:hover { border-color: #6aa5d8; }"
+        "QTableView { background: #10161e; color: #c6d2df; border: 1px solid"
+        " #2a3644; font-size: 13px; gridline-color: #1c2530;"
+        " selection-background-color: #24406b; selection-color: #eef4f9; }"
+        "QHeaderView::section { background: #1a222c; color: #8fa2b5;"
+        " border: none; padding: 4px 6px; font-size: 11px; }");
+
+    auto* v = new QVBoxLayout(this);
+    v->setContentsMargins(12, 10, 12, 10);
+    v->setSpacing(8);
+
+    auto* tools = new QHBoxLayout;
+    search_ = new QLineEdit(this);
+    search_->setPlaceholderText("call, park, grid, country…");
+    search_->setMaximumWidth(280);
+    search_->setClearButtonEnabled(true);
+    tools->addWidget(search_);
+    tools->addStretch(1);
+    auto* delBtn = new QPushButton("Delete", this);
+    delBtn->setToolTip("Delete the selected QSOs from the station log\n"
+                       "(local only — nothing is retracted from online logs)");
+    tools->addWidget(delBtn);
+    auto* impBtn = new QPushButton("Import ADIF", this);
+    tools->addWidget(impBtn);
+    auto* expBtn = new QPushButton("Export ADIF", this);
+    tools->addWidget(expBtn);
+    auto* cqrBtn = new QPushButton("→ cqrlog", this);
+    cqrBtn->setToolTip(
+        "Compare this log against cqrlog and send it whatever it's\n"
+        "missing, through the bridge (cqrlog must be open).\n"
+        "Shows the count and asks before sending anything.");
+    connect(cqrBtn, &QPushButton::clicked, this,
+            [this] { emit cqrlogSyncRequested(); });
+    tools->addWidget(cqrBtn);
+    auto* onlineBtn = new QPushButton("Online logs…", this);
+    onlineBtn->setToolTip("LoTW / eQSL / QRZ / ClubLog / HRDLOG uploads —\n"
+                          "per-service setup with Test buttons");
+    tools->addWidget(onlineBtn);
+    connect(onlineBtn, &QPushButton::clicked, this, [this] {
+        if (!onlineDlg_) onlineDlg_ = new OnlineLogsDialog(uploader_, this);
+        onlineDlg_->show();
+        onlineDlg_->raise();
+        onlineDlg_->activateWindow();
+    });
+    v->addLayout(tools);
+
+    model_ = new QSqlTableModel(this, db_->database());
+    model_->setTable("qso");
+    model_->setEditStrategy(QSqlTableModel::OnFieldChange);
+    model_->setSort(ColTs, Qt::DescendingOrder);
+    model_->select();
+    const auto head = [this](int c, const char* t) {
+        model_->setHeaderData(c, Qt::Horizontal, QLatin1String(t));
+    };
+    head(ColTs, "UTC");
+    head(ColCall, "CALL");
+    head(ColBand, "BAND");
+    head(ColFreq, "FREQ");
+    head(ColMode, "MODE");
+    head(ColRstS, "SENT");
+    head(ColRstR, "RCVD");
+    head(ColName, "NAME");
+    head(ColHandle, "HANDLE");
+    head(ColQth, "QTH");
+    head(ColGrid, "GRID");
+    head(ColCountry, "COUNTRY");
+    head(ColPota, "POTA");
+    head(ColComment, "COMMENT");
+    // LoTW is the award ledger, so it gets both halves (operator's spec):
+    // SENT (up_lotw: Y sent, E failed, blank pending) and CFMD
+    // (lotw_rcvd, fed by the QSL download sync). Other services live in
+    // the traffic print below.
+    head(ColUpLotw, "SENT");
+    head(ColLotw, "CFMD");
+
+    view_ = new QTableView(this);
+    view_->setModel(model_);
+    for (int c : {ColId, ColCqz, ColItuz, ColQsl, ColEqsl,
+                  ColUpEqsl, ColUpQrz, ColUpClub, ColUpHrdlog})
+        view_->setColumnHidden(c, true);
+    view_->setColumnWidth(ColUpLotw, 44);
+    view_->setColumnWidth(ColLotw, 44);
+    view_->setColumnWidth(ColFreq, 64);
+    view_->setItemDelegateForColumn(ColFreq, new MhzDelegate(view_));
+    // COMMENT soaks the slack; the upload columns keep their width.
+    view_->horizontalHeader()->setStretchLastSection(false);
+    view_->horizontalHeader()->setSectionResizeMode(ColComment,
+                                                    QHeaderView::Stretch);
+    view_->verticalHeader()->setVisible(false);
+    view_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    view_->setAlternatingRowColors(false);
+    view_->setSortingEnabled(true);
+    view_->sortByColumn(ColTs, Qt::DescendingOrder);
+    v->addWidget(view_, 1);
+
+    stats_ = new QLabel(this);
+    stats_->setStyleSheet("QLabel { color: #7e8fa1; font-size: 12px; }");
+    v->addWidget(stats_);
+
+    // The upload traffic print — GridTracker's scrolling "what happened"
+    // lines, which is all the record the operator wants for eQSL/QRZ/
+    // ClubLog/HRDLOG (LoTW additionally keeps its column above).
+    traffic_ = new QPlainTextEdit(this);
+    traffic_->setReadOnly(true);
+    traffic_->setMaximumHeight(96);
+    traffic_->setFocusPolicy(Qt::NoFocus);
+    traffic_->setStyleSheet(
+        "QPlainTextEdit { background: #0d1219; color: #9fb0c2; border: 1px"
+        " solid #2a3644; font-family: monospace; font-size: 12px; }");
+    if (uploader_) {
+        for (const QString& l : uploader_->recentTraffic())
+            traffic_->appendPlainText(l);
+        connect(uploader_, &QslUploader::trafficLine, this,
+                [this](const QString& l) {
+                    traffic_->appendPlainText(l);
+                    traffic_->verticalScrollBar()->setValue(
+                        traffic_->verticalScrollBar()->maximum());
+                });
+    }
+    v->addWidget(traffic_);
+
+    connect(search_, &QLineEdit::textChanged, this,
+            [this] { applyFilter(); });
+    connect(impBtn, &QPushButton::clicked, this, [this] { importAdif(); });
+    connect(expBtn, &QPushButton::clicked, this, [this] { exportAdif(); });
+    connect(delBtn, &QPushButton::clicked, this,
+            [this] { deleteSelected(); });
+    // Inline edits go straight to the table (OnFieldChange); tell the rest
+    // of the console (worked-before index) that the log moved.
+    connect(model_, &QSqlTableModel::dataChanged, this,
+            [this] { if (db_) db_->notifyExternalChange(); });
+
+    // External changes (LOG window, imports): re-select, debounced so a
+    // burst of inserts doesn't thrash the view.
+    refresh_ = new QTimer(this);
+    refresh_->setSingleShot(true);
+    refresh_->setInterval(300);
+    connect(refresh_, &QTimer::timeout, this, [this] {
+        model_->select();
+        refreshStats();
+    });
+    connect(db_, &LogDb::changed, this, [this] { refresh_->start(); });
+
+    refreshStats();
+}
+
+void LogbookWindow::applyFilter() {
+    QString t = search_->text().trimmed().toUpper();
+    if (t.isEmpty()) {
+        model_->setFilter(QString());
+    } else {
+        t.replace('\'', "''");
+        const QString like = "'%" + t + "%'";
+        model_->setFilter(QString("UPPER(call) LIKE %1 OR UPPER(country)"
+                                  " LIKE %1 OR UPPER(pota) LIKE %1 OR"
+                                  " UPPER(grid) LIKE %1").arg(like));
+    }
+    model_->select();
+    refreshStats();
+}
+
+void LogbookWindow::refreshStats() {
+    QSqlQuery q(db_->database());
+    QString s;
+    if (q.exec("SELECT COUNT(*),"
+               " COUNT(DISTINCT CASE WHEN country<>'' THEN country END),"
+               " COUNT(DISTINCT CASE WHEN country<>'' AND (qsl_rcvd='Y' OR"
+               "  lotw_rcvd='Y' OR eqsl_rcvd='Y') THEN country END)"
+               " FROM qso")
+        && q.next()) {
+        s = QString("%L1 QSOs · %2 countries worked · %3 confirmed")
+                .arg(q.value(0).toLongLong())
+                .arg(q.value(1).toInt())
+                .arg(q.value(2).toInt());
+    }
+    if (model_ && !model_->filter().isEmpty())
+        s += QString("   (showing %1 matches)").arg(model_->rowCount());
+    stats_->setText(s);
+}
+
+void LogbookWindow::importAdif() {
+    const QString fn = QFileDialog::getOpenFileName(
+        this, "Import ADIF", QString(), "ADIF (*.adi *.adif);;All files (*)");
+    if (fn.isEmpty()) return;
+    QFile f(fn);
+    if (!f.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, "Import ADIF", "Can't read " + fn);
+        return;
+    }
+    QString err;
+    const int n = db_->importAdif(f, cty_, &err);
+    if (n < 0)
+        QMessageBox::warning(this, "Import ADIF", err);
+    else
+        QMessageBox::information(this, "Import ADIF",
+            QString("%1 QSOs imported (duplicates skipped).").arg(n));
+}
+
+void LogbookWindow::exportAdif() {
+    const QString fn = QFileDialog::getSaveFileName(
+        this, "Export ADIF", "logbook.adi", "ADIF (*.adi *.adif)");
+    if (fn.isEmpty()) return;
+    QFile f(fn);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::warning(this, "Export ADIF", "Can't write " + fn);
+        return;
+    }
+    db_->exportAdif(f);
+}
+
+void LogbookWindow::deleteSelected() {
+    const auto rows = view_->selectionModel()->selectedRows(ColId);
+    if (rows.isEmpty()) return;
+    if (QMessageBox::question(this, "Delete QSOs",
+            QString("Delete %1 QSO(s) from the station log?")
+                .arg(rows.size()))
+        != QMessageBox::Yes)
+        return;
+    for (const QModelIndex& ix : rows)
+        db_->deleteQso(ix.data().toLongLong());
+}
+
+} // namespace ttc

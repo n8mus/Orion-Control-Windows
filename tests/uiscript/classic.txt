@@ -1,0 +1,60 @@
+# Classic layout guard: operator actions, no MOX / TUNE / keying ever.
+click 20
+click USB
+click CWU
+click 40
+click LSB
+click CWL
+click AM
+click CWU
+click F
+click S
+click M
+click 6
+click 12
+click 0
+click PRE
+click PRE
+click PBT_0
+freq 0 7030000
+freq 1 7032500
+tip transmit on VFO B (split with RX on A)
+tip transmit on VFO A
+tip sub receiver on VFO B
+tip sub RX on ANT 2
+tip sub RX on ANT 1
+tip main RX + TX on ANT 2
+tip main RX + TX on ANT 1
+click A▸B
+click A⇄B
+click B▸A
+click MUTE 0
+click MUTE 0
+click MUTE 1
+click MUTE 1
+click LOCK 0
+click LOCK 0
+click CTUN
+click CTUN
+click 80
+click 160
+click 10
+click 6
+click 20
+slider 0 40
+slider 1 30
+# TX bar, nothing that keys: profiles, AMP, the TX sliders (indices 2+ are
+# whatever QSliders are visible after the two VFO volumes).
+click RAG
+click DX
+click CONT
+click ESSB
+click AMP
+click AMP
+slider 2 45
+slider 3 40
+slider 4 55
+slider 5 2400
+slider 6 3
+slider 7 60
+wait 1500

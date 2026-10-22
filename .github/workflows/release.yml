@@ -1,0 +1,157 @@
+# Cut an AppImage on every version tag (vX.Y.Z) and publish it as a GitHub
+# Release. Built with SDRplay support so the panadapter works, but the
+# proprietary libsdrplay_api is EXCLUDED from the bundle (never redistribute
+# it) — the user's own SDRplay API install provides it at runtime, which
+# install.sh sets up. The VOACAP engine (voacapl) IS bundled: its core is
+# US-government public-domain code and the port is open source, so the
+# propagation overlay works out of the box. Built on ubuntu-24.04 (matches
+# CI; Qt6 SerialPort is only packaged there) — so the AppImage needs
+# glibc >= 2.39 (Ubuntu 24.04+, Fedora 40+, current Arch). Fine for the
+# alpha's current-distro testers.
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ make gfortran qt6-base-dev qt6-serialport-dev qt6-websockets-dev libqt6sql6-sqlite \
+            libgl1-mesa-dev autoconf automake libtool curl file \
+            fuse libfuse2 desktop-file-utils libfftw3-dev patch
+
+      - name: Build rnnoise from source
+        run: |
+          git clone --depth 1 https://gitlab.xiph.org/xiph/rnnoise.git /tmp/rnnoise
+          cd /tmp/rnnoise && ./autogen.sh && ./configure --prefix=/usr/local
+          make -j"$(nproc)" && sudo make install && sudo ldconfig
+
+      # voacapl: the real VOACAP engine for the propagation overlay.
+      # Public-domain core (NTIA/ITS) — bundling is legal and deliberate.
+      - name: Build voacapl (bundled propagation engine)
+        run: |
+          git clone --depth 1 https://github.com/jawatson/voacapl /tmp/voacapl
+          cd /tmp/voacapl
+          automake --add-missing || true
+          autoreconf || true
+          ./configure --prefix=/tmp/voa
+          make -j"$(nproc)"
+          make install
+          HOME=/tmp/voahome /tmp/voa/bin/makeitshfbc
+          test -d /tmp/voahome/itshfbc/run
+
+      # SDRplay API: extract the makeself installer without running it, then
+      # place headers + the .so so cmake can link against it. The .so itself
+      # is excluded from the AppImage below.
+      - name: Install SDRplay API (build-time only)
+        run: |
+          VER=3.15.2
+          # SDRplay withdrew every standalone API .run from /software/ in the
+          # SDRconnect era (live-found 2026-09-03: all versions 404, and their
+          # new install.sh ships no API at all). Vendor URL first in case it
+          # returns, else the Internet Archive's snapshot of the exact bytes
+          # this job used while the URL lived (id_ = original payload).
+          curl -fSL "https://www.sdrplay.com/software/SDRplay_RSP_API-Linux-${VER}.run" -o sdr.run \
+            || curl -fSL "https://web.archive.org/web/20260805142854id_/https://www.sdrplay.com/software/SDRplay_RSP_API-Linux-${VER}.run" -o sdr.run
+          sh sdr.run --noexec --target sdr_api || sh sdr.run --tar xf || true
+          sudo mkdir -p /usr/local/include /usr/local/lib
+          sudo cp $(find sdr_api -name '*.h') /usr/local/include/ 2>/dev/null || true
+          echo "--- all libsdrplay_api.so* in the archive ---"
+          find sdr_api -name 'libsdrplay_api.so*'
+          echo "----------------------------------------------"
+          # Pick the 64-bit Intel build: whatever is NOT an ARM variant.
+          SO=$(find sdr_api -name 'libsdrplay_api.so*' | grep -viE 'arm|aarch' | head -1)
+          echo "selected SDRplay lib: $SO"
+          test -n "$SO" || { echo "no non-ARM SDRplay lib found"; exit 1; }
+          sudo cp "$SO" /usr/local/lib/
+          B=$(basename "$SO")
+          sudo ln -sf "/usr/local/lib/$B" /usr/local/lib/libsdrplay_api.so.3
+          sudo ln -sf /usr/local/lib/libsdrplay_api.so.3 /usr/local/lib/libsdrplay_api.so
+          sudo ldconfig
+
+      - name: Configure + build (with SDRplay)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SDRPLAY=ON \
+            -DCMAKE_PREFIX_PATH=/usr/local \
+            -DCMAKE_CXX_FLAGS=-I/usr/local/include \
+            -DCMAKE_EXE_LINKER_FLAGS=-L/usr/local/lib
+          cmake --build build -j"$(nproc)"
+
+      - name: Assemble AppDir
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications \
+                   AppDir/usr/share/icons/hicolor/256x256/apps \
+                   AppDir/usr/share/tentec-console
+          cp build/tentec-console AppDir/usr/bin/
+          cp /tmp/voa/bin/voacapl AppDir/usr/bin/
+          # -L matters: makeitshfbc SYMLINKS the ionosphere coefficient
+          # files back to the install prefix; carried as links they die
+          # with the build machine (live-found: the bundled tree had 1 of
+          # 45 coeffs files and the engine crashed). Dereference so the
+          # bundle is self-contained.
+          cp -rL /tmp/voahome/itshfbc AppDir/usr/share/tentec-console/itshfbc
+          cp packaging/tentec-console.desktop AppDir/usr/share/applications/
+          cp resources/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/tentec-console.png
+
+      - name: Build AppImage (exclude proprietary SDRplay lib)
+        run: |
+          curl -fSL -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fSL -o linuxdeploy-plugin-qt https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+          export QMAKE="$(command -v qmake6 || echo /usr/lib/qt6/bin/qmake6)"
+          # Qt's TLS backend plugin is NOT deployed by default — without it
+          # every https fetch dies (NOAA solar data, the POTA feed, and the
+          # VOACAP trigger that waits on a sunspot number). Live-found by
+          # stranger-testing the published image with a fresh HOME. OpenSSL
+          # itself must NOT be half-bundled: a stray bundled libcrypto 3.0
+          # paired with the host's newer libssl fails symbol versioning
+          # (also live-found), so both openssl libs are excluded below and
+          # every host supplies its own matched pair.
+          export EXTRA_QT_PLUGINS="tls"
+          export OUTPUT="tentec-console-${GITHUB_REF_NAME}-x86_64.AppImage"
+          ./linuxdeploy --appdir AppDir --plugin qt \
+            --executable AppDir/usr/bin/voacapl \
+            --desktop-file AppDir/usr/share/applications/tentec-console.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/tentec-console.png \
+            --exclude-library 'libsdrplay_api*' \
+            --exclude-library 'libssl*' \
+            --exclude-library 'libcrypto*' \
+            --output appimage
+          # --exclude-library does not reach libraries the qt plugin deploys
+          # on its own (libcrypto rode in with the tls plugin's deps and the
+          # published image still failed — live-found). Strip the OpenSSL
+          # pair from the AppDir and repack: hosts load their own matched
+          # pair, and 3.x hosts satisfy any bundled lib's 3.0 symbols.
+          rm -f AppDir/usr/lib/libssl.so* AppDir/usr/lib/libcrypto.so*
+          curl -fSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          rm -f "$OUTPUT"
+          ARCH=x86_64 ./appimagetool AppDir "$OUTPUT"
+          ls -lh *.AppImage
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          files: tentec-console-*-x86_64.AppImage
+          body: |
+            Alpha AppImage for the Ten-Tec SDR Console (Orion / Omni VII).
+
+            **Install (easiest):** run the one-liner from the README, or:
+            `bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/orion3-sdr-console/master/install.sh)`
+
+            The SDRplay API (proprietary, required for the panadapter) is NOT
+            bundled — install.sh sets it up, or get it from sdrplay.com/api.
+            The VOACAP propagation engine IS bundled (public-domain core):
+            the map-backdrop propagation overlay works out of the box.
+            Radio control needs your user in the dialout/uucp group (install.sh
+            does this). First launch opens the Setup screen.

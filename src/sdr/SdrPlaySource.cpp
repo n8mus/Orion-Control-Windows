@@ -1,0 +1,268 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "sdr/SdrPlaySource.h"
+
+#include <cstdlib>
+
+#include <chrono>
+#include <cstdio>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+namespace ttc {
+
+#ifdef _WIN32
+// The Windows release ships without sdrplay_api.dll (proprietary, never
+// redistributed) and the API installer's folder is not on the DLL search
+// path, so a normal load-time import dies before main() even with the API
+// correctly installed — live-found v0.1.6 at the operator's own station.
+// The exe therefore delay-loads the DLL (see CMakeLists) and this resolver
+// finds the operator's install through the service installer's breadcrumb:
+// HKLM\SOFTWARE\SDRplay\Service\API @ Install_Dir, DLL under x64\.
+// On failure nothing may touch the API — an unresolved delay-loaded call
+// raises instead of returning an error — so the constructor funnels into
+// the existing "no IQ source" path.
+static bool resolveSdrplayDll() {
+    if (GetModuleHandleW(L"sdrplay_api.dll")) return true;
+    if (LoadLibraryW(L"sdrplay_api.dll")) return true;  // beside the exe (dev tree) or PATH
+    wchar_t dir[MAX_PATH];
+    DWORD sz = sizeof(dir);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\SDRplay\\Service\\API",
+                     L"Install_Dir", RRF_RT_REG_SZ, nullptr, dir, &sz)
+        != ERROR_SUCCESS) {
+        if (!GetEnvironmentVariableW(L"ProgramFiles", dir, MAX_PATH))
+            return false;
+        wcscat_s(dir, L"\\SDRplay\\API");
+    }
+    wchar_t dll[MAX_PATH + 32];
+    _snwprintf_s(dll, _TRUNCATE, L"%s\\x64\\sdrplay_api.dll", dir);
+    return LoadLibraryW(dll) != nullptr;
+}
+#endif
+
+SdrPlaySource::SdrPlaySource() {
+#ifdef _WIN32
+    if (!resolveSdrplayDll()) {
+        err_ = "sdrplay_api.dll not found - install the SDRplay API "
+               "(sdrplay.com/api)";
+        return;
+    }
+#endif
+    // TTC_NOSDR=1 (layout guard): never talk to the SDRplay service at all,
+    // so a test can run beside the operator's console without touching it.
+    if (std::getenv("TTC_NOSDR")) {
+        err_ = "SDR disabled (TTC_NOSDR)";
+        return;
+    }
+    if (sdrplay_api_Open() == sdrplay_api_Success) {
+        apiOpen_ = true;
+        float ver = 0.0f;
+        sdrplay_api_ApiVersion(&ver);
+        std::printf("[sdrplay] API opened, version %.2f\n", ver);
+    } else {
+        err_ = "sdrplay_api_Open failed (is the sdrplay API service running?)";
+    }
+}
+
+SdrPlaySource::~SdrPlaySource() {
+    stop();
+    if (apiOpen_) sdrplay_api_Close();
+}
+
+bool SdrPlaySource::fail(const char* where, sdrplay_api_ErrT e) {
+    err_ = std::string(where) + ": " + sdrplay_api_GetErrorString(e);
+    std::fprintf(stderr, "[sdrplay] %s\n", err_.c_str());
+    return false;
+}
+
+bool SdrPlaySource::start(double centerHz, double sampleRate) {
+    if (!apiOpen_) return false;
+    if (streaming_) stop();
+
+    sdrplay_api_ErrT e;
+    if ((e = sdrplay_api_LockDeviceApi()) != sdrplay_api_Success) return fail("LockDeviceApi", e);
+
+    sdrplay_api_DeviceT devs[8];
+    unsigned int nDevs = 0;
+    e = sdrplay_api_GetDevices(devs, &nDevs, 8);
+    if (e != sdrplay_api_Success) { sdrplay_api_UnlockDeviceApi(); return fail("GetDevices", e); }
+
+    int idx = -1;
+    for (unsigned int i = 0; i < nDevs; ++i)
+        if (devs[i].hwVer == SDRPLAY_RSP2_ID) { idx = static_cast<int>(i); break; }
+    if (idx < 0) { sdrplay_api_UnlockDeviceApi(); err_ = "no RSP2 found"; return false; }
+
+    device_ = devs[idx];
+    device_.tuner = sdrplay_api_Tuner_A;
+    if ((e = sdrplay_api_SelectDevice(&device_)) != sdrplay_api_Success) {
+        sdrplay_api_UnlockDeviceApi(); return fail("SelectDevice (in use?)", e);
+    }
+    sdrplay_api_UnlockDeviceApi();
+
+    if ((e = sdrplay_api_GetDeviceParams(device_.dev, &params_)) != sdrplay_api_Success)
+        return fail("GetDeviceParams", e);
+
+    // Front-end config: zero-IF, 1.536 MHz analog BW, fixed gain (AGC off) for a
+    // stable panadapter noise floor.
+    params_->devParams->fsFreq.fsHz          = sampleRate;
+    auto* rx = params_->rxChannelA;
+    rx->tunerParams.rfFreq.rfHz              = centerHz;
+    rx->tunerParams.ifType                   = sdrplay_api_IF_Zero;
+    rx->tunerParams.gain.gRdB                = gRdB_;
+    rx->tunerParams.gain.LNAstate            = static_cast<unsigned char>(lnaState_);
+    rx->ctrlParams.agc.enable                = sdrplay_api_AGC_DISABLE;
+    // Zero-IF leaves a DC spike parked at the capture center — which is always
+    // the dial, so it "follows" the tuning. Let the API's DC and IQ-imbalance
+    // correction chase it down.
+    rx->ctrlParams.dcOffset.DCenable         = 1;
+    rx->ctrlParams.dcOffset.IQenable         = 1;
+    if (decim_ > 1) {                        // narrow span + matching analog BW
+        rx->ctrlParams.decimation.enable          = 1;
+        rx->ctrlParams.decimation.decimationFactor = static_cast<unsigned char>(decim_);
+        const double outRate = sampleRate / decim_;
+        rx->tunerParams.bwType = outRate <= 200000.0 ? sdrplay_api_BW_0_200
+                               : outRate <= 300000.0 ? sdrplay_api_BW_0_300
+                               : outRate <= 600000.0 ? sdrplay_api_BW_0_600
+                                                     : sdrplay_api_BW_1_536;
+    } else {
+        rx->ctrlParams.decimation.enable = 0;
+        rx->tunerParams.bwType           = sdrplay_api_BW_1_536;
+    }
+    rx->rsp2TunerParams.antennaSel =
+        antennaB_ ? sdrplay_api_Rsp2_ANTENNA_B : sdrplay_api_Rsp2_ANTENNA_A;
+    rx->rsp2TunerParams.rfNotchEnable = notch_ ? 1 : 0;
+
+    sdrplay_api_CallbackFnsT cbs{};
+    cbs.StreamACbFn = &SdrPlaySource::streamCb;
+    cbs.StreamBCbFn = nullptr;
+    cbs.EventCbFn   = &SdrPlaySource::eventCb;
+
+    if ((e = sdrplay_api_Init(device_.dev, &cbs, this)) != sdrplay_api_Success) {
+        sdrplay_api_ReleaseDevice(&device_);
+        return fail("Init", e);
+    }
+    streaming_ = true;
+    std::printf("[sdrplay] RSP2 streaming: %.0f Hz @ %.0f Ssps, antenna %c, "
+                "MW notch %s (struct=%d)\n",
+                centerHz, sampleRate, antennaB_ ? 'B' : 'A',
+                notch_ ? "ON" : "off",
+                rx->rsp2TunerParams.rfNotchEnable);
+    return true;
+}
+
+void SdrPlaySource::setGainLive(int gRdB, int lnaState) {
+    gRdB_ = std::max(20, std::min(59, gRdB));
+    lnaState_ = std::max(0, std::min(8, lnaState));
+    if (!streaming_ || !params_) return;
+    auto* rx = params_->rxChannelA;
+    rx->tunerParams.gain.gRdB     = gRdB_;
+    rx->tunerParams.gain.LNAstate = static_cast<unsigned char>(lnaState_);
+    sdrplay_api_Update(device_.dev, device_.tuner,
+                       sdrplay_api_Update_Tuner_Gr, sdrplay_api_Update_Ext1_None);
+}
+
+void SdrPlaySource::stop() {
+    if (streaming_) {
+        sdrplay_api_Uninit(device_.dev);
+        sdrplay_api_ReleaseDevice(&device_);
+        streaming_ = false;
+    }
+    params_ = nullptr;
+}
+
+void SdrPlaySource::setCenterFrequency(double hz) {
+    if (!streaming_) return;
+    params_->rxChannelA->tunerParams.rfFreq.rfHz = hz;
+    sdrplay_api_Update(device_.dev, sdrplay_api_Tuner_A,
+                       sdrplay_api_Update_Tuner_Frf, sdrplay_api_Update_Ext1_None);
+}
+
+void SdrPlaySource::setAntennaB(bool b) {
+    antennaB_ = b;
+    if (!streaming_ || !params_) return;
+    params_->rxChannelA->rsp2TunerParams.antennaSel =
+        b ? sdrplay_api_Rsp2_ANTENNA_B : sdrplay_api_Rsp2_ANTENNA_A;
+    sdrplay_api_Update(device_.dev, sdrplay_api_Tuner_A,
+                       sdrplay_api_Update_Rsp2_AntennaControl,
+                       sdrplay_api_Update_Ext1_None);
+}
+
+bool SdrPlaySource::setBroadcastNotch(bool on) {
+    const bool was = notch_;
+    notch_ = on;
+    // Not streaming yet (or start() failed): remember it — start() writes the
+    // flag into rsp2TunerParams before Init, which programs the filter just as
+    // well as a live update (both bench-verified 2026-08-18, -15 dB on MW).
+    if (!streaming_ || !params_) return true;
+    params_->rxChannelA->rsp2TunerParams.rfNotchEnable = on ? 1 : 0;
+    const sdrplay_api_ErrT e =
+        sdrplay_api_Update(device_.dev, sdrplay_api_Tuner_A,
+                           sdrplay_api_Update_Rsp2_RfNotchControl,
+                           sdrplay_api_Update_Ext1_None);
+    // The return code used to be dropped on the floor, so a refused update
+    // left the menu box checked over a filter that was still out — the box
+    // lied and there was no way to tell from the console. Roll the flag back
+    // so broadcastNotch() keeps matching the hardware.
+    if (e != sdrplay_api_Success) {
+        params_->rxChannelA->rsp2TunerParams.rfNotchEnable = was ? 1 : 0;
+        notch_ = was;
+        return fail("Update RfNotch", e);
+    }
+    return true;
+}
+
+void SdrPlaySource::streamCb(short* xi, short* xq, sdrplay_api_StreamCbParamsT*,
+                             unsigned int numSamples, unsigned int, void* ctx) {
+    auto* self = static_cast<SdrPlaySource*>(ctx);
+    if (!self->cb_) return;
+    if (self->scratch_.size() < numSamples) self->scratch_.resize(numSamples);
+    constexpr float kNorm = 1.0f / 32768.0f;
+    for (unsigned int i = 0; i < numSamples; ++i)
+        self->scratch_[i] = { xi[i] * kNorm, xq[i] * kNorm };
+    // Hand off exactly numSamples (scratch_ may be larger).
+    self->cb_(IqBlock(self->scratch_.begin(), self->scratch_.begin() + numSamples));
+}
+
+void SdrPlaySource::eventCb(sdrplay_api_EventT eventId, sdrplay_api_TunerSelectT tuner,
+                            sdrplay_api_EventParamsT*, void* ctx) {
+    auto* self = static_cast<SdrPlaySource*>(ctx);
+    if (eventId == sdrplay_api_PowerOverloadChange) {
+        if (self) {
+            self->overloads_.fetch_add(1, std::memory_order_relaxed);
+            const int64_t now =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+            self->lastOverloadMs_.store(now, std::memory_order_relaxed);
+            // TX panic: hardware-only max attenuation, logical state
+            // untouched (see header). Rate-limited so the repeated
+            // overload notifications don't spam tuner updates.
+            if (self->panicArmed_.load(std::memory_order_relaxed)
+                && self->params_ && now - self->lastPanicMs_ > 400) {
+                self->lastPanicMs_ = now;
+                auto* rx = self->params_->rxChannelA;
+                rx->tunerParams.gain.gRdB = 59;
+                rx->tunerParams.gain.LNAstate = 8;
+                sdrplay_api_Update(self->device_.dev, tuner,
+                                   sdrplay_api_Update_Tuner_Gr,
+                                   sdrplay_api_Update_Ext1_None);
+            }
+        }
+        // Expected whenever the shared-antenna feed goes hot (own TX): the API
+        // repeats the event until acknowledged, so ack it and log only rarely.
+        if (self)
+            sdrplay_api_Update(self->device_.dev, tuner,
+                               sdrplay_api_Update_Ctrl_OverloadMsgAck,
+                               sdrplay_api_Update_Ext1_None);
+        static int n = 0;
+        if (n++ % 50 == 0)
+            std::fprintf(stderr, "[sdrplay] ADC power overload (own TX?) — "
+                                 "reduce gain if this happens on receive\n");
+    } else if (eventId == sdrplay_api_DeviceRemoved) {
+        std::fprintf(stderr, "[sdrplay] device removed\n");
+    }
+}
+
+} // namespace ttc

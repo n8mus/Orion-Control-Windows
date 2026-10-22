@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Shared internals for the MainWindow translation units (MainWindow.cpp,
+// MainWindowTuning.cpp, MainWindowOps.cpp, MainWindowTools.cpp). Nothing
+// here is API — it exists so the one giant .cpp could be split into files
+// that don't collide when several features land at once.
+#pragma once
+#include <QAbstractButton>
+#include <QEvent>
+#include <QMenu>
+#include <QPointer>
+#include "radio/RadioController.h"
+
+namespace ttc {
+
+// Offset-LO tuning (PowerSDR if_freq): the SDR always captures this far above
+// the dial so its zero-IF DC artifact can never sit on the tuned frequency.
+// The RSP2 captures this far ABOVE the dial so the zero-IF DC spike sits at
+// the LO, off to the side of the dial. 260 kHz (was 135, before that 60)
+// pairs with the 1 MHz capture: max view 1000-2*260 = 480 kHz (±240), so
+// the spike at +260 stays ~20 kHz off the top edge, always out of frame —
+// the operator got his wide view back (2026-07-31) without the spike.
+// RX is unaffected — the decoder/skimmer/S-meter listen at the dial
+// (loOffHz_ below the LO) wherever the LO sits. Keep loOffHz_'s startup
+// value (MainWindow.h) in sync with this.
+inline constexpr int kLoOffsetHz = 260000;
+
+// Delivered IQ rate: 2 MS/s hardware-decimated by 2 in the RSP2. One
+// constant so the spectrum span and the skimmer's mixer rate can never
+// drift apart. FFT 16384 keeps the bins at the same ~61 Hz the 500 kHz /
+// 8192 era had, so deep zoom loses nothing.
+inline constexpr int kSdrCaptureHz = 1000000;
+
+inline int pbtRfSign(Mode m) {
+    return (m == Mode::LSB || m == Mode::CWL) ? -1 : +1;
+}
+
+// Visual placement of the passband relative to the carrier: nominal filter
+// position per mode, shifted by PBT (in RF space). The nominal audio low-cut
+// offset isn't CAT-readable, so this can sit a couple hundred Hz off — harmless,
+// because drags are delta-anchored to the radio's real state, never absolute.
+inline void edgesFromRig(Mode m, int bw, int pbt, int& lo, int& hi) {
+    // AM: the indicated bandwidth is the AUDIO width — the RF passband spans
+    // BOTH sidebands, so the true width is twice the number (confirmed live:
+    // AM filter values run to 9000 = 18 kHz on the air).
+    const int half = (m == Mode::AM) ? bw : bw / 2;
+    int centerRf;
+    switch (m) {
+        case Mode::USB: centerRf = +half; break;
+        case Mode::LSB: centerRf = -half; break;
+        default:        centerRf = 0;     break;
+    }
+    centerRf += pbtRfSign(m) * pbt;
+    lo = centerRf - half;
+    hi = centerRf + half;
+}
+
+// The Orion's per-mode filter ceiling (live-verified: AM accepts up to 9000
+// — matching the front-panel knob — and silently REJECTS anything higher,
+// it does not clamp; SSB/CW cap at 6000). Drag math needs the real ceiling
+// or wide-AM drags peg early.
+inline int bwMaxFor(Mode m) { return m == Mode::AM ? 9000 : 6000; }
+
+// The console's dark chrome, shared by every toolbar button and dropdown
+// (verbatim what the DISPLAY/SPOTS buttons have always used).
+inline const char* kToolBtnStyle =
+    "QToolButton { background: #1c2430; color: #c8d4e0; border: 1px solid #2a3644;"
+    " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
+    "QToolButton::menu-indicator { image: none; }";
+
+// The sidebar's button look (operator, 2026-10-18): light-blue letters at
+// rest, white on blue while lit — a box shown, a window open, a feature on.
+// Every button in the sidebar grid (menus, tools, box toggles) wears it.
+inline const char* kSideBtnStyle =
+    "QToolButton { background: #1c2430; color: #8fa3b8; border: 1px solid #2a3644;"
+    " border-radius: 3px; font-size: 11px; font-weight: bold; padding: 2px 3px; }"
+    "QToolButton:hover { border-color: #4a5a6e; }"
+    "QToolButton:checked { background: #2b5c8a; color: #ffffff; border-color: #3d7ab6; }"
+    "QToolButton::menu-indicator { image: none; }";
+
+// Keeps a checkable button lit while its window is up (LOG, CW, EQ): a
+// show lights it, a hide/close darkens it, whoever opened or closed it.
+class WindowLight : public QObject {
+public:
+    static void bind(QAbstractButton* b, QWidget* w) {
+        if (!b || !w) return;
+        w->installEventFilter(new WindowLight(b, w));
+        b->setChecked(w->isVisible());
+    }
+    bool eventFilter(QObject*, QEvent* e) override {
+        if (!b_) return false;
+        if (e->type() == QEvent::Show) b_->setChecked(true);
+        else if (e->type() == QEvent::Hide || e->type() == QEvent::Close)
+            b_->setChecked(false);
+        return false;
+    }
+
+private:
+    WindowLight(QAbstractButton* b, QWidget* w) : QObject(w), b_(b) {}
+    QPointer<QAbstractButton> b_;
+};
+
+// The button's click for such a window: close it when it is up, else open.
+inline bool windowUp(const QWidget* w) {
+    return w && w->isVisible() && !w->isMinimized();
+}
+
+inline void styleMenu(QMenu* m) {
+    m->setAttribute(Qt::WA_TranslucentBackground);  // real rounded corners
+    m->setStyleSheet(
+        "QMenu { background-color: #141b24; color: #c8d4e0;"
+        " border: 1px solid #2a3644; border-radius: 6px; padding: 6px;"
+        " font-size: 13px; }"
+        "QMenu::item { background: transparent; padding: 6px 16px;"
+        " border-radius: 4px; }"
+        "QMenu::item:selected { background: #2a3644; }"
+        "QMenu::item:disabled { color: #5a6b7d; }"
+        "QMenu::separator { height: 1px; background: #2a3644; margin: 6px 8px; }"
+        "QMenu::indicator { width: 14px; height: 14px; }"
+        "QMenu::indicator:checked { background: #3f7cb4;"
+        " border: 1px solid #5db2f0; border-radius: 3px; }"
+        "QMenu::indicator:unchecked { background: #1c2430;"
+        " border: 1px solid #2a3644; border-radius: 3px; }");
+}
+
+} // namespace ttc

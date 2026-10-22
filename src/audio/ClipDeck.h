@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+#include <QFile>
+#include <QObject>
+#include <QProcess>
+#include <QVector>
+#include <vector>
+
+class QTimer;
+
+namespace ttc {
+
+class AudioCapture;
+class AudioPlayback;
+
+// One-clip-at-a-time WAV recorder/player. On Linux it rides PipeWire's own
+// CLI tools (pw-record / paplay), so no audio library dependency and device
+// routing uses the same node names pactl shows; on Windows the same deck
+// runs on Qt Multimedia (src/audio/AudioIo) and "node" means a substring
+// of the Windows device description. Backs the DVR: off-air RX capture,
+// voice-keyer message record, and playback either to the speakers or out
+// the radio's sound path (SignaLink) for transmit.
+class ClipDeck : public QObject {
+    Q_OBJECT
+public:
+    enum class State { Idle, Recording, Playing };
+    explicit ClipDeck(QObject* parent = nullptr);
+    ~ClipDeck() override;
+
+    State state() const { return state_; }
+    // targetNode = PipeWire node name; empty = the system default device.
+    bool record(const QString& wavPath, const QString& targetNode);
+    bool play(const QString& wavPath, const QString& targetNode);
+    void stop();                      // SIGINT so pw-cat finalizes the WAV header
+
+    // First sink/source whose node name contains `match` (case-insensitive,
+    // .monitor sources excluded); empty if none. Shells out to pactl once.
+    static QString findSink(const QString& match);
+    static QString findSource(const QString& match);
+    // First capture device that is NOT `avoid` (USB devices preferred) — the
+    // system default source is often the radio codec itself, which would make
+    // a voice-keyer take record the radio instead of the operator.
+    static QString findSourceExcluding(const QString& avoid);
+    // Every capture device (no .monitor taps): node name + human label, for
+    // the Setup dialog's voice-keyer mic picker. On Windows both are the
+    // device description.
+    struct Source { QString node, label; };
+    static QVector<Source> sources();
+    // A device's label for people: the operator's own name for it if he
+    // gave one (audio/names/<node>, Setup ▸ Voice keyer mic ▸ Name…), else
+    // its description tagged when the console knows what it is — the
+    // SignaLink is "radio audio", a pci- node is the motherboard jack. Two
+    // TI codecs (SignaLink PCM2906C, Alesis PCM2900) describe themselves
+    // almost identically, which is why this exists.
+    static QString friendlyLabel(const Source& src);
+    static QString sourceLabel(const QString& node);   // friendly, or node
+    // The node-name substring that identifies the SignaLink (radio codec):
+    // dvr/radioAudioMatch, defaulting to its full vendor string.
+    static QString radioAudioMatch();
+    // Length and peak (0..1) of a 16-bit PCM WAV; false if unreadable.
+    // A header-only take reads 0 s — how a silent/empty voice-keyer
+    // recording is caught before it replaces a good message.
+    static bool wavStats(const QString& wavPath, double& seconds, double& peak);
+    // Whole 16-bit PCM WAV as mono float (-1..1; stereo is averaged), and
+    // the reverse: write mono float as a plain 44-byte-header 16-bit WAV
+    // (clamped). For offline processing of voice-keyer messages.
+    static bool readWavMono(const QString& wavPath, std::vector<float>& out,
+                            int& rate);
+    static bool writeWavMono(const QString& wavPath,
+                             const std::vector<float>& samples, int rate);
+    // Peak-normalize a 16-bit PCM WAV in place so quiet takes (radio line
+    // out, timid mic) still drive the rig. Gain is capped so a near-silent
+    // file can't be turned into pure noise. The cap is 50x (~34 dB): the
+    // SignaLink RX feed sits deliberately low (~-37 dBFS peak, calibrated for
+    // WSJT-X's noise floor — do NOT raise the RX knob), so off-air retransmit
+    // takes need more than the old 26 dB to reach full drive; a mic keyer take
+    // is far hotter and hits targetPeak long before the cap.
+    static bool normalizeWav(const QString& wavPath, double targetPeak = 0.7,
+                             double maxGain = 50.0);
+
+signals:
+    void finished();                  // deck is idle again (ended or stopped)
+    void failed(const QString& why);
+
+private:
+    bool launch(const QString& exe, const QStringList& args, State s);
+    QProcess proc_;
+    State state_ = State::Idle;
+    bool stopping_ = false;           // our SIGINT, not a real error
+    // Windows deck (Qt Multimedia); untouched on Linux.
+    AudioCapture* cap_ = nullptr;
+    AudioPlayback* out_ = nullptr;
+    QTimer* pump_ = nullptr;          // paced file playback / drain watch
+    QFile wav_;                       // recording target
+    qint64 dataBytes_ = 0;            // PCM bytes written so far
+    QByteArray playPcm_;              // s16 mono payload being played
+    qsizetype playPos_ = 0;
+    int playRate_ = 48000;
+};
+
+} // namespace ttc

@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+#include <QDialog>
+#include <QString>
+
+class QLabel;
+class QLineEdit;
+class QPushButton;
+class QTableWidget;
+class QTimer;
+
+namespace ttc {
+
+class CtyLookup;
+class LogDb;
+class LogbookIndex;
+class QrzLookup;
+class RotorLink;
+
+// New-QSO entry: the cqrlog flow, in-console. A spot click (or typing)
+// fills the call; country/zones/bearing come from cty.dat, worked-before
+// and the country/band/mode needed badges from LogbookIndex, frequency and
+// mode ride in from the rig, and the SP/LP buttons turn the rotor the
+// console already owns. LOG writes the station's SQLite log.
+class QsoContext;
+
+class LogWindow : public QDialog {
+    Q_OBJECT
+public:
+    LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
+              RotorLink* rotor, QrzLookup* qrz, QWidget* parent = nullptr);
+
+    // From a spot click / CW decoder: set the station being worked.
+    void prefill(const QString& call, const QString& park = QString(),
+                 const QString& grid = QString());
+    // The shared current-QSO record (log/QsoContext): everything typed
+    // here lands in it, and anything another window changes lands here.
+    void setContext(QsoContext* ctx);
+    // Rig state (dial + ADIF-style mode text, e.g. "CW"/"SSB").
+    void setRig(qint64 freqHz, const QString& mode);
+    // A digital app's own mode ("FT8") — outranks the rig's USB until the
+    // radio's mode actually changes.
+    void setModeHint(const QString& mode);
+    // Another program (WSJT-X) logged this call: the form is done with it,
+    // so wipe it as our own Log button would. Other calls are left alone.
+    void loggedElsewhere(const QString& call);
+
+signals:
+    void qsoLogged(qint64 id, const QString& call);
+    // The DX in the window has a location — the compass rose follows.
+    void dxLocated(double lat, double lon, const QString& call);
+    // Form wiped (Clear button or post-log) — cqrlog's New QSO mirrors it.
+    void cleared();
+    // Spot button: send this call up to the cluster at the dial freq.
+    void spotRequested(const QString& call);
+
+private:
+    void onCallEdited();
+    void logNow();
+    void clearForNext();
+    void updateBadges();
+    void updateRotor();
+    void tickClock();
+    void openBrowserGlobe();
+    void autoLookup();                     // callbook fill on call arrival
+
+    LogDb* db_;
+    LogbookIndex* idx_;
+    const CtyLookup* cty_;
+    RotorLink* rotor_;
+    QrzLookup* qrz_;
+
+    QLineEdit* call_ = nullptr;
+    QLabel* country_ = nullptr;
+    QLabel* bCountry_ = nullptr;
+    QLabel* bBand_ = nullptr;
+    QLabel* bMode_ = nullptr;
+    QLineEdit* freq_ = nullptr;
+    QLineEdit* mode_ = nullptr;
+    QLineEdit* rstS_ = nullptr;
+    QLineEdit* rstR_ = nullptr;
+    QLineEdit* date_ = nullptr;
+    QLineEdit* time_ = nullptr;
+    QLineEdit* name_ = nullptr;
+    QLineEdit* handle_ = nullptr;      // the on-air name he gave
+    QsoContext* ctx_ = nullptr;        // shared with the CW window
+    bool ctxEcho_ = false;             // applying ctx -> don't write back
+    QLineEdit* qth_ = nullptr;
+    QLineEdit* grid_ = nullptr;
+    QLineEdit* pota_ = nullptr;
+    QLineEdit* comment_ = nullptr;
+    QLabel* heading_ = nullptr;
+    QPushButton* spBtn_ = nullptr;
+    QPushButton* lpBtn_ = nullptr;
+    QTableWidget* prev_ = nullptr;
+    QTimer* clock_ = nullptr;
+
+    // QRZ's per-station zones for the call in the box (0 = not yet / none).
+    // QRZ's explicit value, or its US-state derivation — either beats
+    // cty.dat's country default, which is wrong for the western US.
+    int qrzCqz_ = 0, qrzItuz_ = 0;
+
+    double spAz_ = -1.0, lpAz_ = -1.0;
+    double dxLat_ = 999.0, dxLon_ = 999.0;   // last located DX (999 = none)
+    bool autoTime_ = true;
+    QString lastAutoMode_;                 // last rig mode we applied
+};
+
+} // namespace ttc
