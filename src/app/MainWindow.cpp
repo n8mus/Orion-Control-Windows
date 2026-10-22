@@ -3706,6 +3706,16 @@ MainWindow::MainWindow(QWidget* parent)
     if (std::getenv("TTC_CONTEST"))
         QTimer::singleShot(0, this, [this] {
             if (contestBtn_) contestBtn_->setChecked(true);  // real path
+            // TTC_DECKTYPE=<partial>: type it into the deck's CALL box, as
+            // keystrokes would (the super-check + N+1 row fills) — the
+            // window-growth check (live-found 2026-10-22).
+            if (const char* t = std::getenv("TTC_DECKTYPE"))
+                QTimer::singleShot(1500, this, [this, t] {
+                    if (auto* e = findChild<QLineEdit*>("entryCall")) {
+                        e->setText(QString::fromLatin1(t));
+                        emit e->textEdited(e->text());
+                    }
+                });
         });
 #endif
 

@@ -26,7 +26,10 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
+#include "contest/MultWindow.h"
+#include "contest/OnlineScore.h"
 #include "contest/PracticeEngine.h"
+#include "net/SntpCheck.h"
 #include "contest/QtcDialog.h"
 #include "cw/CwWindow.h"
 #include "log/QrzLookup.h"
@@ -135,8 +138,46 @@ ContestDeck::ContestDeck(ContestDb* db, const CtyLookup* cty, CwWindow* cw,
     connect(&clockTimer_, &QTimer::timeout, this, [this] {
         clock_->setText(
             QDateTime::currentDateTimeUtc().toString("HH:mm:ss'z'"));
+        refreshSub();
     });
     clockTimer_.start(1000);
+    // Contest log backup: a full copy every 15 minutes while a contest is
+    // open (and at open), the newest 40 kept.
+    backupTimer_.setInterval(15 * 60 * 1000);
+    connect(&backupTimer_, &QTimer::timeout, this, [this] { backupNow("timer"); });
+    // Clock check at open and hourly: a PC clock seconds off costs QSOs in
+    // log checking (and FT8 decodes). Warn only — never set the clock.
+    sntp_ = new SntpCheck(this);
+    connect(sntp_, &SntpCheck::result, this, [this](bool ok, qint64 off, const QString& srv) {
+        clockKnown_ = ok;
+        clockOffMs_ = off;
+        if (!ok) {
+            clock_->setToolTip("Clock check: no answer from " + srv);
+            return;
+        }
+        const bool bad = std::llabs(off) > 2000;
+        clock_->setStyleSheet(bad ? "color:#ffb020; font-weight:bold;" : QString());
+        clock_->setToolTip(QString("PC clock is %1 s %2 %3")
+                               .arg(std::llabs(off) / 1000.0, 0, 'f', 1)
+                               .arg(off >= 0 ? "behind" : "ahead of").arg(srv));
+        if (bad)
+            status_->setText(QString("⚠ PC clock is %1 s off — fix it before logging "
+                                     "(sudo chronyc makestep / timedatectl)")
+                                 .arg(std::llabs(off) / 1000.0, 0, 'f', 1));
+        trace(QString("CLOCK offset %1 ms (%2)").arg(off).arg(srv));
+    });
+    sntpTimer_.setInterval(60 * 60 * 1000);
+    connect(&sntpTimer_, &QTimer::timeout, this, [this] { sntp_->check(); });
+    // Online score: every 2 minutes while switched on for this contest,
+    // only when something changed.
+    cos_ = new OnlineScore(this);
+    connect(cos_, &OnlineScore::posted, this, [this](bool ok, const QString& d) {
+        if (cosBtn_) cosBtn_->setToolTip(QString("contestonlinescore.com — last: %1 (%2)")
+                                             .arg(d, QTime::currentTime().toString("HH:mm")));
+        if (!ok) status_->setText("⚠ " + d);
+    });
+    cosTimer_.setInterval(2 * 60 * 1000);
+    connect(&cosTimer_, &QTimer::timeout, this, [this] { postScoreIfDue(); });
     const QString myGrid =
         QSettings().value("station/grid", "").toString();
     CtyLookup::gridToLatLon(myGrid, myLat_, myLon_);
@@ -389,6 +430,7 @@ void ContestDeck::buildUi() {
         sl->setContentsMargins(2, 0, 2, 0);
         sl->setSpacing(10);
         scpRow_->setFixedHeight(20);
+        scpRow_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);   // never widens
         mid->addWidget(scpRow_);
 
         // entry row
@@ -475,6 +517,43 @@ void ContestDeck::buildUi() {
         hint_->setStyleSheet("color:#7ee2a8;");
         st->addWidget(hint_);
         mid->addLayout(st);
+
+        // SUB: the second receiver (VFO B). Type what you hear there and
+        // see at once whether it's a new mult / new / dupe on B's band;
+        // Enter swaps A/B (the transmitter goes to B) and the call drops
+        // into the main entry to be worked. N1MM's SO1R+second-RX idea.
+        auto* sub = new QHBoxLayout;
+        sub->setSpacing(6);
+        auto* sl2 = new QLabel("SUB", this);
+        sl2->setStyleSheet("color:#8798a8; font-size:10px;");
+        sl2->setToolTip("Second receiver (VFO B)");
+        sl2->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        sub->addWidget(sl2);
+        subCall_ = new QLineEdit(this);
+        subCall_->setObjectName("subCall");
+        subCall_->setMaxLength(14);
+        subCall_->setFixedWidth(120);
+        subCall_->setPlaceholderText("call on VFO B");
+        connect(subCall_, &QLineEdit::textEdited, this, [this] {
+            const int pos = subCall_->cursorPosition();
+            const QSignalBlocker b(subCall_);
+            subCall_->setText(subCall_->text().toUpper());
+            subCall_->setCursorPosition(pos);
+            refreshSub();
+        });
+        connect(subCall_, &QLineEdit::returnPressed, this, [this] {
+            const QString c = subCall_->text().trimmed().toUpper();
+            if (!loggableCall(c) || contestId_ < 0) return;
+            subCall_->clear();
+            refreshSub();
+            emit subTakeRequested(c);
+        });
+        sub->addWidget(subCall_);
+        subInfo_ = new QLabel(this);
+        subInfo_->setStyleSheet("color:#8798a8;");
+        subInfo_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        sub->addWidget(subInfo_, 1);
+        mid->addLayout(sub);
 
         // F keys — two even rows of six (F1-F6 / F7-F12), each button
         // sized like the mode buttons (not stretched), CENTERED, with
@@ -593,6 +672,37 @@ void ContestDeck::buildUi() {
             qtc_->followCall(call_->text());
         });
         br->addWidget(qtcBtn_);
+        auto* multBtn = new QPushButton("MULTS", this);
+        multBtn->setFocusPolicy(Qt::NoFocus);
+        multBtn->setToolTip("The multiplier grid: every mult by band, what is still "
+                            "needed on this band in red");
+        connect(multBtn, &QPushButton::clicked, this, [this] {
+            if (contestId_ < 0) return;
+            if (!multWin_) multWin_ = new MultWindow(this);
+            multWin_->setData(def_->title, sb_.multKeys,
+                              def_->id.startsWith(QLatin1String("CQ-WW")), currentBand());
+            multWin_->show();
+            multWin_->raise();
+        });
+        br->addWidget(multBtn);
+        cosBtn_ = new QPushButton("SCORE", this);
+        cosBtn_->setCheckable(true);
+        cosBtn_->setFocusPolicy(Qt::NoFocus);
+        cosBtn_->setToolTip("Post the running score to contestonlinescore.com every "
+                            "2 minutes (off by default, per contest)");
+        connect(cosBtn_, &QPushButton::toggled, this, [this](bool on) {
+            if (contestId_ < 0) return;
+            QSettings().setValue(QString("contest/cos/%1").arg(contestId_), on);
+            cosLastTotal_ = -1;
+            cosLastQsos_ = -1;
+            if (on) {
+                cosTimer_.start();
+                postScoreIfDue();
+            } else {
+                cosTimer_.stop();
+            }
+        });
+        br->addWidget(cosBtn_);
         auto* spotBtn = new QPushButton("Spot", this);
         spotBtn->setFocusPolicy(Qt::NoFocus);
         spotBtn->setToolTip("Send the entered call as a DX spot to the "
@@ -618,6 +728,11 @@ void ContestDeck::buildUi() {
         br->addWidget(mgr);
         status_ = new QLabel(this);
         status_->setStyleSheet("color:#8798a8; font-size:10px;");
+        // A long message must never widen the window (live-found
+        // 2026-10-22: with MULTS/SCORE in this row, a practice message
+        // pushed the console onto the next monitor). It clips instead.
+        status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        status_->setMinimumWidth(0);
         br->addWidget(status_, 1);
         box->addLayout(br);
         lay->addLayout(box, 11);
@@ -759,6 +874,9 @@ bool ContestDeck::openContestId(qint64 id) {
 
 void ContestDeck::closeContest() {
     if (practiceOn()) setPractice(false);
+    backupTimer_.stop();
+    cosTimer_.stop();
+    sntpTimer_.stop();
     contestId_ = -1;
     def_ = nullptr;
     QSettings().remove("contest/currentId");
@@ -801,6 +919,18 @@ void ContestDeck::openContest(qint64 id) {
     rebuildEntryFields();
     applyFkeyLabels();
     refreshAll();
+    backupTimer_.start();
+    backupNow("open");
+    sntp_->check();
+    sntpTimer_.start();
+    {
+        const QSignalBlocker b(cosBtn_);
+        const bool on = QSettings().value(QString("contest/cos/%1").arg(id), false).toBool();
+        cosBtn_->setChecked(on);
+        cosLastTotal_ = -1;
+        cosLastQsos_ = -1;
+        if (on) cosTimer_.start(); else cosTimer_.stop();
+    }
     trace(QString("DECK OPEN %1 id=%2").arg(row_.defId).arg(id));
     if (isVisible()) call_->setFocus();
 }
@@ -1057,6 +1187,9 @@ void ContestDeck::enterPressed() {
 }
 
 void ContestDeck::focusExchange() {
+    // Call history fills what it knows the moment the cursor leaves the
+    // call (it used to wait for Space) — the operator only corrects.
+    historyPrefill();
     for (int i = 0; i < def_->fields.size() && i < edits_.size(); ++i)
         if (def_->fields[i].required
             && edits_[i].second->text().trimmed().isEmpty()) {
@@ -1083,8 +1216,11 @@ void ContestDeck::flashRefusal(QLineEdit* field, const QString& msg) {
 }
 
 void ContestDeck::execPlan(const QList<EsmAct>& plan, bool updateOnly) {
-    for (int i = 0; i < 12; ++i)
-        if (fk_[i]) fk_[i]->setStyleSheet(QString());
+    for (int i = 0; i < 12; ++i)          // drop the glow, keep empty keys dimmed
+        if (fk_[i])
+            fk_[i]->setStyleSheet(i != 11 && fkeySpec(i + 1).isEmpty()
+                                      ? QStringLiteral("QPushButton { color:#5a6470; }")
+                                      : QString());
     const auto glow = [this](int key) {
         if (fk_[key - 1]) fk_[key - 1]->setStyleSheet(kGlowStyle);
     };
@@ -1240,10 +1376,12 @@ void ContestDeck::setPractice(bool on) {
     if (!on) {
         const bool was = practiceOn();
         if (practice_) practice_->stop();
+        pracQsos_.clear();
         if (pracBtn_ && pracBtn_->isChecked()) pracBtn_->setChecked(false);
         title_->setStyleSheet(QString());
         if (def_) title_->setText(row_.title);
         if (was) status_->setText("practice off — back on the air");
+        if (def_ && contestId_ >= 0) refreshAll();   // back to the real log
         return;
     }
     if (!def_ || contestId_ < 0) {
@@ -1274,14 +1412,29 @@ void ContestDeck::setPractice(bool on) {
     // ISOLATION GUARANTEE #4: the mode is unmissable while it's on.
     title_->setText(row_.title + "  ·  PRACTICE — NOT ON AIR");
     title_->setStyleSheet("color:#e0b050;");
+    pracQsos_.clear();
+    refreshAll();                    // the score line starts the drill at zero
     trace("PRAC ON " + row_.defId);
 }
 
 void ContestDeck::practiceVerdict() {
-    const auto r = practice_->verifyLog(collectValues());
+    const CQsoValues typed = collectValues();
+    const auto r = practice_->verifyLog(typed);
     if (!r.haveCaller) {
         status_->setText("no caller live — CQ (F1) brings one");
         return;
+    }
+    {   // into the drill's own log (never contest.db), scored like a real one
+        ContestQso q;
+        q.contestId = contestId_;
+        q.tsUtc = QDateTime::currentDateTimeUtc();
+        q.freqHz = rigHz_;
+        q.v = typed;
+        CtyInfo ci;
+        const bool ok = cty_ && cty_->info(normalizeForCty(typed.call), ci);
+        q.points = def_->points ? def_->points(typed, ci, ok, ctx_) : 0;
+        q.runSp = runMode_ ? "R" : "S";
+        pracQsos_ << q;
     }
     const int pct = r.qsos ? r.good * 100 / r.qsos : 0;
     const QString line =
@@ -1295,6 +1448,7 @@ void ContestDeck::practiceVerdict() {
     trace("PRAC " + line);
     QSettings().setValue("contest/practiceWpm", r.wpm);   // resume here
     wipe();                          // same silent reset as a real log
+    refreshAll();                    // score / rate / MULTS follow the drill
 }
 
 void ContestDeck::wipe() {
@@ -1466,7 +1620,13 @@ void ContestDeck::applyFkeyLabels() {
         const QString spec = fkeySpec(i + 1);
         fk_[i]->setText(QString("F%1\n%2").arg(i + 1).arg(
             spec.isEmpty() ? QStringLiteral("—") : fkeyLabel(spec)));
-        fk_[i]->setEnabled(!spec.isEmpty());
+        // An EMPTY key stays enabled so its right-click can assign it (a
+        // disabled button never sees the right-click — live-found
+        // 2026-10-22, F6-F11 could not be set up); it is dimmed instead,
+        // and pressing it does nothing (keyFkey returns on an empty spec).
+        fk_[i]->setEnabled(contestId_ >= 0);
+        fk_[i]->setStyleSheet(spec.isEmpty() ? QStringLiteral("QPushButton { color:#5a6470; }")
+                                             : QString());
         fk_[i]->setToolTip(spec.isEmpty()
                                ? QStringLiteral("right-click to assign")
                                : fkeyText(spec));
@@ -1580,6 +1740,21 @@ void ContestDeck::verifyExch() {
         edits_[i].second->setStyleSheet(
             bad ? "QLineEdit { border:2px solid #e0b050; }" : QString());
     }
+    // Call history disagreement: what was copied differs from what this
+    // station sent last time (name, state, member number…). Amber with
+    // the expected value in the tooltip — a second look, never a block.
+    const HistoryRow h = db_->historyFor(call_->text().trimmed());
+    for (int i = 0; i < def_->fields.size() && i < edits_.size(); ++i) {
+        const QString& col = def_->fields[i].historyCol;
+        if (col.isEmpty() || !def_->fields[i].verify.isEmpty()) continue;
+        QLineEdit* e = edits_[i].second;
+        const QString want = h.call.isEmpty() ? QString() : histValueFor(h, col).trimmed();
+        const QString got = e->text().trimmed();
+        const bool bad = !want.isEmpty() && !got.isEmpty()
+                      && got.compare(want, Qt::CaseInsensitive) != 0;
+        e->setStyleSheet(bad ? "QLineEdit { border:2px solid #e0b050; }" : QString());
+        e->setToolTip(bad ? QString("call history says %1").arg(want.toUpper()) : QString());
+    }
 }
 
 void ContestDeck::updateHeading() {
@@ -1623,22 +1798,26 @@ void ContestDeck::updateHeading() {
     hdgSrcLbl_->setText(QString("HDG · %1").arg(src));
 }
 
+QString ContestDeck::histValueFor(const HistoryRow& h, const QString& src) const {
+    if (src == QLatin1String("name")) return h.name;
+    if (src == QLatin1String("exch1")) return h.exch1;
+    if (src == QLatin1String("sect")) return h.sect;
+    if (src == QLatin1String("state")) return h.state;
+    if (src == QLatin1String("ck")) return h.ck;
+    if (src == QLatin1String("grid")) return h.grid;
+    return {};
+}
+
 void ContestDeck::historyPrefill() {
     if (contestId_ < 0 || !def_) return;
     const HistoryRow h = db_->historyFor(call_->text());
     if (h.call.isEmpty()) return;
     for (int i = 0; i < def_->fields.size(); ++i) {
         if (!edits_[i].second->text().trimmed().isEmpty()) continue;
-        const QString& src = def_->fields[i].historyCol;
-        QString v;
-        if (src == QLatin1String("name")) v = h.name;
-        else if (src == QLatin1String("exch1")) v = h.exch1;
-        else if (src == QLatin1String("sect")) v = h.sect;
-        else if (src == QLatin1String("state")) v = h.state;
-        else if (src == QLatin1String("ck")) v = h.ck;
-        else if (src == QLatin1String("grid")) v = h.grid;
+        const QString v = histValueFor(h, def_->fields[i].historyCol);
         if (!v.isEmpty()) edits_[i].second->setText(v.toUpper());
     }
+    verifyExch();
     updateEsmHint();
 }
 
@@ -1673,6 +1852,30 @@ void ContestDeck::refreshScp() {
                 [this, c] { prefillCall(c); });
         h->addWidget(b);
     }
+    // N+1: calls one keystroke away (busted-call check), not already in
+    // the partial matches — orange, click to take.
+    if (p.size() >= 4) {
+        QStringList n1 = nPlusOne(p, pool, 4);
+        n1.erase(std::remove_if(n1.begin(), n1.end(),
+                                [&m](const QString& c) { return m.contains(c); }),
+                 n1.end());
+        if (!n1.isEmpty()) {
+            auto* tag = new QLabel("N+1", scpRow_);
+            tag->setStyleSheet("color:#8798a8; font-size:10px;");
+            tag->setToolTip("one character different — did you mean one of these?");
+            h->addWidget(tag);
+        }
+        for (const QString& c : n1) {
+            auto* b = new QPushButton(c, scpRow_);
+            b->setFlat(true);
+            b->setFocusPolicy(Qt::NoFocus);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setStyleSheet("QPushButton { border:0; background:transparent; font-family:"
+                             "'DejaVu Sans Mono'; color:#ffa040; }");
+            connect(b, &QPushButton::clicked, this, [this, c] { prefillCall(c); });
+            h->addWidget(b);
+        }
+    }
     if (pool.contains(p)) {
         auto* ok = new QLabel("✓", scpRow_);
         ok->setStyleSheet("color:#3fb46a; font-weight:bold;");
@@ -1685,7 +1888,7 @@ void ContestDeck::refreshScp() {
 // ---- refresh -------------------------------------------------------------
 
 void ContestDeck::refreshAll() {
-    qsos_ = db_->qsos(contestId_);
+    qsos_ = practiceOn() ? pracQsos_ : db_->qsos(contestId_);
     values_.clear();
     for (const ContestQso& q : qsos_) values_ << q.v;
     row_ = db_->contest(contestId_);   // serial may have moved elsewhere
@@ -1695,31 +1898,39 @@ void ContestDeck::refreshAll() {
         sentNr_->setText(formatSerial(row_.nextSerial, def_->cutNumbers,
                                       def_->serialPad));
     const QDateTime now = QDateTime::currentDateTimeUtc();
-    int in10 = 0, pts60 = 0;
+    int pts60 = 0;
+    QList<QDateTime> ts;
     for (const ContestQso& q : qsos_) {
-        const qint64 secs = q.tsUtc.secsTo(now);
-        if (secs <= 600) ++in10;
-        if (secs <= 3600) pts60 += q.points;
+        ts << q.tsUtc;
+        if (q.tsUtc.secsTo(now) <= 3600) pts60 += q.points;
     }
     // Near-term meters, N1MM Info-window style: the last-10-QSO pace
-    // (measured to NOW, so it honestly decays while you idle) beside
-    // the 10-minute rate and the points actually banked this hour.
-    int last10 = 0;
-    if (qsos_.size() >= 10) {
-        const qint64 span =
-            qsos_[qsos_.size() - 10].tsUtc.secsTo(now);
-        if (span > 0) last10 = int(10 * 3600 / span);
-    }
+    // (measured to NOW, so it honestly decays while you idle), the 10-
+    // and 60-minute rates, the points banked this hour, and on-air time
+    // (a silence of the contest's off-period length, else 30 min, is off
+    // time) against the single-op limit where the rules have one.
+    const int breakSecs = (def_->minOffMinutes > 0 ? def_->minOffMinutes : 30) * 60;
+    const RateStats r = rateStats(ts, now, breakSecs);
     QString s =
         QString("· %1 Q · %2 pts · %3 mult · %4 · 10q %5/h · 10m %6/h"
-                " · %7 pt/h")
+                " · 60m %7 · %8 pt/h")
             .arg(sb_.qsos)
             .arg(sb_.points)
             .arg(sb_.weightedMults)
             .arg(QLocale::c().toString(qlonglong(sb_.total)))
-            .arg(last10)
-            .arg(in10 * 6)
+            .arg(r.last10QsoRate)
+            .arg(r.in10Min * 6)
+            .arg(r.in60Min)
             .arg(pts60);
+    if (!def_->hasQtc && !ts.isEmpty()) {
+        s += QString(" · on %1:%2").arg(r.onSecs / 3600)
+                 .arg((r.onSecs % 3600) / 60, 2, 10, QChar('0'));
+        if (def_->maxOpHours > 0 && row_.catOp.startsWith(QLatin1String("SINGLE")))
+            s += QString(" of %1h").arg(def_->maxOpHours);
+    }
+    if (multWin_)
+        multWin_->setData(def_->title, sb_.multKeys,
+                          def_->id.startsWith(QLatin1String("CQ-WW")), currentBand());
     // LAST QSOs strip: newest first, enough rows to trust the log.
     if (lastLog_) {
         const int n = qMin(qsizetype(12), qsos_.size());
@@ -1856,6 +2067,69 @@ void ContestDeck::trace(const QString& line) {
                  "yyyy-MM-dd HH:mm:ss ")
              + line + "\n")
                 .toUtf8());
+}
+
+// ---- robustness pieces ----------------------------------------------------
+
+void ContestDeck::backupNow(const QString& why) {
+    if (contestId_ < 0 || practiceOn()) return;
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                      + "/contest-backups";
+    QDir().mkpath(dir);
+    const QString path = dir + "/contest-"
+        + QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmm") + "z.sqlite";
+    if (!db_->backupTo(path)) {
+        status_->setText("⚠ contest log backup failed — " + path);
+        return;
+    }
+    // Keep the newest 40 (10 hours at 15 minutes).
+    QFileInfoList old = QDir(dir).entryInfoList({"contest-*.sqlite"}, QDir::Files, QDir::Name);
+    while (old.size() > 40) QFile::remove(old.takeFirst().filePath());
+    trace(QString("BACKUP %1 (%2)").arg(path, why));
+}
+
+void ContestDeck::postScoreIfDue() {
+    if (contestId_ < 0 || !def_ || !cosBtn_ || !cosBtn_->isChecked() || practiceOn()) return;
+    if (sb_.total == cosLastTotal_ && sb_.qsos == cosLastQsos_) return;
+    QSettings s;
+    OnlineScoreInfo me;
+    me.call = ctx_.myCall;
+    if (me.call.isEmpty()) {
+        status_->setText("⚠ online score needs your callsign (Setup → Station)");
+        return;
+    }
+    me.grid = s.value("station/grid").toString();
+    me.location = s.value("contest/location").toString();
+    me.club = row_.club;
+    me.cqZone = ctx_.myCq;
+    me.ituZone = ctx_.myItu;
+    me.softVersion = QStringLiteral(TTC_VERSION);
+    cos_->post(onlineScoreXml(*def_, row_, sb_, me, QDateTime::currentDateTimeUtc()));
+    cosLastTotal_ = sb_.total;
+    cosLastQsos_ = sb_.qsos;
+}
+
+void ContestDeck::refreshSub() {
+    if (!subInfo_) return;
+    const qint64 bHz = vfoB_ ? vfoB_() : 0;
+    const QString c = subCall_->text().trimmed().toUpper();
+    if (contestId_ < 0 || bHz <= 0) {
+        subInfo_->setText(bHz > 0 ? QString() : QStringLiteral("VFO B unknown"));
+        return;
+    }
+    const QString band = LogbookIndex::bandForHz(bHz);
+    QString line = QString("B %1 kHz %2").arg(bHz / 1000.0, 0, 'f', 1).arg(band);
+    QString color = "#8798a8";
+    if (loggableCall(c)) {
+        const char cls = classifySpot(c, bHz);
+        line += cls == 'M' ? QStringLiteral("  · NEW MULT — Enter takes it")
+              : cls == 'W' ? QStringLiteral("  · dupe on B's band")
+              : cls == 'Z' ? QStringLiteral("  · zero points")
+                           : QStringLiteral("  · new — Enter takes it");
+        color = cls == 'M' ? "#ff5252" : cls == 'W' ? "#6c7a88" : "#5db2f0";
+    }
+    subInfo_->setStyleSheet("color:" + color + ";");
+    subInfo_->setText(line);
 }
 
 } // namespace ttc

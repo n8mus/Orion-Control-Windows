@@ -148,6 +148,9 @@ add_executable(tentec-console
   src/contest/ContestWindow.cpp src/contest/ContestWindow.h
   src/contest/ContestDeck.cpp   src/contest/ContestDeck.h
   src/contest/PracticeEngine.cpp src/contest/PracticeEngine.h
+  src/contest/MultWindow.cpp    src/contest/MultWindow.h
+  src/contest/OnlineScore.cpp   src/contest/OnlineScore.h
+  src/net/SntpCheck.cpp         src/net/SntpCheck.h
   src/contest/QtcDialog.cpp     src/contest/QtcDialog.h
   src/log/Adif.cpp              src/log/Adif.h
   src/log/CqrlogSync.cpp        src/log/CqrlogSync.h
@@ -393,9 +396,10 @@ add_executable(contesttest EXCLUDE_FROM_ALL
   src/contest/ContestDefs.cpp src/contest/ContestEngine.cpp
   src/contest/ContestDb.cpp src/contest/Cabrillo.cpp
   src/contest/CallHistory.cpp
-  src/util/CtyLookup.cpp)
+  src/util/CtyLookup.cpp
+  src/net/SntpCheck.cpp)
 target_include_directories(contesttest PRIVATE src)
-target_link_libraries(contesttest PRIVATE Qt6::Core Qt6::Sql)
+target_link_libraries(contesttest PRIVATE Qt6::Core Qt6::Sql Qt6::Network)
 
 # cqrlog->console mirror: the TSV->ADIF converter + idempotent re-pull.
 add_executable(synctest EXCLUDE_FROM_ALL

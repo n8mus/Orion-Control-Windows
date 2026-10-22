@@ -401,6 +401,22 @@ void MainWindow::toggleContestMode(bool on) {
                     });
             connect(contestDeck_, &ContestDeck::walkSpots, this,
                     [this](int d) { walkContestSpot(d); });
+            // SUB line: VFO B's dial, and "take it" = swap A/B (B's station
+            // comes to the main receiver/transmitter) + the call into the
+            // main entry, anchored at B's old frequency.
+            contestDeck_->setVfoBSource([this] { return qint64(vfoBHz_); });
+            connect(contestDeck_, &ContestDeck::subTakeRequested, this,
+                    [this](const QString& call) {
+                        if (vfoLockA_ || vfoLockB_) {
+                            statusBar()->showMessage("SUB: A<>B blocked — a VFO is LOCKED", 6000);
+                            return;
+                        }
+                        const qint64 bHz = qint64(vfoBHz_);
+                        emit routing_->swapABRequested();
+                        contestDeck_->prefillCall(call, bHz);
+                        statusBar()->showMessage(QString("SUB: %1 — A<>B swapped, work it on %2 kHz")
+                                                     .arg(call).arg(bHz / 1000.0, 0, 'f', 1), 6000);
+                    });
             // BOTH ears feed the deck; applyCwRxRouting keeps exactly
             // one enabled, following the operator's source choice.
             if (cwDec_)

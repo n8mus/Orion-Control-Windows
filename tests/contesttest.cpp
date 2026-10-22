@@ -18,7 +18,9 @@
 #include "contest/ContestDb.h"
 #include "contest/ContestDef.h"
 #include "contest/ContestEngine.h"
+#include "net/SntpCheck.h"
 #include "util/CtyLookup.h"
+#include <QXmlStreamReader>
 
 using namespace ttc;
 
@@ -855,6 +857,165 @@ static void testHistoryDb(const QString& dir) {
     CHECK(db.historyFor("N3JT").name == "JIM", "historydb: lookup");
 }
 
+// ---- 2026-10-22 robustness pieces ------------------------------------------
+static QDateTime t0() { return QDateTime(QDate(2026, 10, 24), QTime(0, 0), QTimeZone::UTC); }
+
+static void testRate() {
+    QList<QDateTime> ts;
+    for (int i = 0; i < 30; ++i) ts << t0().addSecs(i * 60);        // 30 QSOs, 1/min
+    const QDateTime now = t0().addSecs(29 * 60);
+    const RateStats r = rateStats(ts, now, 1800);
+    CHECK(r.in10Min == 11, "rate: 11 QSOs inside the last 10 min");
+    CHECK(r.in60Min == 30, "rate: all 30 inside the hour");
+    CHECK(r.last10QsoRate > 60 && r.last10QsoRate < 70, "rate: last-10 pace ~1/min");
+    CHECK(r.onSecs == 29 * 60 && r.offSecs == 0, "rate: continuous = all on-air");
+    // A 45-minute silence is off time with a 30-minute rule, on with 60.
+    QList<QDateTime> g = {t0(), t0().addSecs(600), t0().addSecs(600 + 2700)};
+    CHECK(opTimeSecs(g, 1800) == 600, "optime: 45-min gap is a break at 30 min");
+    CHECK(opTimeSecs(g, 3600) == 600 + 2700, "optime: 45-min gap is on-air at 60 min");
+    QDateTime bs;
+    QList<QDateTime> b = {t0(), t0().addSecs(3000), t0().addSecs(3500), t0().addSecs(3599),
+                          t0().addSecs(7200)};
+    CHECK(bestSixtyMinutes(b, &bs) == 4 && bs == t0(), "rate: best 60 minutes");
+    CHECK(qsosByHour(b).value(t0()) == 4, "rate: QSOs by clock hour");
+}
+
+static void testMultGrid() {
+    const QSet<QString> k = {"Z:4|20M", "Z:4|40M", "Z:14|20M", "C:Germany|20M"};
+    const QList<MultGridRow> rows = multGrid(k, true);
+    int zones = 0;
+    const MultGridRow* z4 = nullptr;
+    const MultGridRow* de = nullptr;
+    for (const MultGridRow& r : rows) {
+        if (r.kind == "Z") ++zones;
+        if (r.kind == "Z" && r.value == "4") z4 = &r;
+        if (r.kind == "C" && r.value == "Germany") de = &r;
+    }
+    CHECK(zones == 40, "mults: CQ WW grid lists all 40 zones");
+    CHECK(z4 && z4->bands == QSet<QString>({"20M", "40M"}), "mults: zone 4 on 20 and 40");
+    CHECK(de && de->bands.contains("20M") && !de->anyBand, "mults: country per band");
+    CHECK(rows.first().kind == "Z" && rows.first().value == "1", "mults: zones first, numeric");
+    const QList<MultGridRow> wpx = multGrid({"N8", "DL0"}, false);
+    CHECK(wpx.size() == 2 && wpx[0].anyBand, "mults: whole-contest keys (WPX)");
+}
+
+static void testNPlusOne() {
+    const QSet<QString> pool = {"KC8ABC", "KC8ABD", "KC8AB", "W1AW", "K1ABC"};
+    const QStringList n = nPlusOne("KC8ABC", pool);
+    CHECK(n.contains("KC8ABD") && n.contains("KC8AB") && !n.contains("KC8ABC"),
+          "n+1: substitution + deletion, never itself");
+    CHECK(!n.contains("W1AW"), "n+1: unrelated calls stay out");
+    CHECK(nPlusOne("KC", pool).isEmpty(), "n+1: too short to judge");
+}
+
+static void testLogChecks() {
+    const ContestDef* d = contestDef("CQ-WPX-CW");
+    ContestRow row;
+    row.catOp = "SINGLE-OP";
+    QList<ContestQso> q;
+    for (int i = 0; i < 4; ++i) {
+        ContestQso c;
+        c.tsUtc = t0().addSecs(i * 13 * 3600);      // 13 h apart: gaps all >= 60 min
+        c.freqHz = 14025000;
+        c.v.call = "K1ABC";
+        c.v.band = "20M";
+        c.v.mode = "CW";
+        c.v.rstR = "599";
+        c.v.serialR = "1";
+        q << c;
+    }
+    QStringList w = logChecks(*d, row, q);
+    bool dupe = false;
+    for (const QString& s : w) if (s.contains("dupe")) dupe = true;
+    CHECK(dupe, "checks: logged dupes are listed");
+    q[0].freqHz = 0;
+    q[1].v.serialR.clear();
+    w = logChecks(*d, row, q);
+    bool nf = false, hole = false;
+    for (const QString& s : w) { nf |= s.contains("no frequency"); hole |= s.contains("missing"); }
+    CHECK(nf && hole, "checks: no frequency + missing exchange");
+    // 40 h straight of QSOs every 10 min = over WPX's 36 h single-op limit.
+    QList<ContestQso> run;
+    for (int i = 0; i <= 240; ++i) {
+        ContestQso c = q[2];
+        c.tsUtc = t0().addSecs(i * 600);
+        c.v.call = QString("K%1AA").arg(i);
+        run << c;
+    }
+    w = logChecks(*d, row, run);
+    bool over = false;
+    for (const QString& s : w) over |= s.contains("over the single-op limit");
+    CHECK(over, "checks: WPX 36 h single-op limit");
+}
+
+static void testSummaryAndScore(const CtyLookup& cty) {
+    const ContestDef* d = contestDef("CQ-WW-SSB");
+    ContestContext ctx;
+    ctx.myCall = "N8EM"; ctx.myCont = "NA"; ctx.myCountry = "United States"; ctx.myCq = 4;
+    QList<ContestQso> q;
+    QList<CQsoValues> v;
+    const char* calls[] = {"DL1ABC", "JA1XYZ", "G4ABC"};
+    for (int i = 0; i < 3; ++i) {
+        ContestQso c;
+        c.tsUtc = t0().addSecs(i * 120);
+        c.freqHz = 14200000;
+        c.v.call = calls[i];
+        c.v.band = "20M"; c.v.mode = "SSB"; c.v.rstR = "59";
+        c.v.exch1 = i == 1 ? "25" : "14";
+        q << c;
+        v << c.v;
+    }
+    const ScoreBreakdown sb = computeScore(*d, v, &cty, ctx);
+    ContestRow row;
+    row.title = "CQ WW SSB 2026";
+    const QString t = summaryText(*d, row, q, sb);
+    CHECK(t.contains("20M") && t.contains("Claimed score") && t.contains("Best 60 minutes"),
+          "summary: per band, score, best hour");
+    OnlineScoreInfo me;
+    me.call = "N8EM"; me.cqZone = 4; me.ituZone = 8; me.grid = "EN83al";
+    const QString x = onlineScoreXml(*d, row, sb, me, t0());
+    QXmlStreamReader xr(x);
+    while (!xr.atEnd()) xr.readNext();
+    CHECK(!xr.hasError(), "cos: XML is well-formed");
+    CHECK(x.contains("<contest>CQ-WW-SSB</contest>") && x.contains("<call>N8EM</call>")
+              && x.contains(QString("<score>%1</score>").arg(sb.total))
+              && x.contains("<qso band=\"20\""), "cos: contest, call, score, band rows");
+}
+
+static void testSntp() {
+    // Server 1.5 s ahead of us, 40 ms round trip.
+    const qint64 t1 = 1792627200000LL;               // 2026-10-22
+    QByteArray r = SntpCheck::request(t1);
+    CHECK(r.size() == 48 && (quint8(r[0]) & 7) == 3, "sntp: client request");
+    const auto put = [&](int at, qint64 ms) {        // reuse request()'s encoder
+        const QByteArray tmp = SntpCheck::request(ms);
+        for (int i = 0; i < 8; ++i) r[at + i] = tmp[40 + i];
+    };
+    r[0] = char(0x24);                               // version 4, mode 4 (server)
+    r[1] = char(2);                                  // stratum 2
+    put(32, t1 + 20 + 1500);                         // server receive
+    put(40, t1 + 21 + 1500);                         // server transmit
+    qint64 off = 0;
+    CHECK(SntpCheck::offsetMs(r, t1, t1 + 41, &off) && std::llabs(off - 1500) <= 2,
+          "sntp: offset from the four timestamps");
+    r[1] = char(0);
+    CHECK(!SntpCheck::offsetMs(r, t1, t1 + 41, &off), "sntp: kiss-of-death refused");
+}
+
+static void testBackup(const QString& dir) {
+    ContestDb db;
+    CHECK(db.open(dir + "/bk.sqlite"), "backup: db opens");
+    ContestRow c;
+    c.defId = "CQ-WW-CW";
+    c.title = "backup test";
+    const qint64 id = db.createContest(c);
+    CHECK(db.backupTo(dir + "/copy.sqlite"), "backup: VACUUM INTO writes a copy");
+    ContestDb copy;
+    CHECK(copy.open(dir + "/copy.sqlite") && copy.contest(id).title == "backup test",
+          "backup: the copy opens with the contest in it");
+    CHECK(db.backupTo(dir + "/copy.sqlite"), "backup: overwrites its own old copy");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QTemporaryDir tmp;
@@ -893,6 +1054,13 @@ int main(int argc, char** argv) {
     testVoice();
     testNearMiss();
     testDupeScoring(cty);
+    testRate();
+    testMultGrid();
+    testNPlusOne();
+    testLogChecks();
+    testSummaryAndScore(cty);
+    testSntp();
+    testBackup(tmp.path());
 
     std::printf(fails ? "\n%d FAILURES\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

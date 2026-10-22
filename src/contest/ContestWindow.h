@@ -55,6 +55,7 @@ private:
     void editSelected();
     void deleteSelected();
     void exportCabrillo();
+    void showSummary();                      // post-contest summary dialog
     // Contest QSOs -> the everyday station log. The contest db stays
     // authoritative for the contest; the logbook copy feeds awards,
     // LoTW and the worked-before colors. Near-dupe guarded: pushing

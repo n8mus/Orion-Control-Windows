@@ -28,8 +28,11 @@ class CtyLookup;
 class CwWindow;
 class PracticeEngine;
 class QrzLookup;
+class MultWindow;
+class OnlineScore;
 class QtcDialog;
 class RotorLink;
+class SntpCheck;
 
 // The contest deck: the strip that replaces the WATERFALL while contest
 // mode is on (the operator's sketch, 2026-09-05). The spectrum above it
@@ -76,6 +79,8 @@ public:
     char classifySpot(const QString& call, qint64 hz = 0) const;
     // "CW" / "SSB" / "MIXED" — the running contest's mode category, for
     // the spot-feed mode fence. Empty when no contest is open.
+    // The second receiver (VFO B) for the SUB line: polled once a second.
+    void setVfoBSource(std::function<qint64()> hz) { vfoB_ = std::move(hz); }
     QString contestModeCategory() const {
         return def_ ? def_->modeCategory : QString();
     }
@@ -95,6 +100,10 @@ signals:
     void callParked(const QString& call, qint64 hz);
     // Spot button: send the entered call up to the cluster.
     void spotDxRequested(const QString& call, qint64 hz);
+    // SUB line: the operator found a station on VFO B and wants to work
+    // it — swap A/B so the transmitter goes there, then the call lands in
+    // the main entry.
+    void subTakeRequested(const QString& call);
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -146,6 +155,10 @@ private:
     QString modeNow() const;         // rig mode as the contest mode
     QString rstPreset() const;       // "599" CW, "59" phone
     void trace(const QString& line);
+    void backupNow(const QString& why);   // contest.db -> contest-backups/
+    void postScoreIfDue();
+    void refreshSub();
+    QString histValueFor(const HistoryRow& h, const QString& col) const;
 
     ContestDb* db_;
     const CtyLookup* cty_;
@@ -243,7 +256,27 @@ private:
     QPushButton* esmBtn_ = nullptr;      // Enter-sends-message toggle
     QPushButton* pracBtn_ = nullptr;     // PRACTICE toggle (amber when on)
     PracticeEngine* practice_ = nullptr;
+    // The drill's own throwaway log while PRACTICE is on: score line,
+    // rates, LAST QSOs and MULTS read it instead of contest.db, and it is
+    // dropped when practice ends. contest.db is never written.
+    QList<ContestQso> pracQsos_;
     QList<QShortcut*> shortcuts_;
+    // Robustness pieces (2026-10-22): mult grid, timed backups, clock
+    // check, online score, the SUB (VFO B) line.
+    MultWindow* multWin_ = nullptr;
+    QTimer backupTimer_;
+    SntpCheck* sntp_ = nullptr;
+    QTimer sntpTimer_;
+    qint64 clockOffMs_ = 0;
+    bool clockKnown_ = false;
+    OnlineScore* cos_ = nullptr;
+    QPushButton* cosBtn_ = nullptr;
+    QTimer cosTimer_;
+    qint64 cosLastTotal_ = -1;
+    int cosLastQsos_ = -1;
+    std::function<qint64()> vfoB_;
+    QLineEdit* subCall_ = nullptr;
+    QLabel* subInfo_ = nullptr;
     QTimer clockTimer_;
 };
 

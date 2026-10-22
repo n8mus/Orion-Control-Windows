@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/ContestWindow.h"
+#include <QFont>
+#include <QDialog>
+#include <QPlainTextEdit>
+#include <QClipboard>
+#include <QApplication>
 
 #include <QCloseEvent>
 #include <QComboBox>
@@ -83,7 +88,7 @@ void ContestWindow::buildUi() {
         h->addWidget(sentExchEdit_);
         h->addWidget(new QLabel("location:", this));
         locationEdit_ = new QLineEdit(
-            QSettings().value("contest/location", "MI").toString(), this);
+            QSettings().value("contest/location", "").toString(), this);
         locationEdit_->setFixedWidth(50);
         locationEdit_->setToolTip(
             "Cabrillo LOCATION: (ARRL section / state)");
@@ -214,6 +219,11 @@ void ContestWindow::buildUi() {
         connect(pushBtn, &QPushButton::clicked, this,
                 [this] { pushToLogbook(); });
         h->addWidget(pushBtn);
+        auto* sumBtn = new QPushButton("Summary…", this);
+        sumBtn->setToolTip("Post-contest summary: QSOs/points/mults by band, on-air "
+                           "time, best hour, QSOs by hour — copy it into the soapbox");
+        connect(sumBtn, &QPushButton::clicked, this, [this] { showSummary(); });
+        h->addWidget(sumBtn);
         auto* cabBtn = new QPushButton("Cabrillo…", this);
         connect(cabBtn, &QPushButton::clicked, this,
                 [this] { exportCabrillo(); });
@@ -513,6 +523,31 @@ void ContestWindow::deleteSelected() {
     status_->setText(QString("deleted %1").arg(call));
 }
 
+void ContestWindow::showSummary() {
+    if (contestId_ < 0 || !def_) return;
+    const QList<CQsoValues> vals = db_->qsoValues(contestId_);
+    const int qtcN = def_->hasQtc ? db_->qtcCount(contestId_) : 0;
+    const ScoreBreakdown sb = computeScore(*def_, vals, cty_, ctx_, qtcN);
+    QString text = summaryText(*def_, row_, qsos_, sb);
+    const QStringList w = logChecks(*def_, row_, qsos_);
+    if (!w.isEmpty()) text += "\nLog checks:\n  • " + w.join("\n  • ") + "\n";
+    auto* d = new QDialog(this);
+    d->setAttribute(Qt::WA_DeleteOnClose);
+    d->setWindowTitle("Contest summary — " + row_.title);
+    auto* lay = new QVBoxLayout(d);
+    auto* ed = new QPlainTextEdit(text, d);
+    ed->setReadOnly(true);
+    ed->setFont(QFont("DejaVu Sans Mono"));
+    ed->setMinimumSize(560, 480);
+    lay->addWidget(ed);
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Close, d);
+    auto* copy = bb->addButton("Copy", QDialogButtonBox::ActionRole);
+    connect(copy, &QPushButton::clicked, d, [text] { QApplication::clipboard()->setText(text); });
+    connect(bb, &QDialogButtonBox::rejected, d, &QDialog::close);
+    lay->addWidget(bb);
+    d->show();
+}
+
 void ContestWindow::exportCabrillo() {
     if (contestId_ < 0 || !def_) return;
     // A contest that sends a fixed exchange token (age, zone, section)
@@ -532,11 +567,25 @@ void ContestWindow::exportCabrillo() {
         if (openExchEdit_) openExchEdit_->setFocus();
         return;
     }
+    // Plain-language log checks first (holes, no frequency, future
+    // timestamps, single-op time over the limit, multi-single band
+    // changes). Warnings only — the operator decides.
+    {
+        const QStringList w = logChecks(*def_, row_, qsos_);
+        if (!w.isEmpty()) {
+            const auto b = QMessageBox::question(
+                this, "Log checks",
+                "Before the Cabrillo goes out:\n\n• " + w.join("\n• ")
+                    + "\n\nWrite the Cabrillo anyway?",
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+            if (b != QMessageBox::Yes) return;
+        }
+    }
     CabrilloStation st;
     QSettings s;
     st.call = s.value("station/callsign", "").toString().toUpper();
     st.gridLocator = s.value("station/grid", "").toString();
-    st.location = s.value("contest/location", "MI").toString();
+    st.location = s.value("contest/location", "").toString();
     st.name = s.value("contest/opname").toString();
     st.address = s.value("contest/address").toString();
     // Sponsors' log robots require an EMAIL: header (All Asian rejects

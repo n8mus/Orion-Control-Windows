@@ -68,6 +68,9 @@ public:
     bool   deleteQso(qint64 id);
     QList<ContestQso> qsos(qint64 contestId) const; // oldest first
     QList<CQsoValues> qsoValues(qint64 contestId) const;
+    // A consistent copy of the whole file (SQLite VACUUM INTO) — the
+    // deck's 15-minute contest backup. False if the copy failed.
+    bool backupTo(const QString& path) const;
 
     // Call history (one shared table — CWops membership, NAQP names…).
     // Import upserts by call inside one transaction; returns rows landed

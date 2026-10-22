@@ -107,6 +107,12 @@ struct ContestDef {
     // WAE: QTC traffic exists (sending side; each reported QSO is one
     // point, limits enforced by the QTC engine).
     bool hasQtc = false;
+
+    // Single-op time limits (0 = none): hours on the air allowed, and the
+    // shortest silence that counts as an off period. WPX 36 h / 60 min,
+    // NAQP 10 h / 30 min, Sweepstakes 24 h / 30 min, WAE 36 h / 60 min.
+    int maxOpHours = 0;
+    int minOffMinutes = 0;
 };
 
 // The registry. Order is the picker order.

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/ContestDb.h"
 
+#include <QFile>
+
 #include <QDir>
 #include <QFileInfo>
 #include <QSettings>
@@ -489,6 +491,15 @@ int ContestDb::historyCount() const {
     if (q.exec("SELECT COUNT(*) FROM callhistory") && q.next())
         return q.value(0).toInt();
     return 0;
+}
+
+bool ContestDb::backupTo(const QString& path) const {
+    if (!isOpen()) return false;
+    QFile::remove(path);                 // VACUUM INTO refuses an existing file
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("VACUUM INTO :p");
+    q.bindValue(":p", path);
+    return q.exec();
 }
 
 } // namespace ttc

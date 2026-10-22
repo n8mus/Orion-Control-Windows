@@ -244,6 +244,8 @@ ContestDef makeWpx(bool cw) {
                          {3, "Exch|{SNT} {SENTNR}"},
                      })
                    : withOverrides(kBaseRun, kVoiceRun);
+    d.maxOpHours = 36;          // CQ WPX single-op: 36 of 48 h, off periods 60 min+
+    d.minOffMinutes = 60;
     return d;
 }
 
@@ -315,6 +317,8 @@ ContestDef makeSs(bool cw) {
                          {3, "Exch|{SENTNR} {EXCH}"},
                      })
                    : withOverrides(kBaseRun, kVoiceRun);
+    d.maxOpHours = 24;          // Sweepstakes: 24 of 30 h, off periods 30 min+
+    d.minOffMinutes = 30;
     return d;
 }
 
@@ -418,6 +422,8 @@ ContestDef makeNaqp(bool cw) {
                          {8, "NAME?|name?"},
                      })
                    : withOverrides(kBaseRun, kVoiceRun);
+    d.maxOpHours = 10;          // NAQP single-op: 10 of 12 h, off periods 30 min+
+    d.minOffMinutes = 30;
     return d;
 }
 
@@ -658,6 +664,8 @@ ContestDef makeWaeCw() {
         {8, "QSL|qsl"},
         {11, "Serial|{SENTNR}"},
     });
+    d.maxOpHours = 36;          // WAE single-op: 36 of 48 h, breaks 60 min+
+    d.minOffMinutes = 60;
     return d;
 }
 

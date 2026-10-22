@@ -9,6 +9,7 @@
 #include "contest/ContestDef.h"
 
 #include <QDateTime>
+#include <QMap>
 
 namespace ttc {
 
@@ -84,6 +85,61 @@ QList<qint64> allocateQtc(const QList<ContestQso>& qsos,
 // no QSO and no QTC is a break; everything else counts as operating.
 // events = QSO + QTC-confirm timestamps, any order.
 int opTimeSecs(QList<QDateTime> events);
+// The same with any break length (a gap >= breakSecs is off time).
+int opTimeSecs(QList<QDateTime> events, int breakSecs);
+
+// ---- Rate ----------------------------------------------------------------
+struct RateStats {
+    int in10Min = 0, in60Min = 0;    // QSOs logged in the last 10 / 60 min
+    int last10QsoRate = 0;           // /h pace of the last 10 QSOs (to now)
+    int last100QsoRate = 0;          // /h pace of the last 100 QSOs (to now)
+    int onSecs = 0;                  // on-air time (gaps >= breakSecs = off)
+    int offSecs = 0;                 // first QSO -> now, minus onSecs
+};
+RateStats rateStats(QList<QDateTime> ts, const QDateTime& now, int breakSecs);
+
+// QSOs per clock hour (UTC, keyed on the hour's start), and the best
+// sliding 60 minutes (count + where it started).
+QMap<QDateTime, int> qsosByHour(const QList<QDateTime>& ts);
+int bestSixtyMinutes(QList<QDateTime> ts, QDateTime* startOut = nullptr);
+
+// ---- Multiplier grid -----------------------------------------------------
+// The worked mult keys laid out as rows (one per mult value) x bands. Keys
+// are "KIND:VALUE|BAND" (CQ WW "Z:4|20M"), "VALUE|BAND", or a whole-
+// contest "VALUE" (WPX prefixes: anyBand). allCqZones adds zones 1-40 as
+// rows even when unworked, so the holes show.
+struct MultGridRow {
+    QString kind, value;             // "Z", "4"
+    QSet<QString> bands;             // where it is worked
+    bool anyBand = false;            // whole-contest mult, worked
+};
+QList<MultGridRow> multGrid(const QSet<QString>& multKeys, bool allCqZones);
+
+// ---- N+1 -----------------------------------------------------------------
+// Calls one edit away from what was typed (KC8ABC vs KC8ABD), from the
+// super-check pool + this log — the busted call caught at entry. The exact
+// call itself is never listed.
+QStringList nPlusOne(const QString& call, const QSet<QString>& pool, int max = 6);
+
+// ---- Log checks (Cabrillo time) ------------------------------------------
+// Plain-language warnings, never blocks: QSOs with no frequency or a
+// missing required exchange field, logged dupes, single-op on-air time
+// over the contest's limit, and multi-single band changes inside 10 min.
+QStringList logChecks(const ContestDef& def, const ContestRow& row,
+                      const QList<ContestQso>& qsos);
+
+// ---- Post-contest summary ------------------------------------------------
+QString summaryText(const ContestDef& def, const ContestRow& row,
+                    const QList<ContestQso>& qsos, const ScoreBreakdown& sb);
+
+// ---- Online score (contestonlinescore.com "dynamicresults" XML) ----------
+struct OnlineScoreInfo {
+    QString call, grid, location, club, softVersion;
+    int cqZone = 0, ituZone = 0;
+};
+QString onlineScoreXml(const ContestDef& def, const ContestRow& row,
+                       const ScoreBreakdown& sb, const OnlineScoreInfo& me,
+                       const QDateTime& nowUtc);
 
 // Would this call be a dupe against the worked list, under the def's
 // scope? band/mode are the CURRENT rig state.
