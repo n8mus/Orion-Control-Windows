@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QVector>
 
@@ -82,7 +83,17 @@ private:
               const QString& spotter, const QString& comment, qint64 atSecs);
 
     QTcpSocket sock_;
-    QTimer     reconnect_;                       // retry while enabled
+    QTimer     reconnect_;
+    // Reconnect backoff (2026-10-23): 15 s, 30 s, 1, 2, 5 min, then every
+    // 10 min while the node keeps refusing; back to 15 s once a connection
+    // has held for 2 minutes. A fixed 15 s retry knocked 240 times an hour
+    // on a node that had kicked the login — how a call gets blocked.
+    int retryStep_ = 0;
+    QElapsedTimer upSince_;
+    void scheduleReconnect();
+public:
+    static int retryDelayMs(int step);
+private:                       // retry while enabled
     QTimer     pruneTimer_;
     QTimer     loginFallback_;                   // send login even w/o a prompt
     QString    host_  = "dxc.ve7cc.net";

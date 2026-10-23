@@ -55,17 +55,18 @@ SpotClient::~SpotClient() {
 SpotClient::SpotClient(QObject* parent) : QObject(parent) {
     connect(&sock_, &QTcpSocket::readyRead, this, &SpotClient::onData);
     connect(&sock_, &QTcpSocket::connected, this, [this] {
+        upSince_.start();
         loginSent_ = false;
         loginFallback_.start(3000);              // some nodes never say "login:"
         emit statusChanged(QString("spots: connected to %1").arg(host_));
     });
     connect(&sock_, &QTcpSocket::disconnected, this, [this] {
-        if (enabled_) reconnect_.start(15000);
         emit statusChanged("spots: disconnected");
+        scheduleReconnect();
     });
     connect(&sock_, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
-        if (enabled_) reconnect_.start(15000);
         emit statusChanged("spots: " + sock_.errorString());
+        scheduleReconnect();
     });
     reconnect_.setSingleShot(true);
     connect(&reconnect_, &QTimer::timeout, this, [this] {
@@ -83,7 +84,24 @@ SpotClient::SpotClient(QObject* parent) : QObject(parent) {
     connect(&pruneTimer_, &QTimer::timeout, this, &SpotClient::prune);
 }
 
+int SpotClient::retryDelayMs(int step) {
+    static const int kDelays[] = {15000, 30000, 60000, 120000, 300000, 600000};
+    constexpr int n = int(sizeof(kDelays) / sizeof(kDelays[0]));
+    return kDelays[step < 0 ? 0 : step >= n ? n - 1 : step];
+}
+
+void SpotClient::scheduleReconnect() {
+    if (!enabled_ || reconnect_.isActive()) return;   // error + disconnected = one retry
+    if (upSince_.isValid() && upSince_.elapsed() >= 120000) retryStep_ = 0;   // it held: quick again
+    upSince_.invalidate();
+    const int ms = retryDelayMs(retryStep_++);
+    reconnect_.start(ms);
+    emit statusChanged(QString("spots: retry in %1").arg(ms >= 60000 ? QString("%1 min").arg(ms / 60000)
+                                                                    : QString("%1 s").arg(ms / 1000)));
+}
+
 void SpotClient::configure(const QString& host, quint16 port, const QString& login) {
+    if (host != host_ || port != port_) retryStep_ = 0;   // a new node starts fresh
     host_  = host;
     port_  = port;
     login_ = login;
@@ -93,6 +111,7 @@ void SpotClient::setEnabled(bool on) {
     if (on == enabled_) return;
     enabled_ = on;
     if (on) {
+        retryStep_ = 0;                      // the operator's own switch-on retries quickly
         openSocket();
         pruneTimer_.start();
     } else {
