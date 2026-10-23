@@ -14,6 +14,7 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
@@ -282,10 +283,14 @@ void ContestDeck::buildUi() {
         // never belong between the name and RUN, crowding the width).
         auto* hdr = new QHBoxLayout;
         title_ = new QLabel("no contest open", this);
+        // Variable text in the narrow middle column must never widen the
+        // window (live-found 2026-10-22: PRAC pushed it onto the next
+        // monitor) — these labels clip instead.
+        title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         QFont bf = title_->font();
         bf.setBold(true);
         title_->setFont(bf);
-        hdr->addWidget(title_);
+        hdr->addWidget(title_, 1);
         hdr->addStretch(1);
         clock_ = new QLabel("--:--:--z", this);
         hdr->addWidget(clock_);
@@ -414,6 +419,7 @@ void ContestDeck::buildUi() {
         wpm_->setToolTip("PgUp/PgDn from anywhere in the deck");
         connect(wpm_, &QSpinBox::valueChanged, this, [this](int v) {
             if (cw_) cw_->setSpeedWpm(v);
+            if (practice_) practice_->setWpm(v);   // callers follow the box
         });
         hdr->addWidget(wpm_);
         mid->addLayout(hdr);
@@ -421,6 +427,7 @@ void ContestDeck::buildUi() {
         // Score / rate on its own line under the contest name.
         score_ = new QLabel(this);
         score_->setStyleSheet("color:#8798a8;");
+        score_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         mid->addWidget(score_);
 
         // SUPER CHECK: one match line, DIRECTLY above the call box (the
@@ -451,11 +458,21 @@ void ContestDeck::buildUi() {
         call_->setObjectName("entryCall");
         QFont cf = call_->font();
         cf.setPointSize(cf.pointSize() + 3);   // big but condensed
+        cf.setFamily("DejaVu Sans Mono");      // dotted zero: 0 vs O (operator, 2026-10-22)
         call_->setFont(cf);
         call_->setMaxLength(14);
         call_->setMinimumWidth(120);
         call_->setMaximumWidth(150);
         call_->installEventFilter(this);
+        // N1MM's Entry window: ✓ at the right end of the call box on an
+        // exact match in the check sources (master.scp / this log / call
+        // history), ? when nothing matches, and the call text colored by
+        // what it is worth (red mult, blue new, gray dupe).
+        callMark_ = new QLabel(call_);
+        callMark_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        callMark_->setAlignment(Qt::AlignCenter);
+        callMark_->setStyleSheet("background:transparent; font-weight:bold;");
+        call_->setTextMargins(0, 0, 16, 0);
         connect(call_, &QLineEdit::textEdited, this, [this] {
             callFromSpot_ = false;   // typing reclaims ←/→ for the cursor
             confirmPending_.clear(); // an edit restarts the double-check
@@ -511,7 +528,8 @@ void ContestDeck::buildUi() {
         st->addWidget(dupe_);
         info_ = new QLabel(this);
         info_->setStyleSheet("color:#8798a8;");
-        st->addWidget(info_);
+        info_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        st->addWidget(info_, 1);
         st->addStretch(1);
         hint_ = new QLabel(this);
         hint_->setStyleSheet("color:#7ee2a8;");
@@ -534,6 +552,7 @@ void ContestDeck::buildUi() {
         subCall_->setMaxLength(14);
         subCall_->setFixedWidth(120);
         subCall_->setPlaceholderText("call on VFO B");
+        subCall_->setFont(QFont("DejaVu Sans Mono", subCall_->font().pointSize()));
         connect(subCall_, &QLineEdit::textEdited, this, [this] {
             const int pos = subCall_->cursorPosition();
             const QSignalBlocker b(subCall_);
@@ -644,6 +663,20 @@ void ContestDeck::buildUi() {
         lastLog_->setColumnWidth(1, 84);
         lastLog_->setColumnWidth(2, 70);
         lastLog_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        // Right-click a row: delete that QSO, one confirm (the manager
+        // window is too slow mid-contest — operator, 2026-10-22).
+        lastLog_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(lastLog_, &QTableWidget::customContextMenuRequested, this,
+                [this](const QPoint& p) {
+                    auto* it = lastLog_->itemAt(p);
+                    if (!it) return;
+                    const int row = it->row();
+                    auto* c = lastLog_->item(row, 1);
+                    QMenu m(this);
+                    QAction* del = m.addAction("Delete " + (c ? c->text() : QString()));
+                    if (m.exec(lastLog_->viewport()->mapToGlobal(p)) == del)
+                        deleteQsoAt(row);
+                });
         lastLog_->setFocusPolicy(Qt::NoFocus);
         lastLog_->setSelectionMode(QAbstractItemView::NoSelection);
         {
@@ -752,6 +785,10 @@ void ContestDeck::buildUi() {
     // (No Esc QShortcut here — it competed with an app-level Escape and
     // the ambiguity swallowed plain Esc. The entry event filter claims
     // Esc via ShortcutOverride instead, so it always reaches us.)
+    // Ctrl+D: delete the newest QSO (N1MM's key) — the one chord, for a
+    // rare deliberate act; one confirm (operator, 2026-10-22: opening the
+    // manager to drop a bad call mid-contest is far too slow).
+    sc(QKeySequence(Qt::CTRL | Qt::Key_D), [this] { deleteQsoAt(0); });
     sc(QKeySequence(Qt::Key_PageUp),
        [this] { wpm_->setValue(wpm_->value() + 1); });
     sc(QKeySequence(Qt::Key_PageDown),
@@ -762,15 +799,22 @@ void ContestDeck::buildUi() {
     // forces its full text width into the layout minimum. The entry
     // boxes, F-keys and spinboxes keep their real minimums (those are
     // the legitimate floor); only the prose labels stop dragging width.
-    // Maximum: the text width is a CEILING (won't grab extra space and
-    // misalign the row) and minimumWidth 0 drops the layout floor, so a
-    // long label clips instead of forcing the deck wider.
+    // Captions keep Maximum (text width as a ceiling, rows stay aligned).
+    // The PROSE labels — status, score, title, info, hints — are Ignored,
+    // set where they are built: Maximum still carries the full text as
+    // the layout floor (Qt's qSmartMinSize uses minimumSizeHint for any
+    // Shrink policy; minimumWidth(0) means "use the hint"), which is how
+    // a long practice verdict pushed the window onto the next monitor
+    // (live-found 2026-10-22). Only Ignored drops the floor.
     for (QLabel* l : findChildren<QLabel*>()) {
         auto sp = l->sizePolicy();
+        if (sp.horizontalPolicy() == QSizePolicy::Ignored) continue;
         sp.setHorizontalPolicy(QSizePolicy::Maximum);
         l->setSizePolicy(sp);
         l->setMinimumWidth(0);
     }
+    for (QLabel* l : {hint_, sent_, dupe_, frameLbl_, hdgSrcLbl_})
+        if (l) l->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     setEnabled(false);
 }
 
@@ -1141,6 +1185,7 @@ void ContestDeck::enterPressed() {
     const QString c = call_->text().trimmed();
     in.callEmpty = c.isEmpty();
     in.callLoggable = loggableCall(c);
+    in.callPartial = c.contains('?');
     in.exchComplete = true;
     for (int i = 0; i < def_->fields.size(); ++i)
         if (def_->fields[i].required
@@ -1183,6 +1228,15 @@ void ContestDeck::enterPressed() {
                                 "a digit");
     }
     execPlan(plan, false);
+    // "W1A?" went out: drop the '?' and leave the cursor at the end so
+    // the rest of the call is typed straight in (operator, 2026-10-22).
+    if (in.callPartial && in.run && !in.callEmpty) {
+        QString kept = c;
+        kept.remove('?');
+        call_->setText(kept);
+        call_->setCursorPosition(kept.size());
+        onCallEdited();
+    }
     updateEsmHint();
 }
 
@@ -1285,6 +1339,7 @@ void ContestDeck::updateEsmHint() {
     const QString c = call_->text().trimmed();
     in.callEmpty = c.isEmpty();
     in.callLoggable = loggableCall(c);
+    in.callPartial = c.contains('?');
     in.exchComplete = true;
     for (int i = 0; i < def_->fields.size(); ++i)
         if (def_->fields[i].required
@@ -1373,9 +1428,15 @@ bool ContestDeck::practiceOn() const {
 }
 
 void ContestDeck::setPractice(bool on) {
+    // AUTO CQ never crosses the practice boundary in either direction:
+    // left running across PRAC-off it fired F1 into the REAL keyer every
+    // 15 s (live-found 2026-10-22 — the radio transmitted CQ on its own).
+    autoCqTimer_.stop();
+    if (autoBtn_ && autoBtn_->isChecked()) autoBtn_->setChecked(false);
     if (!on) {
         const bool was = practiceOn();
         if (practice_) practice_->stop();
+        if (cw_) cw_->stopKeying();          // and nothing in flight carries over
         pracQsos_.clear();
         if (pracBtn_ && pracBtn_->isChecked()) pracBtn_->setChecked(false);
         title_->setStyleSheet(QString());
@@ -1407,10 +1468,10 @@ void ContestDeck::setPractice(bool on) {
     // first time), not the keyer speed — coming in at contest wpm cold
     // was too much (live-found). It adapts from there and the last
     // speed carries into the next session.
-    practice_->start(def_, cty_, pool,
-                     QSettings().value("contest/practiceWpm", 20).toInt());
+    practice_->start(def_, cty_, pool, wpm_ ? wpm_->value() : 25);   // his speed
     // ISOLATION GUARANTEE #4: the mode is unmissable while it's on.
-    title_->setText(row_.title + "  ·  PRACTICE — NOT ON AIR");
+    // The lit PRAC button is the only indicator: a title suffix widened
+    // the window onto the next monitor (live-found 2026-10-22).
     title_->setStyleSheet("color:#e0b050;");
     pracQsos_.clear();
     refreshAll();                    // the score line starts the drill at zero
@@ -1439,14 +1500,13 @@ void ContestDeck::practiceVerdict() {
     const int pct = r.qsos ? r.good * 100 / r.qsos : 0;
     const QString line =
         r.allGood
-            ? QString("GOOD COPY %1 · %2 Q · %3% · streak %4 · next %5 wpm")
-                  .arg(r.call).arg(r.qsos).arg(pct).arg(r.streak).arg(r.wpm)
-            : QString("BUSTED %1 — %2 · %3% · next %4 wpm")
-                  .arg(r.call, r.misses.join("; ")).arg(pct).arg(r.wpm);
+            ? QString("GOOD COPY %1 · %2 Q · %3% · streak %4")
+                  .arg(r.call).arg(r.qsos).arg(pct).arg(r.streak)
+            : QString("BUSTED %1 — %2 · %3%")
+                  .arg(r.call, r.misses.join("; ")).arg(pct);
     status_->setText((r.allGood ? "✓ " : "✗ ") + line);
     appendRead((r.allGood ? "\n== ✓ " : "\n== ✗ ") + line + " ==\n");
     trace("PRAC " + line);
-    QSettings().setValue("contest/practiceWpm", r.wpm);   // resume here
     wipe();                          // same silent reset as a real log
     refreshAll();                    // score / rate / MULTS follow the drill
 }
@@ -1649,6 +1709,8 @@ void ContestDeck::onCallEdited() {
     if (qtc_) qtc_->followCall(c);     // QTC To box rides the entry
     refreshScp();
     if (c.isEmpty()) {
+        setCallMark({}, {});
+        call_->setStyleSheet(QString());
         dupe_->clear();
         info_->clear();
         updateHeading();
@@ -1828,10 +1890,20 @@ void ContestDeck::refreshScp() {
         delete it;
     }
     const QString p = call_->text().trimmed().toUpper();
-    if (p.size() < 2 || contestId_ < 0) return;
+    if (p.size() < 2 || contestId_ < 0) { setCallMark({}, {}); return; }
     // master.scp + everything already in this contest's log.
     QSet<QString> pool = scp_;
     for (const CQsoValues& v : values_) pool.insert(v.call);
+    {   // the mark: exact match in master / log / call history, else ?
+        const bool hit = pool.contains(p) || !db_->historyFor(p).call.isEmpty();
+        const char cls = classifySpot(p);
+        const QString color = cls == 'M' ? "#ff5252" : cls == 'W' ? "#6c7a88"
+                            : cls == 'Z' ? "#4a4a4a" : "#5db2f0";
+        if (hit) setCallMark("✓", color);
+        else if (p.size() >= 3 && !p.contains('?')) setCallMark("?", "#e0b050");
+        else setCallMark({}, {});
+        call_->setStyleSheet(QString("QLineEdit { color:%1; }").arg(color));
+    }
     const QStringList m = scpMatches(p, pool, 12);
     auto* h = static_cast<QHBoxLayout*>(l);
     for (const QString& c : m) {
@@ -1876,12 +1948,6 @@ void ContestDeck::refreshScp() {
             h->addWidget(b);
         }
     }
-    if (pool.contains(p)) {
-        auto* ok = new QLabel("✓", scpRow_);
-        ok->setStyleSheet("color:#3fb46a; font-weight:bold;");
-        ok->setToolTip("exact match in master.scp / log");
-        h->addWidget(ok);
-    }
     h->addStretch(1);
 }
 
@@ -1911,22 +1977,20 @@ void ContestDeck::refreshAll() {
     // time) against the single-op limit where the rules have one.
     const int breakSecs = (def_->minOffMinutes > 0 ? def_->minOffMinutes : 30) * 60;
     const RateStats r = rateStats(ts, now, breakSecs);
+    (void)pts60;
     QString s =
-        QString("· %1 Q · %2 pts · %3 mult · %4 · 10q %5/h · 10m %6/h"
-                " · 60m %7 · %8 pt/h")
+        QString("%1 Q · %2 pts · %3 mult · %4 · rate %5/h · 60m %6")
             .arg(sb_.qsos)
             .arg(sb_.points)
             .arg(sb_.weightedMults)
             .arg(QLocale::c().toString(qlonglong(sb_.total)))
-            .arg(r.last10QsoRate)
             .arg(r.in10Min * 6)
-            .arg(r.in60Min)
-            .arg(pts60);
+            .arg(r.in60Min);
     if (!def_->hasQtc && !ts.isEmpty()) {
         s += QString(" · on %1:%2").arg(r.onSecs / 3600)
                  .arg((r.onSecs % 3600) / 60, 2, 10, QChar('0'));
         if (def_->maxOpHours > 0 && row_.catOp.startsWith(QLatin1String("SINGLE")))
-            s += QString(" of %1h").arg(def_->maxOpHours);
+            s += QString("/%1h").arg(def_->maxOpHours);
     }
     if (multWin_)
         multWin_->setData(def_->title, sb_.multKeys,
@@ -1947,6 +2011,7 @@ void ContestDeck::refreshAll() {
                 lastLog_->setItem(i, col, it);
             };
             put(0, q.tsUtc.toString("HHmm"));
+            lastLog_->item(i, 0)->setData(Qt::UserRole, i);   // newest-first index
             put(1, q.v.call);
             put(2, ex.join(' '));
             put(3, QString::number(q.points));
@@ -1983,6 +2048,27 @@ void ContestDeck::stopEverything() {
 }
 
 bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
+    // Tab / Shift+Tab loop CALL <-> the received-exchange fields only
+    // (N1MM's order): Qt's own chain put SNT between them, so Shift+Tab
+    // from the exchange never reached the call (operator, 2026-10-22).
+    if (ev->type() == QEvent::KeyPress && !edits_.isEmpty()) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        const bool tab = ke->key() == Qt::Key_Tab;
+        const bool back = ke->key() == Qt::Key_Backtab;
+        if (tab || back) {
+            int at = -1;
+            for (int i = 0; i < edits_.size(); ++i)
+                if (edits_[i].second == obj) at = i;
+            if (obj == call_) {
+                (tab ? edits_.first() : edits_.last()).second->setFocus();
+                return true;
+            }
+            if (at >= 0 && ((tab && at == edits_.size() - 1) || (back && at == 0))) {
+                call_->setFocus();
+                return true;
+            }
+        }
+    }
     if (ev->type() == QEvent::Close) {
         // A closing float returns its pane to the deck.
         for (auto it = panes_.begin(); it != panes_.end(); ++it)
@@ -2017,6 +2103,8 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
             return true;
         }
     }
+    if (obj == call_ && ev->type() == QEvent::Resize && callMark_)
+        callMark_->setGeometry(call_->width() - 17, 0, 16, call_->height());
     if (obj == call_ && ev->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         if (ke->key() == Qt::Key_Space) {
@@ -2130,6 +2218,45 @@ void ContestDeck::refreshSub() {
     }
     subInfo_->setStyleSheet("color:" + color + ";");
     subInfo_->setText(line);
+}
+
+void ContestDeck::deleteQsoAt(int idx) {
+    if (contestId_ < 0 || idx < 0 || idx >= qsos_.size()) return;
+    const ContestQso& q = qsos_[qsos_.size() - 1 - idx];
+    if (!practiceOn() && db_->qsoReported(q.id)) {
+        status_->setText("⚠ " + q.v.call + " went out in a QTC — cannot delete");
+        return;
+    }
+    if (QMessageBox::question(this, "Delete QSO",
+                              QString("Delete %1 (%2 %3) from the log?")
+                                  .arg(q.v.call, q.tsUtc.toString("HHmm"), q.v.band),
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes)
+        != QMessageBox::Yes) {
+        call_->setFocus();
+        return;
+    }
+    const QString call = q.v.call;
+    if (practiceOn()) {
+        pracQsos_.removeAt(pracQsos_.size() - 1 - idx);
+        refreshAll();
+    } else if (!db_->deleteQso(q.id)) {      // db's changed() refreshes the deck
+        status_->setText("⚠ delete refused (database)");
+        call_->setFocus();
+        return;
+    }
+    trace(QString("DECK DELETE %1").arg(call));
+    status_->setText("deleted " + call);
+    call_->setFocus();
+}
+
+void ContestDeck::setCallMark(const QString& mark, const QString& color) {
+    if (!callMark_) return;
+    callMark_->setText(mark);
+    callMark_->setStyleSheet(QString("background:transparent; font-weight:bold; color:%1;")
+                                 .arg(color.isEmpty() ? QStringLiteral("#8798a8") : color));
+    callMark_->setToolTip(mark == QLatin1String("✓") ? QStringLiteral("in master.scp / log / call history")
+                        : mark == QLatin1String("?") ? QStringLiteral("not in master.scp, the log or call history")
+                                                     : QString());
 }
 
 } // namespace ttc

@@ -103,7 +103,7 @@ static void testProtocolAndVerify() {
     CHECK(v.call == call1, "verify: the call is revealed post-log");
     CHECK(v.qsos == 1 && v.good == 1 && v.streak == 1,
           "verify: counters advance");
-    CHECK(v.wpm == 26, "adapt: clean copy speeds the next caller up");
+    CHECK(v.wpm == 25, "speed: callers stay at the operator's 25 wpm after a clean copy");
 
     // TU closes; the next caller shows up on its own (single-calls flow).
     p.opKeyed("TU N8EM", 25);
@@ -112,7 +112,7 @@ static void testProtocolAndVerify() {
     const QString call2 = p.truthCall();
     CHECK(call2 != call1, "protocol: a different station calls");
 
-    // Busted copy: wrong serial. Speed backs off from 26 to 24.
+    // Busted copy: wrong serial. Speed stays the operator's.
     p.opKeyed(call2 + " 2 JON", 25);
     run(p, 25000);
     CQsoValues bust = p.truthValues();
@@ -123,7 +123,7 @@ static void testProtocolAndVerify() {
     CHECK(!v.misses.isEmpty() && v.misses.first().contains("sent"),
           "verify: miss names the truth");
     CHECK(v.streak == 0, "verify: a bust resets the streak");
-    CHECK(v.wpm == 24, "adapt: a bust slows the next caller down");
+    CHECK(v.wpm == 25, "speed: a bust does not change the caller speed");
 
     // Cut-number typing: T/N unroll when comparing ("1TT" == "100").
     p.opKeyed("TU", 25);
@@ -193,7 +193,7 @@ static void testAdaptClamp() {
     PracticeEngine p;
     p.setAudioEnabled(false);
     p.start(contestDef("CW-OPS"), nullptr, {"N5OT", "K4RUM"}, 13, 3);
-    // Hammer busts: wpm must floor at 12, never below.
+    // Started at 13 but the op keys at 25: callers follow the op, busts or not.
     for (int i = 0; i < 4; ++i) {
         p.opKeyed("CQ", 25);
         run(p, 20000);
@@ -204,7 +204,7 @@ static void testAdaptClamp() {
         p.opKeyed("TU", 25);
         run(p, 15000);
     }
-    CHECK(p.callerWpm() == 12, "adapt: floor clamps at 12 wpm");
+    CHECK(p.callerWpm() == 25, "speed: callers follow the operator's keying speed");
 }
 
 int main(int argc, char** argv) {

@@ -156,6 +156,10 @@ private:
     QString rstPreset() const;       // "599" CW, "59" phone
     void trace(const QString& line);
     void backupNow(const QString& why);   // contest.db -> contest-backups/
+    // Delete a logged QSO from the deck (right-click a LAST QSOs row, or
+    // Ctrl+D for the newest) — one confirm, no manager window. In
+    // practice it removes from the drill's own list.
+    void deleteQsoAt(int newestFirstIdx);
     void postScoreIfDue();
     void refreshSub();
     QString histValueFor(const HistoryRow& h, const QString& col) const;
@@ -235,6 +239,8 @@ private:
     qint64 anchorHz_ = 0;
     QSpinBox* wpm_ = nullptr;
     QLineEdit* call_ = nullptr;
+    QLabel* callMark_ = nullptr;         // N1MM's ✓ / ? at the call box's right end
+    void setCallMark(const QString& mark, const QString& color);
     QLineEdit* rstS_ = nullptr;
     QLabel* sentNr_ = nullptr;
     QWidget* fieldsBox_ = nullptr;

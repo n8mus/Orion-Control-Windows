@@ -39,7 +39,7 @@ QString normalizeForCty(const QString& call) {
 
 bool loggableCall(const QString& call) {
     const QString c = call.trimmed();
-    if (c.size() < 3) return false;
+    if (c.size() < 3 || c.contains('?')) return false;   // "W1A?" is a fill request
     bool letter = false, digit = false;
     for (QChar ch : c) {
         if (ch.isLetter()) letter = true;
@@ -264,6 +264,10 @@ QList<EsmAct> esmPlan(const EsmInput& in) {
     }
     if (in.run) {
         if (in.callEmpty) return {EsmAct::KeyCq};
+        // "W1A?" — key exactly that and nothing else: the standard
+        // partial-call fill request (operator, 2026-10-22). The exchange
+        // waits until the call is whole.
+        if (in.callPartial) return {EsmAct::KeyHisCall};
         if (!in.callLoggable) {
             // Never offer the log for a call the save would refuse —
             // ask for the fill instead (his call + exchange).

@@ -3709,6 +3709,12 @@ MainWindow::MainWindow(QWidget* parent)
             // TTC_DECKTYPE=<partial>: type it into the deck's CALL box, as
             // keystrokes would (the super-check + N+1 row fills) — the
             // window-growth check (live-found 2026-10-22).
+            // TTC_DECKPRAC=1: press PRAC as the operator would.
+            if (std::getenv("TTC_DECKPRAC"))
+                QTimer::singleShot(1200, this, [this] {
+                    for (auto* b : findChildren<QPushButton*>())
+                        if (b->text() == QLatin1String("PRAC")) { b->click(); break; }
+                });
             if (const char* t = std::getenv("TTC_DECKTYPE"))
                 QTimer::singleShot(1500, this, [this, t] {
                     if (auto* e = findChild<QLineEdit*>("entryCall")) {

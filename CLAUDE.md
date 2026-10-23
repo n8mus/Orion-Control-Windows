@@ -31,7 +31,7 @@ releases the SDR cleanly on exit):
     QT_QPA_PLATFORM=offscreen TTC_SELFTEST=<secs> TTC_RIGCTLD_PORT=14599 \
       TTC_RADIO=orion TTC_RADIO_DEV=/dev/null ./build/tentec-console
 
-`TTC_SCREENSHOT=<png>` grabs the window before quitting; `TTC_MAXIMIZED=1`
+`TTC_SCREENSHOT=<png>` grabs the window before quitting; `TTC_CONTEST=1` opens the contest deck (`TTC_DECKTYPE=<partial>` types into CALL, `TTC_DECKPRAC=1` presses PRAC — the window-growth checks); `TTC_MAXIMIZED=1`
 forces full-screen geometry (headless has no WM). For layout review use
 `xvfb-run -a -s "-screen 0 1920x1080x24"` — the offscreen platform's
 default screen distorts grabs.

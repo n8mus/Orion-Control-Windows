@@ -180,6 +180,7 @@ struct EsmInput {
     bool run = true;           // false = S&P
     bool callEmpty = true;
     bool callLoggable = false; // loggableCall() on the entry text
+    bool callPartial = false;  // the text carries a '?' — "W1A?" asks for a fill
     bool exchComplete = false; // every required received field filled
     bool myCallSent = false;   // S&P beat one done (this QSO)
     bool exchSent = false;     // exchange keyed (this QSO)

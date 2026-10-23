@@ -11,7 +11,10 @@ namespace ttc {
 
 namespace {
 constexpr int kRate = 8000;          // synth/playback sample rate
-constexpr int kWpmFloor = 12, kWpmCeil = 45;
+// Callers key at the OPERATOR'S speed (the deck's wpm box / what he keys
+// at), never faster: the RufzXP-style adaptive ladder was dropped
+// 2026-10-22 ("match the speed I'm set at").
+constexpr int kWpmFloor = 5, kWpmCeil = 60;
 
 // Text -> elements. Self-contained on purpose: the decoder's table maps
 // the other direction and lives behind its own file — sharing it would
@@ -179,8 +182,11 @@ PracticeEngine::TxKind PracticeEngine::classify(const QString& up) const {
     return TxKind::OpOther;
 }
 
+void PracticeEngine::setWpm(int wpm) { wpm_ = std::clamp(wpm, kWpmFloor, kWpmCeil); }
+
 void PracticeEngine::opKeyed(const QString& text, int wpm) {
     if (!active_) return;
+    setWpm(wpm);                         // callers follow whatever he keys at
     const QString up = text.trimmed().toUpper();
     if (up.isEmpty()) return;
     // The op is transmitting: a waiting caller holds instead of
@@ -215,7 +221,7 @@ void PracticeEngine::spawnCaller(int delayMs) {
             call = pool_.at(randInt(0, pool_.size() - 1));
     truth_ = makeTruth(call);
     callerExchKeyed_ = callerExchText();
-    callerWpmActual_ = std::clamp(wpm_ + randInt(-2, 3), kWpmFloor, 50);
+    callerWpmActual_ = wpm_;             // the operator's own speed
     callerPitch_ = randInt(450, 850);
     callerAmp_ = randInt(40, 95) / 100.0;
     repeats_ = 0;
@@ -476,9 +482,7 @@ PracticeEngine::Verdict PracticeEngine::verifyLog(const CQsoValues& typed) {
 }
 
 void PracticeEngine::adapt(bool good) {
-    // RufzXP's ladder: clean copy nudges the next caller faster, a bust
-    // backs off harder — the drill stays pinned at the ceiling.
-    wpm_ = std::clamp(good ? wpm_ + 1 : wpm_ - 2, kWpmFloor, kWpmCeil);
+    (void)good;                          // speed is the operator's; nothing adapts
 }
 
 // ---- clock + audio --------------------------------------------------------

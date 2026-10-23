@@ -61,6 +61,7 @@ public:
     // protocol: CQ summons a caller, his call + exchange answers it,
     // TU closes it, "?"/AGN asks for a repeat.
     void opKeyed(const QString& text, int wpm);
+    void setWpm(int wpm);            // deck speed box moved: callers follow
     void abortSending();             // Esc: silence, keep the session
 
     // The operator pressed log. Compare the entry against what the sim
@@ -139,7 +140,7 @@ private:
     bool opReplied_ = false;         // reply landed while caller still keying
     bool loggedPending_ = false;     // verdict done, next caller on TU end
 
-    int wpm_ = 25;                   // adaptive target, [12,45]
+    int wpm_ = 25;                   // the operator's speed (setWpm / opKeyed)
     int qsos_ = 0, good_ = 0, streak_ = 0;
 
     qint64 pos_ = 0;                 // playback clock, samples @ 8 kHz

@@ -68,6 +68,7 @@ static void testLoggable() {
     CHECK(!loggableCall("123"), "loggable: no letter refused");
     CHECK(loggableCall("DL1TEST"), "loggable: DL1TEST accepted");
     CHECK(loggableCall("K9A"), "loggable: K9A accepted");
+    CHECK(!loggableCall("W1A?"), "loggable: a '?' fill request is never a call");
 }
 
 static void testSerials() {
@@ -721,6 +722,10 @@ static void testEsm() {
     in.callEmpty = false;               // partial like "DL8" — not loggable
     CHECK(plansAre(esmPlan(in), {A::KeyHisCall, A::KeyExch}),
           "esm run: unloggable call never offers log, asks the fill");
+    in.callPartial = true;              // "W1A?" — just the call, no exchange
+    CHECK(plansAre(esmPlan(in), {A::KeyHisCall}),
+          "esm run: '?' partial keys only the call");
+    in.callPartial = false;
 
     in.callLoggable = true;
     CHECK(plansAre(esmPlan(in),
