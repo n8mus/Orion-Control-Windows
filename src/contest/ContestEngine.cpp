@@ -258,8 +258,11 @@ QString expandMacro(QString text, const ContestDef& def,
 
 QList<EsmAct> esmPlan(const EsmInput& in) {
     if (!in.esmOn) {
-        // Plain Enter-logs: the window handles the refusal messages.
+        // Plain Enter-logs: nothing ever transmits. An incomplete exchange
+        // moves the cursor there (phone, 2026-10-23: call, Enter -> zone,
+        // Enter -> log, the mic in between).
         if (in.callLoggable && in.exchComplete) return {EsmAct::Log};
+        if (in.callLoggable) return {EsmAct::FocusExch};
         return {};
     }
     if (in.run) {

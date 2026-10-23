@@ -401,6 +401,8 @@ void MainWindow::toggleContestMode(bool on) {
                     });
             connect(contestDeck_, &ContestDeck::walkSpots, this,
                     [this](int d) { walkContestSpot(d); });
+            connect(contestDeck_, &ContestDeck::pttToggleRequested, this,
+                    [this] { txBar_->toggleMox(); });   // phone: Space = MOX
             // SUB line: VFO B's dial, and "take it" = swap A/B (B's station
             // comes to the main receiver/transmitter) + the call into the
             // main entry, anchored at B's old frequency.
@@ -509,7 +511,30 @@ void MainWindow::toggleContestMode(bool on) {
 // click parks focus on the panadapter, and the operator's hands live on
 // the keyboard. The deck's call box has its own filter; this one covers
 // the pan.
+void MainWindow::setMox(bool on) {
+    if (!txBar_ || txBar_->moxActive() == on) return;
+    txBar_->toggleMox();                     // emits moxToggled -> the MOX handler
+}
+
 bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
+    // Keyboard PTT, app-wide: Right Ctrl held = TX (X11 keysym Control_R),
+    // Pause = MOX toggle. Auto-repeat is ignored so a held key is one
+    // press and one release.
+    if ((ev->type() == QEvent::KeyPress || ev->type() == QEvent::KeyRelease)
+        && QApplication::activeWindow()) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (!ke->isAutoRepeat()) {
+            const bool press = ev->type() == QEvent::KeyPress;
+            if (ke->key() == Qt::Key_Control && ke->nativeVirtualKey() == 0xffe4) {
+                setMox(press);
+                return true;
+            }
+            if (ke->key() == Qt::Key_Pause && press) {
+                setMox(!txBar_->moxActive());
+                return true;
+            }
+        }
+    }
     if (obj == pan_ && ev->type() == QEvent::KeyPress
         && contestDeckVisible()) {
         auto* ke = static_cast<QKeyEvent*>(ev);

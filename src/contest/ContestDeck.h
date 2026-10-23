@@ -104,6 +104,10 @@ signals:
     // it — swap A/B so the transmitter goes there, then the call lands in
     // the main entry.
     void subTakeRequested(const QString& call);
+    // Phone contests: Space in the entry is the console's MOX toggle, as
+    // everywhere else (operator, 2026-10-23: he speaks, hands on the
+    // keyboard). CW keeps N1MM's Space = prefill + jump to the exchange.
+    void pttToggleRequested();
 
 protected:
     void showEvent(QShowEvent* e) override;

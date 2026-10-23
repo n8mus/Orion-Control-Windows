@@ -798,7 +798,7 @@ static void testEsm() {
     in.exchComplete = true;
     CHECK(plansAre(esmPlan(in), {A::Log}), "esm off: plain log");
     in.exchComplete = false;
-    CHECK(plansAre(esmPlan(in), {}), "esm off: incomplete does nothing");
+    CHECK(plansAre(esmPlan(in), {A::FocusExch}), "esm off: incomplete exchange just moves the cursor there");
 }
 
 static void testHistoryParser() {

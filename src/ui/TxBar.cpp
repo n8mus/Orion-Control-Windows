@@ -355,6 +355,7 @@ void TxBar::showTuneActive(bool on) {
 }
 
 void TxBar::toggleMox() { moxBtn_->toggle(); }
+bool TxBar::moxActive() const { return moxBtn_->isChecked(); }
 
 void TxBar::showMoxActive(bool on) {
     QSignalBlocker block(moxBtn_);

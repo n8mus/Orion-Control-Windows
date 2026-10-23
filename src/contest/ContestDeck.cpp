@@ -333,7 +333,11 @@ void ContestDeck::buildUi() {
             "nothing transmits by itself.");
         connect(esmBtn_, &QPushButton::toggled, this, [this](bool on) {
             esmOn_ = on;
-            QSettings().setValue("contest/esm", on);
+            // Remembered per mode: phone defaults OFF (F1 = the CQ clip,
+            // the rest by voice, Enter only logs — operator, 2026-10-23),
+            // CW keeps ESM on.
+            QSettings().setValue(def_ && def_->modeCategory != QLatin1String("CW")
+                                     ? "contest/esmPhone" : "contest/esm", on);
             updateEsmHint();
         });
         hdr->addWidget(esmBtn_);
@@ -958,6 +962,12 @@ void ContestDeck::openContest(qint64 id) {
     title_->setText(row_.title);
     setEnabled(true);
     myCallSent_ = exchSent_ = false;
+    {   // ESM per mode: phone off unless he turned it on, CW on by default
+        const bool phone = def_->modeCategory != QLatin1String("CW");
+        esmOn_ = QSettings().value(phone ? "contest/esmPhone" : "contest/esm", !phone).toBool();
+        const QSignalBlocker b(esmBtn_);
+        esmBtn_->setChecked(esmOn_);
+    }
     if (qtcBtn_) qtcBtn_->setVisible(def_->hasQtc);
     applyPaneVisibility();   // phone drops the CW panes, floats included
     rebuildEntryFields();
@@ -1186,6 +1196,19 @@ void ContestDeck::enterPressed() {
     in.callEmpty = c.isEmpty();
     in.callLoggable = loggableCall(c);
     in.callPartial = c.contains('?');
+    // PHONE: Enter never transmits, whatever the ESM button says — the
+    // operator talks (Space = MOX); Enter walks call -> exchange -> log.
+    // (ESM's clip-playing beats are a CW thing here; F1 is the CQ clip.)
+    const bool phone = def_->modeCategory != QLatin1String("CW");
+    if (phone) in.esmOn = false;
+    // Enter ON an empty exchange field that carries a hint takes the hint
+    // (the expected zone): one Enter to get there, one to accept it, a
+    // typed value only when the station sends something else. Both modes:
+    // on CW this is what keeps Enter -> TU + log one keystroke.
+    for (const auto& e : edits_)
+            if (e.second->hasFocus() && e.second->text().trimmed().isEmpty()
+                && !e.second->placeholderText().isEmpty())
+                e.second->setText(e.second->placeholderText());
     in.exchComplete = true;
     for (int i = 0; i < def_->fields.size(); ++i)
         if (def_->fields[i].required
@@ -1513,6 +1536,7 @@ void ContestDeck::practiceVerdict() {
 
 void ContestDeck::wipe() {
     call_->clear();
+    for (const auto& e : edits_) e.second->setPlaceholderText(QString());   // zone hint goes with the call
     if (rstS_) rstS_->setText(rstPreset());
     if (def_)
         for (int i = 0; i < edits_.size() && i < def_->fields.size(); ++i)
@@ -1777,10 +1801,10 @@ void ContestDeck::autoFillExch() {
         int z = v == QLatin1String("cqz")  ? expectedCqz_
               : v == QLatin1String("ituz") ? expectedItuz_
                                            : 0;
-        if (z > 0) {
-            const QSignalBlocker b(edits_[i].second);
-            edits_[i].second->setText(QString::number(z));
-        }
+        // A HINT (placeholder), never a value: the operator types what the
+        // station sends, so Enter stops at the field instead of logging
+        // a zone nobody said (operator, 2026-10-23).
+        edits_[i].second->setPlaceholderText(z > 0 ? QString::number(z) : QString());
     }
     verifyExch();
 }
@@ -2053,6 +2077,15 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
     // from the exchange never reached the call (operator, 2026-10-22).
     if (ev->type() == QEvent::KeyPress && !edits_.isEmpty()) {
         auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == Qt::Key_Space && def_ && !practiceOn()
+            && def_->modeCategory != QLatin1String("CW")) {
+            bool entry = obj == call_;
+            for (const auto& e : edits_) entry = entry || e.second == obj;
+            if (entry) {
+                if (!ke->isAutoRepeat()) emit pttToggleRequested();
+                return true;                 // never a space in the field
+            }
+        }
         const bool tab = ke->key() == Qt::Key_Tab;
         const bool back = ke->key() == Qt::Key_Backtab;
         if (tab || back) {

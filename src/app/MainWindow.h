@@ -207,6 +207,11 @@ private:
     // GridTracker2; while WSJT-X is heard the console holds DIG and LIVE
     // stands down, while it transmits MOX/VK/over-air replay are refused.
     void setupWsjtxUi();
+    // Keyboard PTT (2026-10-23, phone contests with both hands on the
+    // keyboard): hold RIGHT CTRL = transmit, release = receive; PAUSE
+    // toggles MOX. Rides the TX bar's MOX path (same refusals, same
+    // 3-minute failsafe). Only while a console window is active.
+    void setMox(bool on);
     void onWsjtxState(bool alive, bool transmitting);
     bool wsjtxAlive() const;
     bool wsjtxTransmitting() const;

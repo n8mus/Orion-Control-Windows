@@ -64,6 +64,7 @@ public slots:
     void showTuneActive(bool on);                 // reflect/force the TUNE latch
     void showMoxActive(bool on);                  // reflect/force the MOX latch
     void toggleMox();                             // as a click: emits moxToggled
+    bool moxActive() const;                       // the latch as shown
     void showTxPower(int pct);
     void showMicGain(int pct);
     void showTxFilter(int hz);

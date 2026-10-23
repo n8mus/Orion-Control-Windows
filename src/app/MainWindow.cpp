@@ -905,6 +905,7 @@ MainWindow::MainWindow(QWidget* parent)
     audioPanel_ = new AudioPanel(this);
     setupEqUi();
     setupWsjtxUi();
+    qApp->installEventFilter(this);          // keyboard PTT (Right Ctrl / Pause)
 
     // Per-VFO volume + mute (the rows under the readouts). Sliding a muted
     // receiver's volume implicitly unmutes it; mute remembers the level.
@@ -3715,6 +3716,30 @@ MainWindow::MainWindow(QWidget* parent)
                     for (auto* b : findChildren<QPushButton*>())
                         if (b->text() == QLatin1String("PRAC")) { b->click(); break; }
                 });
+            // TTC_DECKKEYS="Return,Space,...": key presses to the focused
+            // widget, 400 ms apart, after TTC_DECKTYPE; MOX changes print.
+            if (const char* k = std::getenv("TTC_DECKKEYS")) {
+                connect(txBar_, &TxBar::moxToggled, this, [](bool on) {
+                    std::fprintf(stderr, "[deckkeys] MOX %s\n", on ? "ON" : "off");
+                });
+                const QStringList keys = QString::fromLatin1(k).split(',');
+                for (int i = 0; i < keys.size(); ++i)
+                    QTimer::singleShot(2200 + 400 * i, this, [this, key = keys[i]] {
+                        QWidget* f = QApplication::focusWidget();
+                        const int code = key == "Return" ? Qt::Key_Return : key == "Space" ? Qt::Key_Space
+                                       : key == "Tab" ? Qt::Key_Tab : int(QKeySequence(key)[0].key());
+                        const QString txt = key == "Space" ? QStringLiteral(" ") : QString();
+                        std::fprintf(stderr, "[deckkeys] %s -> focus %s", qPrintable(key),
+                                     f ? f->metaObject()->className() : "none");
+                        QKeyEvent press(QEvent::KeyPress, code, Qt::NoModifier, txt);
+                        QKeyEvent rel(QEvent::KeyRelease, code, Qt::NoModifier, txt);
+                        if (f) { QApplication::sendEvent(f, &press); QApplication::sendEvent(f, &rel); }
+                        QWidget* g = QApplication::focusWidget();
+                        QString val;
+                        if (auto* le = qobject_cast<QLineEdit*>(g)) val = le->text() + " (hint " + le->placeholderText() + ")";
+                        std::fprintf(stderr, " -> now %s '%s'\n", g ? qPrintable(g->objectName().isEmpty() ? g->metaObject()->className() : g->objectName()) : "none", qPrintable(val));
+                    });
+            }
             if (const char* t = std::getenv("TTC_DECKTYPE"))
                 QTimer::singleShot(1500, this, [this, t] {
                     if (auto* e = findChild<QLineEdit*>("entryCall")) {
