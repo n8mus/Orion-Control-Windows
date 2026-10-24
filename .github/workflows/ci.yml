@@ -26,7 +26,7 @@ jobs:
       # source (autogen fetches the model data).
       - name: Build rnnoise
         run: |
-          git clone --depth 1 https://gitlab.xiph.org/xiph/rnnoise.git /tmp/rnnoise
+          git clone --depth 1 https://gitlab.xiph.org/xiph/rnnoise.git /tmp/rnnoise || git clone --depth 1 https://github.com/xiph/rnnoise.git /tmp/rnnoise
           cd /tmp/rnnoise
           ./autogen.sh
           ./configure --prefix=/usr/local

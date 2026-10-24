@@ -321,7 +321,7 @@ QMap<QDateTime, int> qsosByHour(const QList<QDateTime>& ts) {
     QMap<QDateTime, int> m;
     for (const QDateTime& t : ts) {
         const QDateTime u = t.toUTC();
-        m[QDateTime(u.date(), QTime(u.time().hour(), 0), QTimeZone::UTC)]++;
+        m[QDateTime(u.date(), QTime(u.time().hour(), 0), QTimeZone::utc())]++;
     }
     return m;
 }

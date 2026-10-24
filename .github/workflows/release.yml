@@ -31,7 +31,7 @@ jobs:
 
       - name: Build rnnoise from source
         run: |
-          git clone --depth 1 https://gitlab.xiph.org/xiph/rnnoise.git /tmp/rnnoise
+          git clone --depth 1 https://gitlab.xiph.org/xiph/rnnoise.git /tmp/rnnoise || git clone --depth 1 https://github.com/xiph/rnnoise.git /tmp/rnnoise
           cd /tmp/rnnoise && ./autogen.sh && ./configure --prefix=/usr/local
           make -j"$(nproc)" && sudo make install && sudo ldconfig
 
@@ -147,7 +147,7 @@ jobs:
             Alpha AppImage for the Ten-Tec SDR Console (Orion / Omni VII).
 
             **Install (easiest):** run the one-liner from the README, or:
-            `bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/orion3-sdr-console/master/install.sh)`
+            `bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/Orion-Control/master/install.sh)`
 
             The SDRplay API (proprietary, required for the panadapter) is NOT
             bundled — install.sh sets it up, or get it from sdrplay.com/api.

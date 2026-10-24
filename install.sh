@@ -12,7 +12,7 @@
 # Re-run any time to update to the newest release.
 set -euo pipefail
 
-REPO="n8mus/orion3-sdr-console"
+REPO="n8mus/Orion-Control"
 APPDIR="$HOME/.local/bin"
 ICONDIR="$HOME/.local/share/icons/hicolor/256x256/apps"
 DESKDIR="$HOME/.local/share/applications"
