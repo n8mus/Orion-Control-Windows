@@ -75,7 +75,7 @@ int main() {
     // Values clamp onto the real knobs.
     TunePoint wild = pt(7200000, 12.34, 44);
     wild.zPos = 9;
-    wild.ampTune = 0.2;
+    wild.ampTune = -0.2;
     wild.ampLoad = 5.25;
     wild.swr = 0.5;                                 // no carrier = no SWR
     t.upsert("dipole", "40", wild);
@@ -83,7 +83,7 @@ int main() {
     check(n && n->cap == 10.0, "cap clamps to 10.0");
     check(n && n->ind == 30.0, "inductor clamps to 30");
     check(n && n->zPos == 5, "Z position clamps to 5");
-    check(n && n->ampTune == 1.0, "tune clamps to 1.0");
+    check(n && n->ampTune == 0.0, "tune clamps to 0.0 (Titan dials read 0-10)");
     check(n && n->ampLoad == 5.3, "load rounds to the tenth");
     check(n && n->swr == 0.0, "SWR below 1 means none");
 

@@ -139,10 +139,14 @@ TuneEntryDialog::TuneEntryDialog(const QString& antenna, const TunePoint& start,
     auto* amp = new QGroupBox("AMP  (Titan III)", this);
     auto* ag = new QGridLayout(amp);
     ag->addWidget(new QLabel("Tune", amp), 0, 0);
+    // The Titan III's dials read 0-10 (operator, 2026-10-24: "I need to
+    // enter a zero for the amp tune and it won't go below 1.0").
     tune_ = tenthsBox(amp);
+    tune_->setRange(0.0, 10.0);
     ag->addWidget(tune_, 0, 1);
     ag->addWidget(new QLabel("Load", amp), 1, 0);
     load_ = tenthsBox(amp);
+    load_->setRange(0.0, 10.0);
     ag->addWidget(load_, 1, 1);
     ag->setColumnStretch(2, 1);
     lay->addWidget(amp);
