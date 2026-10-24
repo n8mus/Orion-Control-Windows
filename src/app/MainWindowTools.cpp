@@ -4,6 +4,11 @@
 // function here (and a one-line call there) — buttons go on topLay2_,
 // never the first deck, or the window minimum outgrows the screen.
 #include "app/MainWindow.h"
+#include <QAbstractSpinBox>
+#include <QAbstractSlider>
+#include <QAbstractItemView>
+#include <QTextEdit>
+#include <QComboBox>
 #include <QKeyEvent>
 #include <QCheckBox>
 #include "cw/AudioCwSource.h"
@@ -537,16 +542,38 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             }
         }
     }
-    if (obj == pan_ && ev->type() == QEvent::KeyPress
-        && contestDeckVisible()) {
+    // Deck up: ←/→ walk the spots and ↑/↓ nudge the speed from ANYWHERE
+    // in the main window, not only from the pan or the call box. Any
+    // click on a band button, slider or TX-bar control used to take the
+    // keyboard with it and the arrows went dead until a spot was clicked
+    // (live-found 2026-10-24, CQ WW SSB). Widgets where the arrows have a
+    // real job (text cursor, spin box, list, slider) keep them; the deck
+    // decides for its own fields (its call-box filter).
+    if (ev->type() == QEvent::KeyPress && contestDeckVisible()
+        && qobject_cast<QWidget*>(obj) && QApplication::activeWindow() == this) {
         auto* ke = static_cast<QKeyEvent*>(ev);
-        if (ke->key() == Qt::Key_Left || ke->key() == Qt::Key_Right) {
-            walkContestSpot(ke->key() == Qt::Key_Right ? +1 : -1);
-            return true;
-        }
-        if (ke->key() == Qt::Key_Up || ke->key() == Qt::Key_Down) {
-            contestDeck_->nudgeSpeed(ke->key() == Qt::Key_Up ? +1 : -1);
-            return true;
+        const int k = ke->key();
+        const bool arrow = k == Qt::Key_Left || k == Qt::Key_Right
+            || k == Qt::Key_Up || k == Qt::Key_Down;
+        if (arrow && ke->modifiers() == Qt::NoModifier) {
+            QWidget* fw = QApplication::focusWidget();
+            const bool deckOwns = fw && contestDeck_
+                && contestDeck_->isAncestorOf(fw);
+            const bool editing = fw
+                && (qobject_cast<QLineEdit*>(fw)
+                    || qobject_cast<QAbstractSpinBox*>(fw)
+                    || qobject_cast<QComboBox*>(fw)
+                    || qobject_cast<QAbstractSlider*>(fw)
+                    || qobject_cast<QAbstractItemView*>(fw)
+                    || qobject_cast<QTextEdit*>(fw)
+                    || qobject_cast<QPlainTextEdit*>(fw));
+            if (!deckOwns && (obj == pan_ || !editing)) {
+                if (k == Qt::Key_Left || k == Qt::Key_Right)
+                    walkContestSpot(k == Qt::Key_Right ? +1 : -1);
+                else
+                    contestDeck_->nudgeSpeed(k == Qt::Key_Up ? +1 : -1);
+                return true;
+            }
         }
     }
     return QMainWindow::eventFilter(obj, ev);
