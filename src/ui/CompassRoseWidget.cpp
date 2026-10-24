@@ -125,6 +125,15 @@ void CompassRoseWidget::pointAt(double lat, double lon, const QString& label) {
     update();
 }
 
+void CompassRoseWidget::pointBearing(double bearingDeg, double distKm,
+                                     const QString& label) {
+    bearing_ = bearingDeg;
+    distKm_ = distKm;
+    label_ = label;
+    emit bearingChanged(bearing_, label_);
+    update();
+}
+
 void CompassRoseWidget::setRotorAz(double azDeg) {
     if (azDeg == rotorAz_) return;
     rotorAz_ = azDeg;

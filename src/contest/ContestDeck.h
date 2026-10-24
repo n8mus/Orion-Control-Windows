@@ -108,6 +108,10 @@ signals:
     // everywhere else (operator, 2026-10-23: he speaks, hands on the
     // keyboard). CW keeps N1MM's Space = prefill + jump to the exchange.
     void pttToggleRequested();
+    // SP/LP pressed: the rotor was told to go to azDeg for this call —
+    // the rose follows (live-found 2026-10-23: it kept showing the
+    // previous call and its red line while the antenna went elsewhere).
+    void rotorAimed(double azDeg, double distKm, const QString& label);
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -154,6 +158,7 @@ private:
     // the label SAYS which one is on screen (the "rose stuck at 228°"
     // evening was an unlabeled centroid, not a bug).
     void updateHeading();
+    void refreshRotorLbl();          // "ROT 245°" / "ROT 245° → 120°"
     void requestQrz(const QString& call);
     QString currentBand() const;
     QString modeNow() const;         // rig mode as the contest mode
@@ -196,6 +201,7 @@ private:
     int  expectedCqz_ = 0, expectedItuz_ = 0;  // QRZ zones for the call
     double myLat_ = 0, myLon_ = 0;
     int hdg_ = -1;
+    double hdgKm_ = -1.0;            // distance to the heading's place
 
     qint64 rigHz_ = 0;
     QString rigMode_ = "CW";
@@ -254,6 +260,7 @@ private:
     QLabel* hint_ = nullptr;
     QLabel* hdgLbl_ = nullptr;
     QLabel* hdgSrcLbl_ = nullptr;        // "HDG · QRZ" / "hist" / "cty ctr"
+    QLabel* rotLbl_ = nullptr;           // the antenna's actual heading
     QPushButton* fk_[12] = {};
     QLineEdit* type_ = nullptr;
     QLabel* sent_ = nullptr;

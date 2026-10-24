@@ -2,6 +2,7 @@
 #include "contest/ContestDeck.h"
 
 #include <QDateTime>
+#include <cmath>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -514,13 +515,37 @@ void ContestDeck::buildUi() {
             hrow->addWidget(b);
         }
         connect(spB, &QPushButton::clicked, this, [this] {
-            if (rotor_ && hdg_ >= 0) rotor_->turnTo(hdg_);
+            if (rotor_ && hdg_ >= 0) {
+                rotor_->turnTo(hdg_);
+                emit rotorAimed(hdg_, hdgKm_, call_->text().trimmed().toUpper());
+                refreshRotorLbl();
+            }
         });
         connect(lpB, &QPushButton::clicked, this, [this] {
-            if (rotor_ && hdg_ >= 0)
-                rotor_->turnTo((hdg_ + 180) % 360);
+            if (rotor_ && hdg_ >= 0) {
+                const int lp = (hdg_ + 180) % 360;
+                rotor_->turnTo(lp);
+                emit rotorAimed(lp, -1.0,
+                                call_->text().trimmed().toUpper() + " LP");
+                refreshRotorLbl();
+            }
         });
-        hbox->addWidget(hlbl);
+        // The antenna's actual heading beside the source tag, so the
+        // operator's eyes stay on the deck while it turns.
+        rotLbl_ = new QLabel(this);
+        rotLbl_->setStyleSheet("color:#50c8eb; font-size:10px;");
+        auto* srow = new QHBoxLayout;
+        srow->addWidget(hlbl);
+        srow->addStretch(1);
+        srow->addWidget(rotLbl_);
+        if (rotor_) {
+            connect(rotor_, &RotorLink::azimuthChanged, this,
+                    [this](double) { refreshRotorLbl(); });
+            connect(rotor_, &RotorLink::connectedChanged, this,
+                    [this](bool) { refreshRotorLbl(); });
+        }
+        refreshRotorLbl();
+        hbox->addLayout(srow);
         hbox->addLayout(hrow);
         row->addLayout(hbox);
         mid->addLayout(row);
@@ -1843,9 +1868,27 @@ void ContestDeck::verifyExch() {
     }
 }
 
+void ContestDeck::refreshRotorLbl() {
+    if (!rotLbl_) return;
+    if (!rotor_ || !rotor_->connected() || rotor_->azimuth() < 0) {
+        rotLbl_->setText(QString());        // no rotor: say nothing
+        return;
+    }
+    const int az = int(rotor_->azimuth() + 0.5) % 360;
+    const double tgt = rotor_->target();
+    QString t = QString("ROT %1°").arg(az);
+    if (tgt >= 0) {
+        double d = std::fabs(tgt - az);
+        if (d > 180.0) d = 360.0 - d;
+        if (d > 3.0) t += QString(" → %1°").arg(int(tgt + 0.5) % 360);
+    }
+    rotLbl_->setText(t);
+}
+
 void ContestDeck::updateHeading() {
     const QString c = call_->text().trimmed();
     hdg_ = -1;
+    hdgKm_ = -1.0;
     if (c.isEmpty() || contestId_ < 0) {
         hdgLbl_->setText("—");
         hdgSrcLbl_->setText("HDG");
@@ -1880,6 +1923,7 @@ void ContestDeck::updateHeading() {
         return;
     }
     hdg_ = int(bearing::initialDeg(myLat_, myLon_, lat, lon) + 0.5) % 360;
+    hdgKm_ = bearing::distanceKm(myLat_, myLon_, lat, lon);
     hdgLbl_->setText(QString("%1°").arg(hdg_));
     hdgSrcLbl_->setText(QString("HDG · %1").arg(src));
 }

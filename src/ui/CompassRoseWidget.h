@@ -27,6 +27,9 @@ public:
     void setQth(double latDeg, double lonDeg);
     // Swing the pointer to a target (spot clicks, the log window's DX).
     void pointAt(double lat, double lon, const QString& label);
+    // Same, by bearing (the contest deck's SP/LP: LP is the antipodal
+    // heading, no place on the map to point at). distKm < 0 = unknown.
+    void pointBearing(double bearingDeg, double distKm, const QString& label);
     // The antenna's actual heading; -1 = no rotor / unknown (needle hidden).
     void setRotorAz(double azDeg);
 

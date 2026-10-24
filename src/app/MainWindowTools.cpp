@@ -387,6 +387,8 @@ void MainWindow::toggleContestMode(bool on) {
             layout_->placeUnderPan(contestDeck_);     // under the pan
             connect(contestDeck_, &ContestDeck::openManagerRequested,
                     this, [this] { openContestWindow(); });
+            connect(contestDeck_, &ContestDeck::rotorAimed,
+                    rose_, &CompassRoseWidget::pointBearing);
             connect(contestDeck_, &ContestDeck::spotDxRequested, this,
                     [this](const QString& call, qint64 hz) {
                         statusBar()->showMessage(
