@@ -33,12 +33,26 @@ Log out and back in once after the first run (for serial access), then
 launch **Orion Control** from your menu. Re-run any time to update.
 Prefer to build from source? See [Build and run](#build-and-run) below.
 
-## Windows
+## Install on Windows
 
-No Windows build is published yet — the console is developed and tested
-on Linux only. The code has no Linux-only dependencies in principle (Qt 6,
-SDRplay API, serial), so a Windows port is possible later; a Linux live
-USB or a spare Linux box is the way to try it today.
+The console is a native Windows app from the same code (MSVC build,
+`docs/windows-build.md`).
+
+1. **Install the SDRplay API first** — download the Windows API/HW driver
+   from [sdrplay.com/api](https://www.sdrplay.com/api/) and run its
+   installer. It's proprietary, so it is never bundled here; the console
+   finds your install by itself. Skip this step and the console runs
+   radio-only with a dark panadapter.
+2. Download the latest `tentec-console-…-win64.zip` from
+   [Releases](https://github.com/n8mus/Orion-Control/releases), unzip it
+   anywhere, and run `tentec-console.exe`. The same Station setup dialog
+   opens on first run; settings live per-user in the registry.
+
+The Windows zip is built on the station's own Windows box
+(`packaging/make-windows-release.ps1`) and attached to the tag's release
+after the Linux AppImage, so a brand-new release can show the AppImage
+alone for a while. The Linux build is the daily driver; the Windows build
+gets less testing.
 
 ## What you need
 
