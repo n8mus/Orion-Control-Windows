@@ -23,6 +23,10 @@ struct ContestRow {
     QString catOp = "SINGLE-OP", catAssisted = "ASSISTED", catBand = "ALL",
             catPower = "LOW", catMode = "CW", catTx = "ONE",
             catStation = "FIXED", catOverlay, club, soapbox;
+    // Set once the operator has looked at the categories dialog for THIS
+    // contest — the Cabrillo export warns while it is false (CQ WW SSB
+    // 2026 went out LOW/ASSISTED by default and the robot bounced it).
+    bool    catConfirmed = false;
 };
 
 struct ContestQso {

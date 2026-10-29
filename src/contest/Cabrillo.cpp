@@ -116,10 +116,20 @@ QString Cabrillo::build(const ContestDef& def, const ContestRow& contest,
         header(out, "GRID-LOCATOR", st.gridLocator.toUpper());
     if (!st.club.isEmpty()) header(out, "CLUB", st.club);
     if (!st.name.isEmpty()) header(out, "NAME", st.name);
-    if (!st.address.isEmpty()) header(out, "ADDRESS", st.address);
+    // A multi-line street address becomes one ADDRESS: line per line.
+    for (const QString& a : st.address.split('\n'))
+        if (!a.trimmed().isEmpty()) header(out, "ADDRESS", a.trimmed());
+    if (!st.city.isEmpty()) header(out, "ADDRESS-CITY", st.city);
+    if (!st.state.isEmpty())
+        header(out, "ADDRESS-STATE-PROVINCE", st.state);
+    if (!st.postal.isEmpty()) header(out, "ADDRESS-POSTALCODE", st.postal);
+    if (!st.country.isEmpty()) header(out, "ADDRESS-COUNTRY", st.country);
     if (!st.email.isEmpty()) header(out, "EMAIL", st.email);
     header(out, "CREATED-BY", "tentec-console");
-    header(out, "SOAPBOX", contest.soapbox);
+    // One SOAPBOX: line per line of text; none when empty — some robots
+    // flag a bare "SOAPBOX:".
+    for (const QString& sb_ : contest.soapbox.split('\n'))
+        if (!sb_.trimmed().isEmpty()) header(out, "SOAPBOX", sb_.trimmed());
 
     // QSO and QTC lines interleave chronologically (a QTC's timestamp is
     // its confirm time), the order the DARC robot expects.

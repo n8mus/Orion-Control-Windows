@@ -27,7 +27,8 @@ const char* kSchemaContest =
     " cat_band TEXT DEFAULT 'ALL', cat_power TEXT DEFAULT 'LOW',"
     " cat_mode TEXT DEFAULT 'CW', cat_tx TEXT DEFAULT 'ONE',"
     " cat_station TEXT DEFAULT 'FIXED', cat_overlay TEXT DEFAULT '',"
-    " club TEXT DEFAULT '', soapbox TEXT DEFAULT '')";
+    " club TEXT DEFAULT '', soapbox TEXT DEFAULT '',"
+    " cat_confirmed INTEGER DEFAULT 0)";
 
 const char* kSchemaHistory =
     "CREATE TABLE IF NOT EXISTS callhistory ("
@@ -88,6 +89,7 @@ ContestRow contestFromQuery(const QSqlQuery& q) {
     c.catOverlay  = q.value("cat_overlay").toString();
     c.club        = q.value("club").toString();
     c.soapbox     = q.value("soapbox").toString();
+    c.catConfirmed = q.value("cat_confirmed").toInt() != 0;
     return c;
 }
 
@@ -171,6 +173,9 @@ bool ContestDb::open(const QString& path) {
     // Migration for a db born before Sweepstakes needed a third
     // exchange column; fails harmlessly once the column exists.
     q.exec("ALTER TABLE cqso ADD COLUMN exch3 TEXT DEFAULT ''");
+    // 2026-10-27: categories confirmed per contest (appended; fails
+    // harmlessly where the column already exists).
+    q.exec("ALTER TABLE contest ADD COLUMN cat_confirmed INTEGER DEFAULT 0");
     q.exec("CREATE INDEX IF NOT EXISTS idx_cqso_contest"
            " ON cqso(contest_id)");
     q.exec("CREATE INDEX IF NOT EXISTS idx_cqso_call"
@@ -188,9 +193,9 @@ qint64 ContestDb::createContest(const ContestRow& c) {
     q.prepare(
         "INSERT INTO contest (def_id, title, start_utc, sent_exch,"
         " next_serial, cat_op, cat_assisted, cat_band, cat_power, cat_mode,"
-        " cat_tx, cat_station, cat_overlay, club, soapbox) VALUES"
-        " (:def, :title, :start, :exch, :ser, :op, :as, :bd, :pw, :md,"
-        "  :tx, :st, :ov, :club, :soap)");
+        " cat_tx, cat_station, cat_overlay, club, soapbox, cat_confirmed)"
+        " VALUES (:def, :title, :start, :exch, :ser, :op, :as, :bd, :pw,"
+        "  :md, :tx, :st, :ov, :club, :soap, :conf)");
     q.bindValue(":def", c.defId);
     q.bindValue(":title", c.title.trimmed());
     q.bindValue(":start",
@@ -207,6 +212,7 @@ qint64 ContestDb::createContest(const ContestRow& c) {
     q.bindValue(":ov", c.catOverlay);
     q.bindValue(":club", c.club);
     q.bindValue(":soap", c.soapbox);
+    q.bindValue(":conf", c.catConfirmed ? 1 : 0);
     if (!q.exec()) return -1;
     emit changed();
     return q.lastInsertId().toLongLong();
@@ -218,7 +224,8 @@ bool ContestDb::updateContest(const ContestRow& c) {
         "UPDATE contest SET title=:title, sent_exch=:exch,"
         " next_serial=:ser, cat_op=:op, cat_assisted=:as, cat_band=:bd,"
         " cat_power=:pw, cat_mode=:md, cat_tx=:tx, cat_station=:st,"
-        " cat_overlay=:ov, club=:club, soapbox=:soap WHERE id=:id");
+        " cat_overlay=:ov, club=:club, soapbox=:soap,"
+        " cat_confirmed=:conf WHERE id=:id");
     q.bindValue(":title", c.title.trimmed());
     q.bindValue(":exch", c.sentExch.trimmed());
     q.bindValue(":ser", c.nextSerial);
@@ -232,6 +239,7 @@ bool ContestDb::updateContest(const ContestRow& c) {
     q.bindValue(":ov", c.catOverlay);
     q.bindValue(":club", c.club);
     q.bindValue(":soap", c.soapbox);
+    q.bindValue(":conf", c.catConfirmed ? 1 : 0);
     q.bindValue(":id", c.id);
     const bool ok = q.exec();
     if (ok) emit changed();

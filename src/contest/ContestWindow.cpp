@@ -224,6 +224,14 @@ void ContestWindow::buildUi() {
                            "time, best hour, QSOs by hour — copy it into the soapbox");
         connect(sumBtn, &QPushButton::clicked, this, [this] { showSummary(); });
         h->addWidget(sumBtn);
+        auto* catBtn = new QPushButton("Categories…", this);
+        catBtn->setToolTip("Cabrillo CATEGORY-* header lines for this "
+                           "contest (operator / assisted / band / power / "
+                           "transmitter / station / overlay), CLUB and "
+                           "SOAPBOX. Remembered for the next contest.");
+        connect(catBtn, &QPushButton::clicked, this,
+                [this] { editCategories(); });
+        h->addWidget(catBtn);
         auto* cabBtn = new QPushButton("Cabrillo…", this);
         connect(cabBtn, &QPushButton::clicked, this,
                 [this] { exportCabrillo(); });
@@ -282,6 +290,22 @@ void ContestWindow::newContest() {
     c.startUtc = QDateTime::currentDateTimeUtc();
     c.sentExch = sentExchEdit_->text().trimmed();
     c.catMode = d->modeCategory;
+    // Start from the operator's real setup (last confirmed categories),
+    // not the struct's LOW/ASSISTED defaults. Mode stays the def's.
+    {
+        QSettings s;
+        const auto seed = [&](const char* key, QString& field) {
+            const QString v = s.value(key).toString().trimmed();
+            if (!v.isEmpty()) field = v;
+        };
+        seed("contest/lastCatOp", c.catOp);
+        seed("contest/lastCatAssisted", c.catAssisted);
+        seed("contest/lastCatPower", c.catPower);
+        seed("contest/lastCatTx", c.catTx);
+        seed("contest/lastCatStation", c.catStation);
+        seed("contest/lastClub", c.club);
+        // Band and overlay are per-event choices — ALL / none each time.
+    }
     const qint64 id = db_->createContest(c);
     if (id < 0) {
         status_->setText("could not create the contest (database error)");
@@ -548,6 +572,81 @@ void ContestWindow::showSummary() {
     d->show();
 }
 
+void ContestWindow::editCategories() {
+    if (contestId_ < 0 || !def_) return;
+    QDialog d(this);
+    d.setWindowTitle("Cabrillo categories — " + row_.title);
+    auto* form = new QFormLayout(&d);
+    form->setLabelAlignment(Qt::AlignRight);
+    const auto combo = [&](const char* label, const QStringList& items,
+                           const QString& cur, bool editable = false) {
+        auto* c = new QComboBox(&d);
+        c->addItems(items);
+        c->setEditable(editable);
+        const int i = c->findText(cur);
+        if (i >= 0) c->setCurrentIndex(i);
+        else if (editable) c->setEditText(cur);
+        else if (!cur.isEmpty()) { c->addItem(cur); c->setCurrentIndex(c->count() - 1); }
+        form->addRow(label, c);
+        return c;
+    };
+    auto* op = combo("OPERATOR", {"SINGLE-OP", "MULTI-OP", "CHECKLOG"},
+                     row_.catOp);
+    auto* as = combo("ASSISTED", {"ASSISTED", "NON-ASSISTED"},
+                     row_.catAssisted);
+    auto* bd = combo("BAND", {"ALL", "160M", "80M", "40M", "20M", "15M",
+                              "10M"}, row_.catBand);
+    auto* pw = combo("POWER", {"HIGH", "LOW", "QRP"}, row_.catPower);
+    auto* md = combo("MODE", {"CW", "SSB", "RTTY", "DIGI", "MIXED", "FM"},
+                     row_.catMode);
+    auto* tx = combo("TRANSMITTER", {"ONE", "TWO", "LIMITED", "UNLIMITED",
+                                     "SWL"}, row_.catTx);
+    auto* st = combo("STATION", {"FIXED", "MOBILE", "PORTABLE", "ROVER",
+                                 "EXPEDITION", "HQ", "SCHOOL"},
+                     row_.catStation);
+    auto* ov = combo("OVERLAY", {"", "CLASSIC", "ROOKIE", "TB-WIRES",
+                                 "YOUTH"}, row_.catOverlay, true);
+    ov->setToolTip("Blank = no CATEGORY-OVERLAY line");
+    auto* club = new QLineEdit(row_.club, &d);
+    club->setPlaceholderText("blank = no CLUB line");
+    form->addRow("CLUB", club);
+    auto* soap = new QPlainTextEdit(row_.soapbox, &d);
+    soap->setPlaceholderText("blank = no SOAPBOX line; one line each");
+    soap->setFixedHeight(70);
+    form->addRow("SOAPBOX", soap);
+    auto* bb = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &d);
+    connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+    form->addRow(bb);
+    if (d.exec() != QDialog::Accepted) return;
+
+    row_.catOp = op->currentText().trimmed().toUpper();
+    row_.catAssisted = as->currentText().trimmed().toUpper();
+    row_.catBand = bd->currentText().trimmed().toUpper();
+    row_.catPower = pw->currentText().trimmed().toUpper();
+    row_.catMode = md->currentText().trimmed().toUpper();
+    row_.catTx = tx->currentText().trimmed().toUpper();
+    row_.catStation = st->currentText().trimmed().toUpper();
+    row_.catOverlay = ov->currentText().trimmed().toUpper();
+    row_.club = club->text().trimmed();
+    row_.soapbox = soap->toPlainText().trimmed();
+    row_.catConfirmed = true;
+    db_->updateContest(row_);
+    // Remembered for newContest(): the next event starts from this setup.
+    QSettings s;
+    s.setValue("contest/lastCatOp", row_.catOp);
+    s.setValue("contest/lastCatAssisted", row_.catAssisted);
+    s.setValue("contest/lastCatPower", row_.catPower);
+    s.setValue("contest/lastCatTx", row_.catTx);
+    s.setValue("contest/lastCatStation", row_.catStation);
+    s.setValue("contest/lastClub", row_.club);
+    trace(QString("CAT %1 %2 %3 %4 %5 %6 %7")
+              .arg(row_.catOp, row_.catAssisted, row_.catBand,
+                   row_.catPower, row_.catMode, row_.catTx, row_.catStation));
+    refreshAll();
+}
+
 void ContestWindow::exportCabrillo() {
     if (contestId_ < 0 || !def_) return;
     // A contest that sends a fixed exchange token (age, zone, section)
@@ -566,6 +665,27 @@ void ContestWindow::exportCabrillo() {
                     "export again.").arg(def_->title));
         if (openExchEdit_) openExchEdit_->setFocus();
         return;
+    }
+    // Categories never looked at for this contest: the header would be
+    // whatever the struct defaults say (CQ WW SSB 2026 shipped LOW /
+    // ASSISTED unseen and the robot bounced it). Offer the dialog first.
+    if (!row_.catConfirmed) {
+        const auto b = QMessageBox::question(
+            this, "Categories not confirmed",
+            QString("The Cabrillo categories for this contest were never "
+                    "confirmed:\n\n%1 / %2 / %3 / %4 / %5 / %6%7\n\n"
+                    "Open Categories… now?")
+                .arg(row_.catOp, row_.catAssisted, row_.catBand,
+                     row_.catPower, row_.catTx, row_.catStation,
+                     row_.catOverlay.isEmpty() ? QString()
+                                               : " / " + row_.catOverlay),
+            QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
+            QMessageBox::Yes);
+        if (b == QMessageBox::Cancel) return;
+        if (b == QMessageBox::Yes) {
+            editCategories();
+            if (!row_.catConfirmed) return;      // dialog cancelled
+        }
     }
     // Plain-language log checks first (holes, no frequency, future
     // timestamps, single-op time over the limit, multi-single band
@@ -586,8 +706,16 @@ void ContestWindow::exportCabrillo() {
     st.call = s.value("station/callsign", "").toString().toUpper();
     st.gridLocator = s.value("station/grid", "").toString();
     st.location = s.value("contest/location", "").toString();
-    st.name = s.value("contest/opname").toString();
-    st.address = s.value("contest/address").toString();
+    // Setup → Station is the home (2026-10-27); the old contest/* keys
+    // nobody could ever set are read as a fallback.
+    st.name = s.value("station/opname",
+                      s.value("contest/opname").toString()).toString();
+    st.address = s.value("station/address",
+                         s.value("contest/address").toString()).toString();
+    st.city = s.value("station/addrCity").toString();
+    st.state = s.value("station/addrState").toString();
+    st.postal = s.value("station/addrPostal").toString();
+    st.country = s.value("station/addrCountry").toString();
     // Sponsors' log robots require an EMAIL: header (All Asian rejects
     // without it). station/email is the home; club/email is the old
     // ClubLog address as a fallback so this is never blank again.

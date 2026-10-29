@@ -13,6 +13,8 @@ class CtyLookup;
 // Station setup, passed in so this stays a pure formatter.
 struct CabrilloStation {
     QString call, name, address, gridLocator, location, email, club;
+    // The split ADDRESS-* lines (Cabrillo 3.0); each emitted only when set.
+    QString city, state, postal, country;
 };
 
 // The submission file. Contest software fails at submission time, weeks
