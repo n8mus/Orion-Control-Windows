@@ -289,40 +289,41 @@ VoiceEqSettings VoiceEqSettings::load() {
 }
 
 namespace {
-QJsonObject userProfiles() {
+QJsonObject userProfiles(const char* store) {
     return QJsonDocument::fromJson(
-               QSettings().value("vk/eqProfiles").toByteArray()).object();
+               QSettings().value(QLatin1String(store)).toByteArray()).object();
 }
-void storeUserProfiles(const QJsonObject& o) {
-    QSettings().setValue("vk/eqProfiles",
+void storeUserProfiles(const char* store, const QJsonObject& o) {
+    QSettings().setValue(QLatin1String(store),
                          QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 }  // namespace
 
-QStringList VoiceEqSettings::userProfileNames() {
-    QStringList names = userProfiles().keys();
+QStringList VoiceEqSettings::userProfileNames(const char* store) {
+    QStringList names = userProfiles(store).keys();
     names.sort(Qt::CaseInsensitive);
     return names;
 }
 
-bool VoiceEqSettings::loadUserProfile(const QString& name, VoiceEqSettings& out) {
-    const QJsonObject all = userProfiles();
+bool VoiceEqSettings::loadUserProfile(const QString& name, VoiceEqSettings& out,
+                                      const char* store) {
+    const QJsonObject all = userProfiles(store);
     if (!all.contains(name)) return false;
     out = fromJson(all.value(name).toObject());
     return true;
 }
 
 void VoiceEqSettings::saveUserProfile(const QString& name,
-                                      const VoiceEqSettings& s) {
-    QJsonObject all = userProfiles();
+                                      const VoiceEqSettings& s, const char* store) {
+    QJsonObject all = userProfiles(store);
     all[name] = s.toJson();
-    storeUserProfiles(all);
+    storeUserProfiles(store, all);
 }
 
-void VoiceEqSettings::deleteUserProfile(const QString& name) {
-    QJsonObject all = userProfiles();
+void VoiceEqSettings::deleteUserProfile(const QString& name, const char* store) {
+    QJsonObject all = userProfiles(store);
     all.remove(name);
-    storeUserProfiles(all);
+    storeUserProfiles(store, all);
 }
 
 void VoiceEqSettings::save() const {

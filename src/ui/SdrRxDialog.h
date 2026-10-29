@@ -10,6 +10,7 @@ class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
+class QPushButton;
 class QSlider;
 
 namespace ttc { class VoiceEqCurve; class SdrRxMeter; }
@@ -48,10 +49,16 @@ private:
     QCheckBox* anf_ = nullptr;
     QCheckBox* rnn_ = nullptr;
     QCheckBox* eqOn_ = nullptr;
-    QComboBox* eqPreset_ = nullptr;
+    QComboBox* eqPreset_ = nullptr;                // "" current / "b:n" built-in / "u:name" mine
+    QPushButton* eqDel_ = nullptr;
     VoiceEqCurve* curve_ = nullptr;
     VoiceEqSettings eq_;                           // the curve's bands + on
+    bool eqModified_ = false;
     void loadEqPreset(int idx);                    // index into rxEqPresets
+    void fillEqProfiles(const QString& select);    // the Profile list
+    void setEqActiveProfile(const QString& key);   // sdrrx/eqProfile
+    void setEqModified(bool m);                    // "(modified)" mark
+    void eqSaveAsPrompt();
     QCheckBox* gateOn_ = nullptr;
     QDoubleSpinBox* gateThr_ = nullptr;
     QDoubleSpinBox* gateFloor_ = nullptr;

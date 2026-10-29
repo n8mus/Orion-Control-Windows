@@ -91,10 +91,17 @@ struct VoiceEqSettings {
     // The operator's own named profiles (vk/eqProfiles, one JSON object
     // keyed by name — any characters allowed in a name). Built-in presets
     // are separate and can't be overwritten or deleted.
-    static QStringList userProfileNames();          // sorted, case-blind
-    static bool loadUserProfile(const QString& name, VoiceEqSettings& out);
-    static void saveUserProfile(const QString& name, const VoiceEqSettings& s);
-    static void deleteUserProfile(const QString& name);
+    // `store` is the QSettings key holding the set: the voice keyer's
+    // (default) or the SDR receive EQ's (kRxProfileStore) — separate sets,
+    // so a receive curve can never land in the transmit list or vice versa.
+    static constexpr const char* kTxProfileStore = "vk/eqProfiles";
+    static constexpr const char* kRxProfileStore = "sdrrx/eqProfiles";
+    static QStringList userProfileNames(const char* store = kTxProfileStore);  // sorted, case-blind
+    static bool loadUserProfile(const QString& name, VoiceEqSettings& out,
+                                const char* store = kTxProfileStore);
+    static void saveUserProfile(const QString& name, const VoiceEqSettings& s,
+                                const char* store = kTxProfileStore);
+    static void deleteUserProfile(const QString& name, const char* store = kTxProfileStore);
 
     QJsonObject toJson() const;
     static VoiceEqSettings fromJson(const QJsonObject& o);

@@ -9,6 +9,9 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QSettings>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -182,6 +185,59 @@ void SdrRxDialog::loadEqPreset(int idx) {
     emitChanged();
 }
 
+// Receive EQ profiles — the voice keyer window's Profile row, on its OWN
+// store (sdrrx/eqProfiles; VoiceEqSettings::kRxProfileStore): a receive
+// curve never shows up in the transmit list, or the other way round.
+// Item data: "" = the current curve, "b:<n>" = built-in starting point n,
+// "u:<name>" = the operator's own.
+void SdrRxDialog::fillEqProfiles(const QString& select) {
+    const QSignalBlocker b(eqPreset_);
+    eqPreset_->clear();
+    eqPreset_->addItem("—  (current curve)", QString());
+    const auto& builtins = rxEqPresets();
+    for (int i = 0; i < int(builtins.size()); ++i)
+        eqPreset_->addItem(builtins[size_t(i)].name, QString("b:%1").arg(i));
+    const QStringList mine =
+        VoiceEqSettings::userProfileNames(VoiceEqSettings::kRxProfileStore);
+    if (!mine.isEmpty()) eqPreset_->insertSeparator(eqPreset_->count());
+    for (const QString& n : mine) eqPreset_->addItem("★ " + n, "u:" + n);
+    eqPreset_->setCurrentIndex(std::max(0, eqPreset_->findData(select)));
+    if (eqDel_) eqDel_->setEnabled(eqPreset_->currentData().toString().startsWith("u:"));
+}
+
+void SdrRxDialog::setEqActiveProfile(const QString& key) {
+    QSettings().setValue("sdrrx/eqProfile", key);
+}
+
+void SdrRxDialog::setEqModified(bool m) {
+    if (m && eqModified_) return;                  // drags fire a lot
+    eqModified_ = m;
+    QSettings().setValue("sdrrx/eqProfileModified", m);
+    const QString key = eqPreset_->currentData().toString();
+    fillEqProfiles(key);                           // clean names first
+    if (m && !key.isEmpty())
+        eqPreset_->setItemText(eqPreset_->currentIndex(),
+                               eqPreset_->currentText() + "  (modified)");
+}
+
+void SdrRxDialog::eqSaveAsPrompt() {
+    const QString cur = eqPreset_->currentData().toString();
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, "Save receive EQ profile", "Profile name:", QLineEdit::Normal,
+        cur.startsWith("u:") ? cur.mid(2) : QString(), &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (VoiceEqSettings::userProfileNames(VoiceEqSettings::kRxProfileStore).contains(name)
+        && QMessageBox::question(this, "Save receive EQ profile",
+               QString("Replace your profile \"%1\"?").arg(name))
+               != QMessageBox::Yes)
+        return;
+    VoiceEqSettings::saveUserProfile(name, eq_, VoiceEqSettings::kRxProfileStore);
+    fillEqProfiles("u:" + name);
+    setEqActiveProfile("u:" + name);
+    setEqModified(false);
+}
+
 SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     : QDialog(parent) {
     setWindowTitle("SDR receive audio");
@@ -257,13 +313,49 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     eqOn_ = new QCheckBox("EQ on", eqBox);
     eqRow->addWidget(eqOn_);
     eqRow->addStretch(1);
-    eqRow->addWidget(new QLabel("Preset", eqBox));
+    eqRow->addWidget(new QLabel("Profile", eqBox));
     eqPreset_ = new QComboBox(eqBox);
-    eqPreset_->addItem("Load…");
-    for (const auto& p : rxEqPresets()) eqPreset_->addItem(p.name);
-    eqPreset_->setToolTip("Starting points — then drag the curve to taste");
-    eqRow->addWidget(eqPreset_);
+    eqPreset_->setMinimumWidth(170);
+    eqPreset_->setToolTip("Built-in starting points, then your saved receive profiles.\n"
+                          "The curve on screen is always kept; profiles are for\n"
+                          "switching between curves (SSB, CW, weak signal…).");
+    eqRow->addWidget(eqPreset_, 1);
+    auto* eqSave = new QPushButton("Save", eqBox);
+    eqSave->setToolTip("Save your changes into the selected profile (a built-in\n"
+                       "asks for a name for your version — those stay as shipped)");
+    auto* eqSaveAs = new QPushButton("Save as…", eqBox);
+    eqSaveAs->setToolTip("Save the curve on screen as a new receive profile");
+    eqDel_ = new QPushButton("Delete", eqBox);
+    eqDel_->setToolTip("Delete the selected profile (your own only)");
+    eqRow->addWidget(eqSave);
+    eqRow->addWidget(eqSaveAs);
+    eqRow->addWidget(eqDel_);
     eqLay->addLayout(eqRow);
+    fillEqProfiles(QSettings().value("sdrrx/eqProfile").toString());
+    {
+        const bool wasModified = QSettings().value("sdrrx/eqProfileModified", false).toBool();
+        eqModified_ = false;
+        setEqModified(wasModified);
+    }
+    connect(eqSave, &QPushButton::clicked, this, [this] {
+        const QString key = eqPreset_->currentData().toString();
+        if (!key.startsWith("u:")) { eqSaveAsPrompt(); return; }   // built-in / none
+        VoiceEqSettings::saveUserProfile(key.mid(2), eq_, VoiceEqSettings::kRxProfileStore);
+        setEqModified(false);
+    });
+    connect(eqSaveAs, &QPushButton::clicked, this, [this] { eqSaveAsPrompt(); });
+    connect(eqDel_, &QPushButton::clicked, this, [this] {
+        const QString key = eqPreset_->currentData().toString();
+        if (!key.startsWith("u:")) return;
+        if (QMessageBox::question(this, "Delete receive EQ profile",
+                QString("Delete your profile \"%1\"? (The curve on screen "
+                        "stays.)").arg(key.mid(2))) != QMessageBox::Yes)
+            return;
+        VoiceEqSettings::deleteUserProfile(key.mid(2), VoiceEqSettings::kRxProfileStore);
+        fillEqProfiles(QString());
+        setEqActiveProfile(QString());
+        setEqModified(false);
+    });
     curve_ = new VoiceEqCurve(eqBox);
     curve_->setEdge(0.f, QString());
     curve_->setFixedHeight(140);                   // its 200 px hint is the VK editor's
@@ -374,12 +466,32 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     connect(eqOn_, &QCheckBox::toggled, this, [this](bool v) {
         eq_.enabled = v;
         curve_->setSettings(eq_);
+        setEqModified(true);
         emitChanged();
     });
-    connect(eqPreset_, &QComboBox::activated, this, [this](int i) {
-        if (i > 0) loadEqPreset(i - 1);
-        const QSignalBlocker blk(eqPreset_);
-        eqPreset_->setCurrentIndex(0);
+    // activated, not currentIndexChanged: picking the profile already shown
+    // reloads its saved version — the way to drop unsaved edits.
+    connect(eqPreset_, &QComboBox::activated, this, [this](int idx) {
+        const QString key = eqPreset_->itemData(idx).toString();
+        if (key.startsWith("b:")) {
+            loadEqPreset(key.mid(2).toInt());      // emits
+        } else if (key.startsWith("u:")) {
+            VoiceEqSettings s;
+            if (!VoiceEqSettings::loadUserProfile(key.mid(2), s,
+                                                  VoiceEqSettings::kRxProfileStore))
+                return;                            // vanished
+            eq_ = s;
+            {
+                const QSignalBlocker blk(eqOn_);
+                eqOn_->setChecked(eq_.enabled);
+            }
+            curve_->setSettings(eq_);
+            emitChanged();
+        } else {
+            return;                                // "—": nothing to load
+        }
+        setEqActiveProfile(key);
+        setEqModified(false);
     });
     curve_->onBandEdited = [this](int band, const ClientEq::BandParams& p) {
         eq_.bands[size_t(band)] = p;
@@ -388,6 +500,7 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
             const QSignalBlocker blk(eqOn_);
             eqOn_->setChecked(true);
         }
+        setEqModified(true);
         emitChanged();
     };
     connect(close, &QPushButton::clicked, this, &QDialog::close);
