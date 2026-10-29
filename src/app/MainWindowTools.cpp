@@ -30,6 +30,7 @@
 #include "contest/ContestDeck.h"
 #include "contest/ContestWindow.h"
 #include <algorithm>
+#include <limits>
 #include "log/QsoContext.h"
 #include "ui/LogWindow.h"
 #include "ui/LogbookWindow.h"
@@ -426,6 +427,43 @@ void MainWindow::toggleContestMode(bool on) {
                         statusBar()->showMessage(QString("SUB: %1 — A<>B swapped, work it on %2 kHz")
                                                      .arg(call).arg(bHz / 1000.0, 0, 'f', 1), 6000);
                     });
+            // SO2V: the deck says what it wants; this window owns the
+            // ears, the B reader and the transmitter's VFO.
+            connect(contestDeck_, &ContestDeck::so2vChanged, this,
+                    [this](bool on) { setSo2v(on); });
+            if (cwDecB_)
+                connect(cwDecB_, &CwDecoder::textDecoded, contestDeck_,
+                        &ContestDeck::appendSubRead, Qt::QueuedConnection);
+            // Pounce: TX to B for this QSO (main RX stays on A, sub stays
+            // where it is) — the Orion's own split. No park: B is already
+            // on the station. pounceDone puts TX back on A.
+            connect(contestDeck_, &ContestDeck::subPounceRequested, this,
+                    [this](const QString& call) {
+                        if (vfoLockA_ || vfoLockB_) {
+                            statusBar()->showMessage("SO2V: pounce blocked — a VFO is LOCKED", 6000);
+                            return;
+                        }
+                        const char sub = routing_ ? routing_->subRxVfo() : 'B';
+                        radio_->setVfoAssignment('A', sub, 'B');
+                        txVfo_ = 'B';
+                        rxVfo_ = 'A';
+                        routing_->showVfoAssignment('A', sub, 'B');
+                        pushVfoB();
+                        statusBar()->showMessage(
+                            QString("SO2V: TX on B — work %1 on %2 kHz, A holds the run")
+                                .arg(call).arg(vfoBHz_ / 1000.0, 0, 'f', 1), 6000);
+                    });
+            connect(contestDeck_, &ContestDeck::pounceDone, this, [this] {
+                if (txVfo_ != 'B') return;
+                const char sub = routing_ ? routing_->subRxVfo() : 'B';
+                radio_->setVfoAssignment('A', sub, 'A');
+                txVfo_ = 'A';
+                rxVfo_ = 'A';
+                routing_->showVfoAssignment('A', sub, 'A');
+                pushVfoB();
+                statusBar()->showMessage("SO2V: TX back on A", 4000);
+            });
+            if (contestDeck_->so2vOn()) setSo2v(true);   // restored state
             // BOTH ears feed the deck; applyCwRxRouting keeps exactly
             // one enabled, following the operator's source choice.
             if (cwDec_)
@@ -594,8 +632,16 @@ void MainWindow::walkContestSpot(int dir) {
               [](const SpotLabel* a, const SpotLabel* b) {
                   return a->hz < b->hz;
               });
-    const qint64 cur = qint64(centerHz_);
-    const QString band = LogbookIndex::bandForHz(cur);
+    // SO2V + RUN: the arrows hunt with VFO B. Fenced to A's band (B on
+    // another band is brought back to the run band's first worthy spot),
+    // the pan view never moves, the landing goes to the SUB line.
+    const bool walkB = contestDeck_ && contestDeck_->arrowsWalkB();
+    const qint64 aHz = qint64(centerHz_);
+    const qint64 cur = walkB
+        ? (LogbookIndex::bandForHz(qint64(vfoBHz_)) == LogbookIndex::bandForHz(aHz)
+               ? qint64(vfoBHz_) : (dir > 0 ? 0 : std::numeric_limits<qint64>::max()))
+        : aHz;
+    const QString band = LogbookIndex::bandForHz(aHz);
     const auto worthy = [&band](const SpotLabel* s) {
         if (LogbookIndex::bandForHz(s->hz) != band) return false;
         return s->contest == 0 || s->contest == 'M' || s->contest == 'N';
@@ -608,10 +654,66 @@ void MainWindow::walkContestSpot(int dir) {
         for (auto it = ord.rbegin(); it != ord.rend(); ++it)
             if ((*it)->hz < cur - 20 && worthy(*it)) { pick = *it; break; }
     }
-    if (!pick) return;                 // nothing worth tuning that way
+    if (!pick) {                       // nothing worth tuning that way
+        // Say so: a silent arrow reads as "broken" when the only spots
+        // that way are gray (dupes / zero-point) and skipped on purpose.
+        statusBar()->showMessage(
+            QString("no new spot %1 on %2 (gray = dupe or zero points, skipped)")
+                .arg(dir > 0 ? "above" : "below", band), 4000);
+        return;
+    }
+    if (walkB) {
+        if (vfoLockB_) { statusBar()->showMessage("VFO B is LOCKED"); return; }
+        const uint64_t hz = uint64_t(pick->hz);
+        radio_->setFrequencyHz(Rx::Sub, hz);
+        vfoBHz_ = hz;
+        freqDispB_->setFrequency(hz);
+        sinceVfoBEdit_.restart();
+        pushVfoB();
+        contestDeck_->setSubCall(pick->call, pick->hz);
+        statusBar()->showMessage(QString("VFO B -> %1 %2 kHz")
+                                     .arg(pick->call).arg(pick->hz / 1000.0, 0, 'f', 1));
+        return;
+    }
     onTuneRequested(int(pick->hz - cur), true);
     if (contestDeck_) contestDeck_->prefillCall(pick->call, pick->hz);
     if (cwWin_) cwWin_->setHisCall(pick->call);
+}
+
+// SO2V on: phones A left / B right (the previous routing remembered),
+// VFO B on the pan, B's reader running. Off: all of it back, and the
+// transmitter never left on B.
+void MainWindow::setSo2v(bool on) {
+    if (on) {
+        if (audioRoute_[0] && !so2vPrevRoute_[0]) {
+            so2vPrevRoute_[0] = audioRoute_[0];
+            so2vPrevRoute_[1] = audioRoute_[1];
+            so2vPrevRoute_[2] = audioRoute_[2];
+        }
+        const char spk = audioRoute_[2] ? audioRoute_[2] : 'M';
+        radio_->setAudioRouting('M', 'S', spk);
+        audioPanel_->showRouting('M', 'S', spk);
+        if (bViewBtn_ && !bViewBtn_->isChecked()) bViewBtn_->setChecked(true);
+        if (cwDecB_) { cwDecB_->setEnabled(true); retuneCwDecB(); }
+        statusBar()->showMessage("SO2V on: A in the left ear, B in the right — "
+                                 "\u2190/\u2192 walk B while RUN is lit", 6000);
+    } else {
+        if (cwDecB_) cwDecB_->setEnabled(false);
+        if (so2vPrevRoute_[0]) {
+            radio_->setAudioRouting(so2vPrevRoute_[0], so2vPrevRoute_[1], so2vPrevRoute_[2]);
+            audioPanel_->showRouting(so2vPrevRoute_[0], so2vPrevRoute_[1], so2vPrevRoute_[2]);
+            so2vPrevRoute_[0] = so2vPrevRoute_[1] = so2vPrevRoute_[2] = 0;
+        }
+        if (txVfo_ == 'B') {
+            const char sub = routing_ ? routing_->subRxVfo() : 'B';
+            radio_->setVfoAssignment('A', sub, 'A');
+            txVfo_ = 'A';
+            rxVfo_ = 'A';
+            routing_->showVfoAssignment('A', sub, 'A');
+            pushVfoB();
+        }
+        statusBar()->showMessage("SO2V off", 3000);
+    }
 }
 
 void MainWindow::openDigiWindow() {
@@ -1599,6 +1701,7 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
         return v;
     };
     sdrRxSetOn_ = [setOn](bool v) { return setOn(v, false); };   // FreeDV's, unsaved
+    sdrRxUserSetOn_ = [setOn](bool v) { return setOn(v, true); }; // the SDR button's
     connect(open, &QAction::triggered, this, [this, setOn] {
         if (!sdrRxDlg_) {
             auto* dlg = new SdrRxDialog(QSettings().value("sdrrx/on", false).toBool(),

@@ -5,6 +5,7 @@
 class QComboBox;
 class QCheckBox;
 class QLineEdit;
+class QPlainTextEdit;
 class QLabel;
 class QSpinBox;
 
@@ -52,6 +53,13 @@ private:
     QLineEdit* grid_ = nullptr;
     QLineEdit* opName_ = nullptr;      // station/name — CW [my name]
     QLineEdit* opQth_ = nullptr;       // station/qth  — CW [my QTH]
+    // Cabrillo NAME / ADDRESS* header lines (station/opname, station/addr*).
+    QLineEdit* cabName_ = nullptr;
+    QPlainTextEdit* cabAddr_ = nullptr;
+    QLineEdit* cabCity_ = nullptr;
+    QLineEdit* cabState_ = nullptr;
+    QLineEdit* cabPostal_ = nullptr;
+    QLineEdit* cabCountry_ = nullptr;
     QComboBox* units_ = nullptr;
     QComboBox* layout_ = nullptr;     // ui/layout: classic | panel
     QComboBox* model_ = nullptr;
@@ -64,9 +72,6 @@ private:
     QLabel*    keyerTest_ = nullptr;
     QComboBox* audioDev_ = nullptr;
     QComboBox* vkMic_ = nullptr;      // voice keyer record source (dvr/micSource)
-    QComboBox* spotHost_ = nullptr;   // editable: presets + any node
-    QSpinBox*  spotPort_ = nullptr;
-    QLineEdit* spotLogin_ = nullptr;
     QCheckBox* rotorOn_ = nullptr;
     QComboBox* rotorMode_ = nullptr;     // direct | rotctld
     QComboBox* rotorDev_ = nullptr;      // DCU-3 serial port (direct mode)

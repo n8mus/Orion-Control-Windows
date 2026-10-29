@@ -320,6 +320,50 @@ static void testSentExchInCab(const CtyLookup& cty) {
     const QString t2 = Cabrillo::build(*d, c, qsos, {}, st, &cty, ctx);
     CHECK(t2.contains("EMAIL: jon@example.com"),
           "aadx cab: EMAIL header present when the station has one");
+    // Header hygiene (2026-10-27, the CQ WW SSB rejection): no bare
+    // SOAPBOX: when empty, categories from the row, ADDRESS-* split.
+    CHECK(!t2.contains("SOAPBOX:"), "cab: empty soapbox emits no line");
+    CHECK(!t2.contains("ADDRESS"), "cab: no address lines when unset");
+    ContestRow c2 = c;
+    c2.catOp = "SINGLE-OP"; c2.catAssisted = "NON-ASSISTED";
+    c2.catPower = "HIGH"; c2.catOverlay = "CLASSIC";
+    st.club = "MRRC";                 // exportCabrillo copies row_.club here
+    c2.soapbox = "Fun one.\nAntenna fell down.";
+    st.name = "Jon Greenwood";
+    st.address = "123 Main St\nApt 4";
+    st.city = "Ann Arbor"; st.state = "MI"; st.postal = "48103";
+    st.country = "USA";
+    const QString t3 = Cabrillo::build(*d, c2, qsos, {}, st, &cty, ctx);
+    CHECK(t3.contains("CATEGORY-ASSISTED: NON-ASSISTED\r\n")
+              && t3.contains("CATEGORY-POWER: HIGH\r\n")
+              && t3.contains("CATEGORY-OVERLAY: CLASSIC\r\n")
+              && t3.contains("CLUB: MRRC\r\n"),
+          "cab: row categories / overlay / club reach the header");
+    CHECK(t3.contains("SOAPBOX: Fun one.\r\nSOAPBOX: Antenna fell down.\r\n"),
+          "cab: soapbox one line per line");
+    CHECK(t3.contains("NAME: Jon Greenwood\r\n")
+              && t3.contains("ADDRESS: 123 Main St\r\nADDRESS: Apt 4\r\n")
+              && t3.contains("ADDRESS-CITY: Ann Arbor\r\n")
+              && t3.contains("ADDRESS-STATE-PROVINCE: MI\r\n")
+              && t3.contains("ADDRESS-POSTALCODE: 48103\r\n")
+              && t3.contains("ADDRESS-COUNTRY: USA\r\n"),
+          "cab: NAME + split ADDRESS-* lines");
+    // The confirmed flag round-trips through the database.
+    {
+        ContestDb db2;
+        QTemporaryDir td;
+        CHECK(db2.open(td.path() + "/cat.sqlite"), "cat: db opens");
+        ContestRow r; r.defId = d->id; r.title = "cat"; r.catPower = "HIGH";
+        const qint64 id = db2.createContest(r);
+        CHECK(!db2.contest(id).catConfirmed, "cat: new row unconfirmed");
+        ContestRow r2 = db2.contest(id);
+        r2.catConfirmed = true; r2.catOverlay = "ROOKIE";
+        db2.updateContest(r2);
+        const ContestRow r3 = db2.contest(id);
+        CHECK(r3.catConfirmed && r3.catOverlay == "ROOKIE"
+                  && r3.catPower == "HIGH",
+              "cat: confirmed flag + categories persist");
+    }
 }
 
 static void testQtc(const QString& dir, const CtyLookup& cty) {

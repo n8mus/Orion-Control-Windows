@@ -58,6 +58,7 @@ SpotClient::SpotClient(QObject* parent) : QObject(parent) {
         upSince_.start();
         loginSent_ = false;
         loginFallback_.start(3000);              // some nodes never say "login:"
+        silence_.start(kSilenceMs);
         emit statusChanged(QString("spots: connected to %1").arg(host_));
     });
     connect(&sock_, &QTcpSocket::disconnected, this, [this] {
@@ -82,6 +83,15 @@ SpotClient::SpotClient(QObject* parent) : QObject(parent) {
     });
     pruneTimer_.setInterval(60000);
     connect(&pruneTimer_, &QTimer::timeout, this, &SpotClient::prune);
+    silence_.setSingleShot(true);
+    connect(&silence_, &QTimer::timeout, this, [this] {
+        if (!enabled_ || sock_.state() != QAbstractSocket::ConnectedState) return;
+        emit statusChanged(QString("spots: %1 silent for %2 min — reconnecting")
+                               .arg(host_).arg(kSilenceMs / 60000));
+        sock_.abort();                           // no disconnected() from abort()
+        upSince_.invalidate();                   // a mute link never "held"
+        scheduleReconnect();
+    });
 }
 
 int SpotClient::retryDelayMs(int step) {
@@ -117,6 +127,7 @@ void SpotClient::setEnabled(bool on) {
     } else {
         reconnect_.stop();
         pruneTimer_.stop();
+        silence_.stop();
         sock_.abort();
         emit statusChanged("spots: off");
     }
@@ -245,6 +256,7 @@ void SpotClient::openSocket() {
 
 void SpotClient::onData() {
     lineBuf_ += sock_.readAll();
+    silence_.start(kSilenceMs);                  // the node is alive
     // Answer the login prompt (VE7CC: "Please enter your call:").
     if (!loginSent_) {
         const QString sofar = QString::fromLatin1(lineBuf_).toLower();

@@ -512,6 +512,14 @@ void MainWindow::pushVfoB() {
     const char role = txVfo_ == 'B' ? 'T' : (rxVfo_ == 'B' ? 'R' : 'N');
     pan_->setVfoB(vfoBHz_, role, lo, hi);
     refreshTuneBox();                  // split: the box follows B's TX dial
+    retuneCwDecB();
+}
+
+// The SO2V reader listens at B's offset from the capture LO. Outside the
+// capture it hears noise and says little — the skimmer's reach, no more.
+void MainWindow::retuneCwDecB() {
+    if (!cwDecB_ || !cwDecB_->enabled() || sdrLoHz_ == 0) return;
+    cwDecB_->retune(double(qint64(vfoBHz_) - qint64(sdrLoHz_)));
 }
 
 void MainWindow::refreshPassbandOverlay() {

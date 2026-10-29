@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "app/MainWindow.h"
 #include "audio/LiveVoice.h"
+#include "ui/SdrRxDialog.h"
 #include "ui/FreeDvWindow.h"
 #include "ui/TuneDialogs.h"
 #ifdef HAVE_WDSP
@@ -869,14 +870,99 @@ MainWindow::MainWindow(QWidget* parent)
     }
     spotsMenu->addSeparator();
     {
+        // The cluster node is picked HERE (moved out of Setup 2026-10-28,
+        // where it sat under RADIO and CW KEYER — "that silly place"):
+        // a node that goes mute mid-session is rolled past from the same
+        // menu that turns the spots on, and the pick applies at once.
+        // The preset list is the nodes that answered a TCP probe from
+        // this station (2026-09-21, re-probed 2026-10-28); CC Cluster
+        // nodes honour SET/FT8 and the spotter-area filter, DXSpider
+        // nodes ignore them.
+        static const struct { const char* host; int port; const char* who; } kNodes[] = {
+            {"w3lpl.net",            7373, "W3LPL — DXSpider, Maryland"},
+            {"dxc.nc7j.com",         7373, "NC7J — CC Cluster"},
+            {"dxc.k0xm.net",         7300, "K0XM — CC Cluster, Missouri"},
+            {"k1ttt.net",            7373, "K1TTT — AR-Cluster"},
+            {"dxc.ve7cc.net",          23, "VE7CC — CC Cluster, BC"},
+            {"hamqth.com",           7300, "HamQTH — DXSpider, worldwide"},
+            {"dxfun.com",            8000, "DXFun — DXSpider"},
+            {"gb7djk.dxcluster.net", 7300, "GB7DJK — DXSpider, UK"},
+        };
         QSettings s;
         const QString host  = s.value("spots/host", "dxc.ve7cc.net").toString();
         const quint16 port  = static_cast<quint16>(s.value("spots/port", 23).toUInt());
         const QString login = s.value("spots/login", stationCall).toString();
         spotSrcAct_ = spotsMenu->addAction(QString("source: %1:%2 as %3")
                                                .arg(host).arg(port).arg(login));
-        spotSrcAct_->setEnabled(false);
-        spotsOnAct_ = spotsOn;                   // openSetup reconnects through it
+        spotSrcAct_->setEnabled(false);          // the readout, as it always was
+        auto* nodeMenu = spotsMenu->addMenu("Change cluster node");   // right under it
+        styleMenu(nodeMenu);
+        auto* nodeGrp = new QActionGroup(nodeMenu);
+        nodeGrp->setExclusive(true);
+        QVector<QAction*> nodeActs;
+        for (const auto& n : kNodes) {
+            auto* act = nodeMenu->addAction(
+                QString("%1:%2 — %3").arg(n.host).arg(n.port).arg(n.who));
+            act->setCheckable(true);
+            act->setActionGroup(nodeGrp);
+            act->setData(QStringList{n.host, QString::number(n.port)});
+            nodeActs.push_back(act);
+            connect(act, &QAction::triggered, this, [this, act] {
+                const QStringList d = act->data().toStringList();
+                QSettings s;
+                s.setValue("spots/host", d.at(0));
+                s.setValue("spots/port", d.at(1).toInt());
+                applyClusterSettings();
+            });
+        }
+        auto* nodeOther = nodeMenu->addAction("Other node…");
+        nodeOther->setCheckable(true);
+        nodeOther->setActionGroup(nodeGrp);
+        // Tick the saved node (a preset, or "Other" for a typed one).
+        const auto tickNode = [nodeActs, nodeOther](const QString& h, int p) {
+            for (QAction* a : nodeActs) {
+                const QStringList d = a->data().toStringList();
+                if (d.at(0) == h && d.at(1).toInt() == p) { a->setChecked(true); return; }
+            }
+            nodeOther->setChecked(true);
+        };
+        tickNode(host, port);
+        connect(nodeOther, &QAction::triggered, this, [this, tickNode] {
+            QSettings s;
+            const QString cur = QString("%1:%2")
+                .arg(s.value("spots/host", "dxc.ve7cc.net").toString())
+                .arg(s.value("spots/port", 23).toInt());
+            bool ok = false;
+            const QString t = QInputDialog::getText(this, "Cluster node",
+                "host:port (telnet DX cluster or RBN):", QLineEdit::Normal,
+                cur, &ok).trimmed();
+            const int colon = t.lastIndexOf(':');
+            if (!ok || t.isEmpty()) {
+                tickNode(s.value("spots/host").toString(), s.value("spots/port", 23).toInt());
+                return;
+            }
+            const QString h = colon > 0 ? t.left(colon) : t;
+            const int p = colon > 0 ? t.mid(colon + 1).toInt() : 7300;
+            s.setValue("spots/host", h);
+            s.setValue("spots/port", p > 0 ? p : 7300);
+            tickNode(h, p > 0 ? p : 7300);
+            applyClusterSettings();
+        });
+        nodeMenu->addSeparator();
+        auto* loginAct = nodeMenu->addAction(QString("Login as %1…").arg(login));
+        connect(loginAct, &QAction::triggered, this, [this, loginAct] {
+            QSettings s;
+            bool ok = false;
+            const QString t = QInputDialog::getText(this, "Cluster login",
+                "Callsign the node sees:", QLineEdit::Normal,
+                s.value("spots/login", s.value("station/callsign").toString()).toString(),
+                &ok).trimmed().toUpper();
+            if (!ok || t.isEmpty()) return;
+            s.setValue("spots/login", t);
+            loginAct->setText(QString("Login as %1…").arg(t));
+            applyClusterSettings();
+        });
+        spotsOnAct_ = spotsOn;                   // applyClusterSettings reconnects through it
         spotClient_.configure(host, port, login);
         spotsOn->setChecked(s.value("spots/enabled", true).toBool());
         dxOn->setChecked(s.value("spots/dx", true).toBool());
@@ -953,7 +1039,10 @@ MainWindow::MainWindow(QWidget* parent)
                     QString("audio: phones L=%1 R=%2  speaker=%3").arg(l).arg(r).arg(s));
             });
     connect(radio_, &RadioController::audioRoutingReported, this,
-            [this](char l, char r, char s) { audioPanel_->showRouting(l, r, s); });
+            [this](char l, char r, char s) {
+                audioRoute_[0] = l; audioRoute_[1] = r; audioRoute_[2] = s;
+                audioPanel_->showRouting(l, r, s);
+            });
 
     // Cluster spots carry no location: place them by cty.dat prefix (country
     // center — good enough for a bearing), memoized per call so the FT8-rate
@@ -1516,19 +1605,42 @@ MainWindow::MainWindow(QWidget* parent)
     fdvTick->start();
 
 #ifdef HAVE_SDRPLAY
-    // Compact "SDR" dropdown for RSP2 hardware controls (hidden until clicked).
+    // "SDR" button: CLICK = SDR receive audio (WDSP) on/off, lit while it
+    // plays; RIGHT-CLICK = the RSP2 hardware menu (antenna, gain, notch,
+    // IQ recording, the audio window with its noise controls…). It was a
+    // dropdown whose only off switch sat two levels down in that window —
+    // the operator wanted the sound gone and couldn't find it (2026-10-27).
     // Antenna A = Orion spare jack, B = Omni VII spare jack — switch it when you
     // switch radios; it retunes the panadapter input live.
     auto* sdrBtn = new QToolButton(topStrip);
     sdrBtn->setText("SDR ▾");
-    sdrBtn->setPopupMode(QToolButton::InstantPopup);
     sdrBtn->setFocusPolicy(Qt::NoFocus);
+    sdrBtn->setToolTip("Click: SDR receive audio on/off (PC speakers / headset).\n"
+                       "Right-click: RSP2 menu — antenna, gain, notch, recording, "
+                       "audio window.");
     sdrBtn->setStyleSheet(
         QString(kSideBtnStyle));
     auto* sdrMenu = new QMenu(sdrBtn);
     styleMenu(sdrMenu);
     // Lit while the SDR receive audio (WDSP) plays.
     lightWhile(sdrBtn, sdrMenu, [this] { return sdrRx_ && sdrRx_->running(); });
+    sdrBtn->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(sdrBtn, &QToolButton::customContextMenuRequested, this,
+            [sdrBtn, sdrMenu](const QPoint& p) { sdrMenu->exec(sdrBtn->mapToGlobal(p)); });
+    connect(sdrBtn, &QToolButton::clicked, this, [this, sdrBtn, sdrMenu] {
+        if (!sdrRxUserSetOn_) {                 // built without WDSP: just the menu
+            sdrMenu->exec(sdrBtn->mapToGlobal(QPoint(0, sdrBtn->height())));
+            return;
+        }
+        if (fdvMode_) {                         // FreeDV owns the SDR audio
+            statusBar()->showMessage("FreeDV mode owns the SDR audio — leave FreeDV first", 5000);
+            refreshLights();
+            return;
+        }
+        const bool got = sdrRxUserSetOn_(!(sdrRx_ && sdrRx_->running()));
+        if (sdrRxDlg_) sdrRxDlg_->setOn(got);
+        refreshLights();
+    });
     sdrMenu->setToolTipsVisible(true);   // hardware entries carry their limits
     // Radio picker: which driver the console runs. Takes effect on the next
     // launch (the driver, serial framing, and rigctld identity are built at
@@ -3460,6 +3572,8 @@ MainWindow::MainWindow(QWidget* parent)
     // the SDR LO, so the decoder's mixer never moves.
     cwDec_ = new CwDecoder(double(spanHz), -double(kLoOffsetHz), this);
     Q_ASSERT(spanHz == kSdrCaptureHz);     // skim_ mixes at this same constant
+    cwDecB_ = new CwDecoder(double(spanHz), -double(kLoOffsetHz), this);
+    cwDecB_->setEnabled(false);            // SO2V turns it on
     // The consumer chain — runs on the IQ WORKER thread, never on the
     // USB callback (see iqWorker_ in the header for the scar story).
     const auto fanOut = [this](const IqBlock& iq) {
@@ -3475,6 +3589,7 @@ MainWindow::MainWindow(QWidget* parent)
             && nowMs - sdr_.lastOverloadMs() < 150;
         if (!clipped) {
             cwDec_->processIq(iq.data(), iq.size());
+            cwDecB_->processIq(iq.data(), iq.size());   // no-op unless SO2V
             skim_->processIq(iq.data(), iq.size());
             skimStft_->processIq(iq.data(), iq.size());
         }
@@ -4128,7 +4243,7 @@ void MainWindow::applyClusterSettings() {
     const QString  login = s.value("spots/login",
                                    s.value("station/callsign", "")).toString();
     spotClient_.configure(host, port, login);
-    if (spotSrcAct_)
+    if (spotSrcAct_)                             // the SPOTS ▾ readout line
         spotSrcAct_->setText(QString("source: %1:%2 as %3")
                                  .arg(host).arg(port).arg(login));
     if (spotsOnAct_ && spotsOnAct_->isChecked()) {
@@ -4147,13 +4262,9 @@ void MainWindow::openSetup() {
         // point is "make CW come out of a different thing", and silently
         // deferring it reads as the selector doing nothing.
         if (cwWin_) cwWin_->reloadKeyer();
-        // The cluster node applies NOW too: the point of the node list is
-        // rolling through them when one goes quiet, and a restart per try
-        // is not rolling through anything. Reconnecting is just configure
-        // + an off/on of the client, which re-runs the login sequence.
-        applyClusterSettings();
+        // (The cluster node left Setup for SPOTS ▾ → Cluster node, 2026-10-28.)
         statusBar()->showMessage(
-            "setup saved — the keyer and the cluster node apply now; "
+            "setup saved — the keyer applies now; "
             "radio changes apply on the next launch", 8000);
     }
 }

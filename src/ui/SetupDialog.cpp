@@ -13,6 +13,7 @@
 #include <QMultiMap>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QSerialPort>
@@ -144,6 +145,32 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     opQth_->setToolTip("Your town/state as you send it — the CW window's "
                        "[my QTH] field");
     form->addRow("QTH", opQth_);
+    // Cabrillo header identity: NAME and the ADDRESS-* lines the contest
+    // robots want. Each line is emitted only when filled.
+    cabName_ = new QLineEdit(
+        s.value("station/opname", s.value("contest/opname").toString())
+            .toString(), this);
+    cabName_->setMaxLength(60);
+    cabName_->setToolTip("Cabrillo NAME: — your full name on contest logs");
+    form->addRow("Full name", cabName_);
+    cabAddr_ = new QPlainTextEdit(
+        s.value("station/address", s.value("contest/address").toString())
+            .toString(), this);
+    cabAddr_->setFixedHeight(44);
+    cabAddr_->setToolTip("Cabrillo ADDRESS: — street lines (one per line)");
+    form->addRow("Address", cabAddr_);
+    cabCity_ = new QLineEdit(s.value("station/addrCity").toString(), this);
+    cabCity_->setToolTip("Cabrillo ADDRESS-CITY:");
+    form->addRow("City", cabCity_);
+    cabState_ = new QLineEdit(s.value("station/addrState").toString(), this);
+    cabState_->setToolTip("Cabrillo ADDRESS-STATE-PROVINCE:");
+    form->addRow("State/province", cabState_);
+    cabPostal_ = new QLineEdit(s.value("station/addrPostal").toString(), this);
+    cabPostal_->setToolTip("Cabrillo ADDRESS-POSTALCODE:");
+    form->addRow("Postal code", cabPostal_);
+    cabCountry_ = new QLineEdit(s.value("station/addrCountry").toString(), this);
+    cabCountry_->setToolTip("Cabrillo ADDRESS-COUNTRY:");
+    form->addRow("Country", cabCountry_);
     units_ = new QComboBox(this);
     units_->addItem("Auto (locale)", "auto");
     units_->addItem("Miles", "mi");
@@ -340,51 +367,6 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     micRow->addWidget(vkMic_, 1);
     micRow->addWidget(nameBtn);
     form->addRow("Voice keyer mic", micRow);
-
-    form->addRow(section("DX CLUSTER", this));
-    // Editable combo: pick a node and the port follows, or type any host.
-    // Nodes are the ones that answered a TCP probe from this station on
-    // 2026-09-21 (VE7CC, the old default, did not — hence the list).
-    // Software matters: SET/FT8 and the spotter-area filter are CC Cluster
-    // commands, so the area chips bite hardest on a CC node.
-    static const struct { const char* host; int port; const char* who; } kNodes[] = {
-        {"hamqth.com",           7300, "HamQTH — DXSpider, worldwide"},
-        {"w3lpl.net",            7373, "W3LPL — DXSpider, Maryland"},
-        {"dxc.nc7j.com",         7373, "NC7J — CC Cluster"},
-        {"dxc.k0xm.net",         7300, "K0XM — CC Cluster, Missouri"},
-        {"k1ttt.net",            7373, "K1TTT — AR-Cluster"},
-        {"dxc.ve7cc.net",          23, "VE7CC — CC Cluster, BC"},
-        {"dxfun.com",            8000, "DXFun — DXSpider"},
-        {"gb7djk.dxcluster.net", 7300, "GB7DJK — DXSpider, UK"},
-    };
-    spotHost_ = new QComboBox(this);
-    spotHost_->setEditable(true);
-    for (const auto& n : kNodes)
-        spotHost_->addItem(QString("%1:%2 — %3").arg(n.host).arg(n.port)
-                               .arg(n.who),
-                           QStringList{n.host, QString::number(n.port)});
-    spotHost_->setEditText(s.value("spots/host", "dxc.ve7cc.net").toString());
-    spotHost_->setToolTip(
-        "Pick a node (the port follows) or type any host.\n"
-        "A node change takes effect as soon as you close this dialog.");
-    form->addRow("Node", spotHost_);
-    spotPort_ = new QSpinBox(this);
-    spotPort_->setRange(1, 65535);
-    spotPort_->setValue(s.value("spots/port", 23).toInt());
-    form->addRow("Port", spotPort_);
-    // Choosing a preset leaves the HOST in the line edit, not the menu
-    // label — what gets saved is what the box shows.
-    connect(spotHost_, &QComboBox::activated, this, [this](int i) {
-        const QStringList d = spotHost_->itemData(i).toStringList();
-        if (d.size() != 2) return;
-        spotHost_->setEditText(d.at(0));
-        spotPort_->setValue(d.at(1).toInt());
-    });
-    spotLogin_ = new QLineEdit(
-        s.value("spots/login", s.value("station/callsign", "").toString())
-            .toString(), this);
-    spotLogin_->setToolTip("Cluster login — normally your callsign");
-    form->addRow("Login", spotLogin_);
 
     form->addRow(section("ROTOR", this));
     rotorOn_ = new QCheckBox("Rotor control", this);
@@ -860,6 +842,12 @@ void SetupDialog::accept() {
     s.setValue("station/grid", grid_->text().trimmed());
     s.setValue("station/name", opName_->text().trimmed());
     s.setValue("station/qth", opQth_->text().trimmed());
+    s.setValue("station/opname", cabName_->text().trimmed());
+    s.setValue("station/address", cabAddr_->toPlainText().trimmed());
+    s.setValue("station/addrCity", cabCity_->text().trimmed());
+    s.setValue("station/addrState", cabState_->text().trimmed());
+    s.setValue("station/addrPostal", cabPostal_->text().trimmed());
+    s.setValue("station/addrCountry", cabCountry_->text().trimmed());
     s.setValue("station/units", units_->currentData().toString());
     // Only once someone picks Panel (or back): a stock config stays as is.
     if (layout_->currentData().toString() != s.value("ui/layout", "classic").toString())
@@ -884,9 +872,6 @@ void SetupDialog::accept() {
     s.setValue("cw/keyer", keyerSel_->currentData().toString());
     s.setValue("cw/audioDev", audioDev_->currentText().trimmed());
     s.setValue("dvr/micSource", vkMic_->currentData().toString());
-    s.setValue("spots/host", spotHost_->currentText().trimmed());
-    s.setValue("spots/port", spotPort_->value());
-    s.setValue("spots/login", spotLogin_->text().trimmed().toUpper());
     s.setValue("rotor/enabled", rotorOn_->isChecked());
     s.setValue("rotor/mode", rotorMode_->currentData().toString());
     s.setValue("rotor/device", rotorDev_->currentText().trimmed());

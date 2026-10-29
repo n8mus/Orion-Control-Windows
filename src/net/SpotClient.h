@@ -96,6 +96,15 @@ public:
 private:                       // retry while enabled
     QTimer     pruneTimer_;
     QTimer     loginFallback_;                   // send login even w/o a prompt
+    // Silence watchdog (2026-10-28): VE7CC accepted the TCP connection,
+    // sent its banner and then NOTHING for half an hour while three other
+    // nodes chattered — and this client sat on the dead link forever,
+    // "connected" in the status bar with an empty band map. Any node
+    // worth reading says something within minutes (spots, or at least
+    // its own keepalive chatter); a link mute this long is dropped and
+    // redialed through the usual backoff, with the status bar saying why.
+    QTimer     silence_;
+    static constexpr int kSilenceMs = 10 * 60 * 1000;
     QString    host_  = "dxc.ve7cc.net";
     quint16    port_  = 23;
     QString    login_;

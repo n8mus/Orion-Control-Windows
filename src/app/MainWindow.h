@@ -408,6 +408,7 @@ private:
     } fdvSaved_;
     QPointer<FreeDvWindow> fdvWin_;
     std::function<bool(bool)> sdrRxSetOn_;         // SDR receive audio on/off
+    std::function<bool(bool)> sdrRxUserSetOn_;     // same, saved as the operator's choice
     bool winlinkActive_ = false, winlinkOwnsDig_ = false, winlinkStoppedLive_ = false;
     bool wsjtxOwnsDig_ = false;
     QPointer<QProcess> wsjtxProc_, gridTrackerProc_;
@@ -623,6 +624,14 @@ private:
     bool contestRx_ = false;                   // deck wants the CW decoder
     SpotTableWindow* spotTable_ = nullptr;     // cluster feed as a table (lazy)
     CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
+    // SO2V (2026-10-28): a second IQ reader parked on VFO B for the
+    // deck's SUB strip — one skimmer channel's worth of CPU, on only
+    // while the deck's SO2V button is lit. retuneCwDecB follows B.
+    CwDecoder* cwDecB_ = nullptr;
+    void retuneCwDecB();
+    void setSo2v(bool on);                     // ears, B shown, B reader
+    char audioRoute_[3] = {0, 0, 0};           // last *UC reported (L, R, spk)
+    char so2vPrevRoute_[3] = {0, 0, 0};        // routing to restore on SO2V off
     CwDecoder* audioDec_ = nullptr;            // radio-audio CW reader (lazy)
     AudioCwSource* audioSrc_ = nullptr;        // SignaLink capture for it
     QPushButton* cwAudioWarn_ = nullptr;           // status bar: RADIO ear on the wrong device

@@ -318,6 +318,33 @@ void ContestDeck::buildUi() {
             applyFkeyLabels();
             updateEsmHint();
         });
+        // SO2V: run on A, hunt with B. Lit = ←/→ walk VFO B while RUN is
+        // lit, B's call lands in the SUB line, Enter there pounces with the
+        // transmitter on B. Remembered across contests (contest/so2v).
+        so2vBtn_ = new QPushButton("SO2V", this);
+        so2vBtn_->setCheckable(true);
+        so2vBtn_->setFocusPolicy(Qt::NoFocus);
+        so2vBtn_->setToolTip(
+            "Single op, two VFOs: run on A, hunt with B.\n"
+            "On: phones A left / B right, VFO B shown, a CW reader on B.\n"
+            "RUN lit: \u2190/\u2192 walk VFO B through the spots (S&P walks A).\n"
+            "Enter in SUB: transmitter to B, work him, log, TX back to A.");
+        hdr->addWidget(so2vBtn_);
+        connect(so2vBtn_, &QPushButton::toggled, this, [this](bool on) {
+            so2v_ = on;
+            QSettings().setValue("contest/so2v", on);
+            refreshSubHint();
+            if (!on && pounceOn_) {
+                // Never leave SO2V with the transmitter on the hunt VFO.
+                pounceOn_ = false;
+                pounceHz_ = 0;
+                emit pounceDone();
+            }
+            if (subRead_) subRead_->setVisible(on);
+            trace(QString("SO2V %1").arg(on ? "on" : "off"));
+            emit so2vChanged(on);
+            refreshSub();
+        });
         // ESM on/off, finally on a button (live-found on AA Phone: with
         // old VK test recordings in the slots, Enter transmitted them —
         // the operator wanted Enter to just LOG). Off = plain
@@ -326,6 +353,8 @@ void ContestDeck::buildUi() {
         esmBtn_->setCheckable(true);
         esmBtn_->setFocusPolicy(Qt::NoFocus);
         esmOn_ = QSettings().value("contest/esm", true).toBool();
+        if (so2vBtn_ && QSettings().value("contest/so2v", false).toBool())
+            so2vBtn_->setChecked(true);      // toggled() wires the rest
         esmBtn_->setChecked(esmOn_);
         esmBtn_->setToolTip(
             "Enter Sends Message: Enter keys the next CW message or "
@@ -589,19 +618,31 @@ void ContestDeck::buildUi() {
             subCall_->setCursorPosition(pos);
             refreshSub();
         });
-        connect(subCall_, &QLineEdit::returnPressed, this, [this] {
-            const QString c = subCall_->text().trimmed().toUpper();
-            if (!loggableCall(c) || contestId_ < 0) return;
-            subCall_->clear();
-            refreshSub();
-            emit subTakeRequested(c);
-        });
+        connect(subCall_, &QLineEdit::returnPressed, this,
+                [this] { takeSub(); });
         sub->addWidget(subCall_);
         subInfo_ = new QLabel(this);
         subInfo_->setStyleSheet("color:#8798a8;");
         subInfo_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         sub->addWidget(subInfo_, 1);
+        // SO2V: B's own CW reader, a short strip on the same line (no new
+        // row — the deck's height is the pan's). Clips, never widens.
+        subRead_ = new QLabel(this);
+        subRead_->setFont(QFont("DejaVu Sans Mono", subCall_->font().pointSize()));
+        subRead_->setStyleSheet("color:#c9d6e2; background:#141a22; padding:0 4px;");
+        subRead_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        subRead_->setToolTip("CW decoded on VFO B (SO2V)");
+        subRead_->setVisible(false);
+        sub->addWidget(subRead_, 2);
         mid->addLayout(sub);
+        // The two SO2V keys, spelled out under the SUB box (operator,
+        // 2026-10-28: "clearly states Ctrl+S and then Ctrl+R to return").
+        // Clips, never widens; the text follows the SO2V button.
+        subHint_ = new QLabel(this);
+        subHint_->setStyleSheet("color:#8798a8; font-size:10px;");
+        subHint_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        mid->addWidget(subHint_);
+        refreshSubHint();
 
         // F keys — two even rows of six (F1-F6 / F7-F12), each button
         // sized like the mode buttons (not stretched), CENTERED, with
@@ -818,6 +859,19 @@ void ContestDeck::buildUi() {
     // rare deliberate act; one confirm (operator, 2026-10-22: opening the
     // manager to drop a bad call mid-contest is far too slow).
     sc(QKeySequence(Qt::CTRL | Qt::Key_D), [this] { deleteQsoAt(0); });
+    // Ctrl+S / Ctrl+R (2026-10-28): the SO2V pair, the operator's own
+    // picks. Ctrl+S = "Sub": POUNCE on the landing waiting in SUB (TX to
+    // B) — "get me to the sub receiver from the keyboard". Ctrl+R =
+    // "Run": back to the run (wipes a pounce or an entry, TX back to A).
+    // End/Home were offered and refused — off the main keyboard, too far
+    // from the hands. Enter in an empty call box pounces too, but Ctrl+S
+    // works whatever the box holds.
+    sc(QKeySequence(Qt::CTRL | Qt::Key_S), [this] { pounceKey(); });
+    sc(QKeySequence(Qt::CTRL | Qt::Key_R), [this] {
+        if (pounceOn_ || !call_->text().trimmed().isEmpty()) wipe();
+        call_->setFocus();
+        status_->setText(so2v_ ? "run on A" : "run");
+    });
     sc(QKeySequence(Qt::Key_PageUp),
        [this] { wpm_->setValue(wpm_->value() + 1); });
     sc(QKeySequence(Qt::Key_PageDown),
@@ -1109,8 +1163,11 @@ void ContestDeck::setRig(qint64 hz, const QString& adifMode) {
     // as a local spot; a grabbed/landed one just clears, because its
     // spot is already on the map. Walk hops are safe: every landing
     // re-anchors before the tune reports back.
-    if (contestId_ >= 0 && hz > 0 && anchorHz_ > 0
-        && qAbs(hz - anchorHz_) > 1000) {
+    // SO2V pounce: the call lives on B, so B's dial is the one that can
+    // roll away from it — the run dial never moved.
+    const qint64 here = pounceOn_ && vfoB_ ? vfoB_() : hz;
+    if (contestId_ >= 0 && here > 0 && anchorHz_ > 0
+        && qAbs(here - anchorHz_) > 1000) {
         const QString c = call_->text().trimmed();
         if (c.isEmpty()) {
             anchorHz_ = 0;
@@ -1198,11 +1255,16 @@ char ContestDeck::classifySpot(const QString& call, qint64 hz) const {
     probe.mode = modeNow();
     CtyInfo ci;
     const bool ok = cty_ && cty_->info(normalizeForCty(c), ci);
-    const int pts = def_->points ? def_->points(probe, ci, ok, ctx_) : 0;
-    if (pts <= 0) return 'Z';
+    // A new multiplier outranks the points verdict: in CQ WW a US
+    // station is worth 0 points to us but its zone or country can still
+    // be a mult we lack, and N1MM paints that one as a mult too. Judged
+    // as 'Z' first, it drew gray and the SO2V walk stepped over it
+    // (live-found 2026-10-28: KI4I on a fresh log, arrows refused it).
     if (def_->mults)
         for (const QString& k : def_->mults(probe, ci, ok, ctx_))
             if (!k.isEmpty() && !sb_.multKeys.contains(k)) return 'M';
+    const int pts = def_->points ? def_->points(probe, ci, ok, ctx_) : 0;
+    if (pts <= 0) return 'Z';
     return 'N';
 }
 
@@ -1210,6 +1272,11 @@ char ContestDeck::classifySpot(const QString& call, qint64 hz) const {
 
 void ContestDeck::enterPressed() {
     if (contestId_ < 0 || !def_) return;
+    // SO2V: an empty call box with a landing in SUB — Enter pounces
+    // instead of keying one more CQ (see takeSub).
+    if (so2v_ && runMode_ && !pounceOn_
+        && call_->text().trimmed().isEmpty() && takeSub())
+        return;
     EsmInput in;
     // ESM drives BOTH modes when the (now clearly lit) button is on —
     // the operator's revised ruling once the toggle was understood:
@@ -1416,7 +1483,8 @@ void ContestDeck::updateEsmHint() {
 CQsoValues ContestDeck::collectValues() const {
     CQsoValues v;
     v.call = call_->text().trimmed().toUpper();
-    v.band = currentBand();
+    v.band = pounceOn_ && pounceHz_ > 0 ? LogbookIndex::bandForHz(pounceHz_)
+                                        : currentBand();
     v.mode = modeNow();
     v.rstS = def_ && def_->hasRst && rstS_ ? rstS_->text().trimmed()
                                            : QString();
@@ -1446,7 +1514,8 @@ void ContestDeck::logNow() {
     ContestQso q;
     q.contestId = contestId_;
     q.tsUtc = QDateTime::currentDateTimeUtc();
-    q.freqHz = rigHz_ > 0 ? rigHz_ : 14030000;
+    q.freqHz = pounceOn_ && pounceHz_ > 0 ? pounceHz_
+             : rigHz_ > 0 ? rigHz_ : 14030000;
     q.v = collectValues();
     q.v.serialS = def_->sentSerial ? row_.nextSerial : 0;
     q.runSp = runMode_ ? "R" : "S";
@@ -1579,6 +1648,15 @@ void ContestDeck::wipe() {
     expectedCqz_ = expectedItuz_ = 0;
     refreshScp();
     anchorHz_ = 0;                       // nothing in the box to abandon
+    if (pounceOn_) {                     // logged or abandoned: TX back to A
+        pounceOn_ = false;
+        pounceHz_ = 0;
+        runMode_ = true;
+        runBtn_->setChecked(true);
+        spBtn_->setChecked(false);
+        applyFkeyLabels();
+        emit pounceDone();
+    }
     // A wipe means logged or abandoned — either way, back to CQing.
     if (autoBtn_ && autoBtn_->isChecked()) {
         autoPaused_ = false;
@@ -2274,6 +2352,74 @@ void ContestDeck::postScoreIfDue() {
     cosLastQsos_ = sb_.qsos;
 }
 
+// Enter on the SUB line — or, in SO2V run mode, Enter in an EMPTY call
+// box while a landing waits in SUB (live-found 2026-10-28: "I hit Enter
+// and it just keeps calling CQ" — the arrows had put the call in SUB,
+// and ESM's empty-box Enter is CQ). The arrows' landing is the intent;
+// it outranks another CQ.
+bool ContestDeck::takeSub() {
+    if (!subCall_) return false;
+    const QString c = subCall_->text().trimmed().toUpper();
+    if (!loggableCall(c) || contestId_ < 0) return false;
+    subCall_->clear();
+    refreshSub();
+    if (so2v_) {
+        // Pounce: the run frequency stays on A, the transmitter
+        // goes to B for this one QSO. The CQ robot waits.
+        const qint64 bHz = vfoB_ ? vfoB_() : 0;
+        autoCqTimer_.stop();
+        autoPaused_ = true;
+        pounceOn_ = true;
+        pounceHz_ = bHz;
+        runMode_ = false;            // S&P keys for the pounce
+        runBtn_->setChecked(false);
+        spBtn_->setChecked(true);
+        applyFkeyLabels();
+        prefillCall(c, bHz);
+        trace(QString("POUNCE %1 @ %2").arg(c).arg(bHz));
+        emit subPounceRequested(c);
+        return true;
+    }
+    emit subTakeRequested(c);
+    return true;
+}
+
+void ContestDeck::pounceKey() {
+    if (contestId_ < 0 || !def_) return;
+    if (!so2v_) { status_->setText("Ctrl+S pounces — light SO2V first"); return; }
+    if (pounceOn_) { status_->setText("already on B — log it or Ctrl+R"); return; }
+    const QString c = call_->text().trimmed();
+    if (!c.isEmpty()) {
+        // A run QSO in the box is never silently thrown away.
+        flashRefusal(call_, c + " is in the box — log it or Ctrl+R (wipe) first");
+        return;
+    }
+    if (!takeSub())
+        status_->setText("nothing in SUB — ←/→ walk VFO B to a spot first");
+}
+
+void ContestDeck::setSubCall(const QString& call, qint64 hz) {
+    if (!subCall_) return;
+    subCall_->setText(call.trimmed().toUpper());
+    (void)hz;                            // refreshSub reads B's live dial
+    refreshSub();
+}
+
+void ContestDeck::appendSubRead(const QString& text) {
+    if (!subRead_ || !so2v_ || !isVisible()) return;
+    subReadBuf_ += text;
+    if (subReadBuf_.size() > 200) subReadBuf_ = subReadBuf_.right(120);
+    subRead_->setText(subReadBuf_.right(48));
+}
+
+void ContestDeck::refreshSubHint() {
+    if (!subHint_) return;
+    subHint_->setText(
+        so2v_ ? QStringLiteral("←/→ walk VFO B  ·  Ctrl+S = work the SUB call (TX to B)"
+                               "  ·  Ctrl+R = return to the run (TX to A)")
+              : QStringLiteral("Enter takes the SUB call to A  ·  light SO2V for Ctrl+S / Ctrl+R"));
+}
+
 void ContestDeck::refreshSub() {
     if (!subInfo_) return;
     const qint64 bHz = vfoB_ ? vfoB_() : 0;
@@ -2284,13 +2430,17 @@ void ContestDeck::refreshSub() {
     }
     const QString band = LogbookIndex::bandForHz(bHz);
     QString line = QString("B %1 kHz %2").arg(bHz / 1000.0, 0, 'f', 1).arg(band);
+    if (pounceOn_) line += QStringLiteral("  · TX on B");
     QString color = "#8798a8";
     if (loggableCall(c)) {
+        // Worth only — the keys are spelled out on the hint line below
+        // (the old "Enter pounces" here was wrong from the call box and
+        // the operator called it out, 2026-10-28).
         const char cls = classifySpot(c, bHz);
-        line += cls == 'M' ? QStringLiteral("  · NEW MULT — Enter takes it")
+        line += cls == 'M' ? QStringLiteral("  · NEW MULT")
               : cls == 'W' ? QStringLiteral("  · dupe on B's band")
               : cls == 'Z' ? QStringLiteral("  · zero points")
-                           : QStringLiteral("  · new — Enter takes it");
+                           : QStringLiteral("  · new");
         color = cls == 'M' ? "#ff5252" : cls == 'W' ? "#6c7a88" : "#5db2f0";
     }
     subInfo_->setStyleSheet("color:" + color + ";");

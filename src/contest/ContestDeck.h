@@ -81,12 +81,29 @@ public:
     // the spot-feed mode fence. Empty when no contest is open.
     // The second receiver (VFO B) for the SUB line: polled once a second.
     void setVfoBSource(std::function<qint64()> hz) { vfoB_ = std::move(hz); }
+    // SO2V (2026-10-28): run on A, hunt with B from the keyboard. While
+    // the SO2V button is lit AND RUN is lit, ←/→ walk VFO B through the
+    // spots and the landing goes to the SUB line; in S&P the arrows walk
+    // A as always. The main window owns the ears, the B reader and the
+    // transmitter moves — the deck only says what it wants.
+    bool so2vOn() const { return so2v_; }
+    bool arrowsWalkB() const { return so2v_ && runMode_; }
+    // A B-walk landing: the spot's call into the SUB box, classified.
+    void setSubCall(const QString& call, qint64 hz);
+    // Take the SUB line's call: pounce (SO2V) or hand it to A. False
+    // when SUB holds nothing loggable.
+    bool takeSub();
+    void pounceKey();                    // Ctrl+S: pounce, with the refusals said
+    // The pounce in progress (TX on B): logNow logs at B's frequency and
+    // setRig judges abandonment against B, not the run dial.
+    bool pounceOn() const { return pounceOn_; }
     QString contestModeCategory() const {
         return def_ ? def_->modeCategory : QString();
     }
 
 public slots:
     void appendRead(const QString& text);   // decoded CW rides in here
+    void appendSubRead(const QString& text); // VFO B's reader (SO2V strip)
     // Spot click / arrow landing / Space grab. hz anchors the call at
     // the frequency it lives on (QSY-abandon detection); 0 = the dial.
     void prefillCall(const QString& call, qint64 hz = 0);
@@ -104,6 +121,13 @@ signals:
     // it — swap A/B so the transmitter goes there, then the call lands in
     // the main entry.
     void subTakeRequested(const QString& call);
+    // SO2V: the button flipped (ears, B reader, B shown on the pan).
+    void so2vChanged(bool on);
+    // SO2V pounce: put the TRANSMITTER on B (A untouched, no swap) — the
+    // call is already in the main entry, anchored at B. pounceDone says
+    // the QSO logged or was wiped: TX back to A, CQ resumes.
+    void subPounceRequested(const QString& call);
+    void pounceDone();
     // Phone contests: Space in the entry is the console's MOX toggle, as
     // everywhere else (operator, 2026-10-23: he speaks, hands on the
     // keyboard). CW keeps N1MM's Space = prefill + jump to the exchange.
@@ -294,6 +318,14 @@ private:
     std::function<qint64()> vfoB_;
     QLineEdit* subCall_ = nullptr;
     QLabel* subInfo_ = nullptr;
+    QLabel* subHint_ = nullptr;          // the Ctrl+S / Ctrl+R line under SUB
+    void refreshSubHint();
+    QPushButton* so2vBtn_ = nullptr;
+    QLabel* subRead_ = nullptr;          // B's decoded CW, last few dozen chars
+    QString subReadBuf_;
+    bool so2v_ = false;
+    bool pounceOn_ = false;
+    qint64 pounceHz_ = 0;
     QTimer clockTimer_;
 };
 
