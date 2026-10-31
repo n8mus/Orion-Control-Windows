@@ -75,7 +75,8 @@ public:
     };
     Verdict verifyLog(const CQsoValues& typed);
 
-    int callerWpm() const { return wpm_; }
+    int callerWpm() const { return callerWpmActual_; }   // this station's speed
+    int opWpm() const { return wpm_; }
     int qsoCount() const { return qsos_; }
     int practiceSerial() const { return qsos_ + 1; }   // {SENTNR} in practice
 

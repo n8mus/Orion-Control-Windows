@@ -11,10 +11,13 @@ namespace ttc {
 
 namespace {
 constexpr int kRate = 8000;          // synth/playback sample rate
-// Callers key at the OPERATOR'S speed (the deck's wpm box / what he keys
-// at), never faster: the RufzXP-style adaptive ladder was dropped
-// 2026-10-22 ("match the speed I'm set at").
+// Callers key around the OPERATOR'S speed (the deck's wpm box / what he
+// keys at): each station draws its own speed, up to kCallerSpread wpm
+// either side, and keeps it for its whole QSO (2026-10-31: "different
+// speeds for each station up or down", at most 3 over). The RufzXP-style
+// adaptive ladder was dropped 2026-10-22 ("match the speed I'm set at").
 constexpr int kWpmFloor = 5, kWpmCeil = 60;
+constexpr int kCallerSpread = 3;
 
 // Text -> elements. Self-contained on purpose: the decoder's table maps
 // the other direction and lives behind its own file — sharing it would
@@ -221,7 +224,8 @@ void PracticeEngine::spawnCaller(int delayMs) {
             call = pool_.at(randInt(0, pool_.size() - 1));
     truth_ = makeTruth(call);
     callerExchKeyed_ = callerExchText();
-    callerWpmActual_ = wpm_;             // the operator's own speed
+    callerWpmActual_ = std::clamp(wpm_ + randInt(-kCallerSpread, kCallerSpread),
+                                  kWpmFloor, kWpmCeil);
     callerPitch_ = randInt(450, 850);
     callerAmp_ = randInt(40, 95) / 100.0;
     repeats_ = 0;

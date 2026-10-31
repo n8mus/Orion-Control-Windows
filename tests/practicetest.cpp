@@ -8,6 +8,7 @@
 // database or keyer to touch by construction.
 // No hardware, no network, no GUI, no sound.
 #include <QCoreApplication>
+#include <QSet>
 #include <cstdio>
 
 #include "contest/ContestDef.h"
@@ -103,7 +104,7 @@ static void testProtocolAndVerify() {
     CHECK(v.call == call1, "verify: the call is revealed post-log");
     CHECK(v.qsos == 1 && v.good == 1 && v.streak == 1,
           "verify: counters advance");
-    CHECK(v.wpm == 25, "speed: callers stay at the operator's 25 wpm after a clean copy");
+    CHECK(v.wpm == 25, "speed: a clean copy does not change the operator's 25 wpm");
 
     // TU closes; the next caller shows up on its own (single-calls flow).
     p.opKeyed("TU N8EM", 25);
@@ -123,7 +124,7 @@ static void testProtocolAndVerify() {
     CHECK(!v.misses.isEmpty() && v.misses.first().contains("sent"),
           "verify: miss names the truth");
     CHECK(v.streak == 0, "verify: a bust resets the streak");
-    CHECK(v.wpm == 25, "speed: a bust does not change the caller speed");
+    CHECK(v.wpm == 25, "speed: a bust does not change the operator's speed");
 
     // Cut-number typing: T/N unroll when comparing ("1TT" == "100").
     p.opKeyed("TU", 25);
@@ -204,7 +205,30 @@ static void testAdaptClamp() {
         p.opKeyed("TU", 25);
         run(p, 15000);
     }
-    CHECK(p.callerWpm() == 25, "speed: callers follow the operator's keying speed");
+    CHECK(p.opWpm() == 25, "speed: the engine follows the operator's keying speed");
+
+    // Each station draws its own speed within 3 wpm of the operator's.
+    p.start(contestDef("CW-OPS"), nullptr, {"N5OT", "K4RUM", "W1AW", "K1ABC"}, 25, 5);
+    QSet<int> speeds;
+    bool inRange = true;
+    for (int i = 0; i < 12; ++i) {
+        if (!p.callerLive()) {           // after a TU the next one calls by itself
+            p.opKeyed("CQ", 25);
+            run(p, 20000);
+        }
+        if (!p.callerLive()) break;
+        const int w = p.callerWpm();
+        speeds << w;
+        if (w < 22 || w > 28) inRange = false;
+        CQsoValues wrong;
+        wrong.call = "XX9XX";
+        p.verifyLog(wrong);
+        p.opKeyed("TU", 25);
+        run(p, 15000);
+    }
+    CHECK(inRange, "speed: every caller within 3 wpm of the operator's 25");
+    std::printf("  callers heard at:"); for (int s : speeds) std::printf(" %d", s); std::printf("\n");
+    CHECK(speeds.size() >= 3, "speed: stations key at different speeds");
 }
 
 int main(int argc, char** argv) {
