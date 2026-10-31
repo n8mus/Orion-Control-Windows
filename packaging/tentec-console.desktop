@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Ten-Tec SDR Console
+Name=Orion Control
 Comment=SDR panadapter and control for Ten-Tec Orion / Omni VII
 Exec=tentec-console
 Icon=tentec-console

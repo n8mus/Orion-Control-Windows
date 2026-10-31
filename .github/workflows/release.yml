@@ -141,10 +141,14 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: true
+          # Alpha, but NOT a GitHub "pre-release": pre-releases are invisible
+          # to /releases/latest and `gh release download`, which is what
+          # every newcomer (and their AI helper) reaches for first.
+          prerelease: false
+          make_latest: true
           files: tentec-console-*-x86_64.AppImage
           body: |
-            Alpha AppImage for the Ten-Tec SDR Console (Orion / Omni VII).
+            Alpha AppImage of Orion Control (Ten-Tec Orion / Omni VII console).
 
             **Install (easiest):** run the one-liner from the README, or:
             `bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/Orion-Control/master/install.sh)`

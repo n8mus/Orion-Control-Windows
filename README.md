@@ -31,7 +31,25 @@ bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/Orion-Control/master/i
 
 Log out and back in once after the first run (for serial access), then
 launch **Orion Control** from your menu. Re-run any time to update.
-Prefer to build from source? See [Build and run](#build-and-run) below.
+
+What the script needs and does, so nothing surprises you:
+- A 64-bit Linux with **glibc 2.38 or newer**: Ubuntu 24.04+, Linux Mint 22+,
+  Debian 13+, Fedora 39+, openSUSE Tumbleweed, Arch. Older releases must
+  [build from source](#build-from-source).
+- The AppImage bundles Qt, rnnoise, FFTW and the VOACAP engine. Nothing
+  else to hunt for.
+- The **SDRplay API** (proprietary, from SDRplay) is installed **last** and
+  is **optional**: its installer asks you to accept a license, so it only
+  runs when you are at a terminal. Skip it with `--no-sdrplay`; without it
+  the console runs radio-only with a dark panadapter, and re-running the
+  script later adds it.
+- No step other than "download the release" is fatal. A failing optional
+  step prints what to do and the script continues.
+
+Manual alternative: download the `.AppImage` from
+[Releases](https://github.com/n8mus/Orion-Control/releases), `chmod +x` it,
+run it. Install the SDRplay API from [sdrplay.com/api](https://www.sdrplay.com/api/)
+yourself if you want the panadapter.
 
 ## Install on Windows
 
@@ -65,7 +83,7 @@ gets less testing.
   the Orion's spare RX antenna jack or an antenna tap. ⚠️ **The SDR feed
   MUST be TX-protected.** If your tap does not isolate the SDR when you
   transmit, 100 W will destroy it. Know your isolation before you key up.
-- A monitor **at least 1920 px wide** (the layout needs 1808 px).
+- A monitor **at least 1920 px wide** (the layout needs ~1630 px plus window borders).
 - Optional, each unlocking a feature: **WinKeyer USB** (CW keying, memories,
   type-ahead), a **USB audio codec / SignaLink** carrying the radio's RX
   audio (CW decode through the radio's own filters + the pitch meter),
@@ -73,7 +91,8 @@ gets less testing.
   the console's UDP bridge).
 
 **Software (Linux; developed on Arch)**
-- Qt 6 (base + serialport), `cmake`, a C++20 compiler, `rnnoise`.
+- For the AppImage: nothing beyond glibc 2.38+ and FUSE 2 (the installer
+  handles it). For a source build see [Build from source](#build-from-source).
 - The **SDRplay API v3.x service** from
   [sdrplay.com/downloads](https://www.sdrplay.com/downloads/) — proprietary,
   installed by you, never bundled here. The `sdrplay_apiService` must be
@@ -88,13 +107,63 @@ gets less testing.
   --prefix=$HOME/.local && make && make install && makeitshfbc`) — or
   skip it and the overlay simply stays off with a hint.
 
-## Build and run
+## Build from source
+
+The installer can put the whole toolchain in place for you:
 
 ```sh
-cmake -S . -B build -DBUILD_SDRPLAY=ON
+bash install.sh --build-deps
+```
+
+Or by hand. Hard requirements are Qt 6 (Core, Gui, Widgets, Network,
+SerialPort, Sql, WebSockets), CMake 3.16+, a C++20 compiler and
+**rnnoise**. Everything else is optional and auto-detected: FFTW3 turns
+on the WDSP receive-audio chain (and with it FreeDV RADE, which needs
+autotools to build Opus), Qt ShaderTools + private headers turn on the GPU
+panadapter, whisper.cpp turns on Copy Assist, and the SDRplay API turns on
+the panadapter itself.
+
+| distro | packages |
+|---|---|
+| Ubuntu 24.04+ / Debian 13+ / Mint 22+ | `git cmake g++ make pkg-config qt6-base-dev qt6-serialport-dev qt6-websockets-dev libqt6sql6-sqlite libgl1-mesa-dev libfftw3-dev autoconf automake libtool curl patch` plus optional `qt6-shadertools-dev qt6-base-private-dev`. **rnnoise is not packaged** there: `git clone https://gitlab.xiph.org/xiph/rnnoise && cd rnnoise && ./autogen.sh && ./configure && make && sudo make install && sudo ldconfig` |
+| Arch | `git cmake gcc make pkgconf qt6-base qt6-serialport qt6-websockets qt6-shadertools rnnoise fftw autoconf automake libtool curl patch` |
+| Fedora 39+ | `git cmake gcc-c++ make pkgconf qt6-qtbase-devel qt6-qtserialport-devel qt6-qtwebsockets-devel qt6-qtshadertools-devel qt6-qtbase-private-devel rnnoise-devel fftw-devel autoconf automake libtool curl patch` |
+
+Then:
+
+```sh
+git clone https://github.com/n8mus/Orion-Control.git
+cd Orion-Control
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ./build/tentec-console
 ```
+
+Add `-DBUILD_SDRPLAY=ON` to the configure line once the SDRplay API is
+installed (headers in `/usr/local/include`, library in `/usr/local/lib`,
+where SDRplay's installer puts them). Without it the build is radio-only.
+`-DBUILD_RADE=OFF` skips the FreeDV RADE fetch (no network or autotools
+needed), `-DBUILD_GPU_PAN=OFF` forces the CPU panadapter. Use `Release` or
+`RelWithDebInfo`: a Debug build cannot keep up with the 1 MHz IQ stream.
+
+## Troubleshooting an install
+
+- **"GLIBC_2.38 not found"** when the AppImage starts: the distro is too old
+  for the prebuilt binary. Build from source as above.
+- **AppImage says it cannot mount / FUSE error**: install `libfuse2`
+  (Ubuntu 24.04: `libfuse2t64`), or run it as
+  `./tentec-console.AppImage --appimage-extract-and-run`. The installer
+  writes the launcher that way by itself when FUSE 2 is missing.
+- **SDRplay installer stalls or fails**: it is interactive and needs a real
+  terminal. Run `bash install.sh` again from a terminal window, or download
+  the Linux API from [sdrplay.com/api](https://www.sdrplay.com/api/) and run
+  it yourself. Then `systemctl status sdrplay` should show the service
+  running. The console works without it, radio-only.
+- **"No AppImage found" from the installer**: GitHub's API rate limit was hit
+  (it falls back to the releases web page by itself); failing that, download
+  the AppImage from the Releases page by hand.
+- **Serial port "permission denied"**: you have not logged out and back in
+  since the installer added you to `dialout` (or `uucp`).
 
 ## First run
 
