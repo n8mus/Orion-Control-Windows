@@ -39,6 +39,16 @@ for a in "$@"; do
 done
 [ "${TTC_NO_SDRPLAY:-0}" = 1 ] && WANT_SDRPLAY=0
 
+# ls with several globs returns non-zero when ANY glob is unmatched (live-found:
+# the station's own /usr/lib copy went unnoticed), so test the paths one by one.
+have_sdrplay() {
+  local f
+  for f in /usr/local/lib/libsdrplay_api.so.3 /usr/lib/libsdrplay_api.so.3 \
+           /usr/lib64/libsdrplay_api.so.3 /usr/lib/x86_64-linux-gnu/libsdrplay_api.so.3; do
+    [ -e "$f" ] && return 0
+  done
+  command -v ldconfig >/dev/null && ldconfig -p 2>/dev/null | grep -q libsdrplay_api.so.3
+}
 say()  { printf '\n\033[1;36m==>\033[0m %s\n' "$1"; }
 warn() { printf '\033[1;33m!  %s\033[0m\n' "$1"; }
 die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
@@ -218,7 +228,7 @@ update-desktop-database "$DESKDIR" >/dev/null 2>&1 || true
 # nothing above depends on it. Without it the console runs radio-only.
 if [ "$WANT_SDRPLAY" = 0 ]; then
   say "Skipping the SDRplay API (--no-sdrplay)."
-elif ls /usr/local/lib/libsdrplay_api.so.3* /usr/lib/libsdrplay_api.so.3* /usr/lib64/libsdrplay_api.so.3* >/dev/null 2>&1; then
+elif have_sdrplay; then
   say "SDRplay API already installed — good."
 elif [ ! -t 0 ]; then
   say "SDRplay API: not installing — no terminal to answer its license prompt."
