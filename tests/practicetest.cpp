@@ -159,6 +159,41 @@ static void testZonesFromCty() {
     CHECK(p.truthValues().exch1.toInt() == ci.cq,
           "cqww: caller sends its real cty zone");
     CHECK(p.truthValues().rstR == "599", "cqww: RST truth is 599");
+
+    // A US op running CQ WW: own-country callers score zero there, so
+    // they call only now and then even from a US-heavy pool (the SCP).
+    PracticeEngine q;
+    q.setAudioEnabled(false);
+    ContestContext me;
+    me.myCall = "N8EM";
+    CtyInfo mi;
+    cty->info("N8EM", mi);
+    me.myCountry = mi.country;
+    me.myCont = mi.cont;
+    q.setContext(me);
+    const QStringList us = {"K4RUM", "N5OT", "W1UJ", "AA3B", "K3WW", "N4YDU",
+                            "W9RE", "K5ZD", "N2NT", "K1DG", "W4NZ", "K1ABC"};
+    q.start(contestDef("CQ-WW-CW"), cty, us + QStringList{"DL1ABC", "JA1XYZ", "G3ABC"},
+            28, 9);
+    int dx = 0, home = 0;
+    for (int i = 0; i < 60; ++i) {
+        if (!q.callerLive()) {
+            q.opKeyed("CQ", 28);
+            run(q, 20000);
+        }
+        if (!q.callerLive()) break;
+        CtyInfo ci2;
+        cty->info(q.truthCall(), ci2);
+        (ci2.country == me.myCountry ? home : dx) += 1;
+        CQsoValues wrong;
+        wrong.call = "XX9XX";
+        q.verifyLog(wrong);
+        q.opKeyed("TU", 28);
+        run(q, 15000);
+    }
+    std::printf("  CQ WW callers for a US op: %d DX, %d US\n", dx, home);
+    CHECK(dx + home >= 40, "cqww mix: enough callers to judge");
+    CHECK(home > 0 && home * 4 < dx, "cqww mix: mostly DX, own country only now and then");
 }
 
 static void testCwtAndPatience() {

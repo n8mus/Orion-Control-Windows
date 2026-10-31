@@ -18,6 +18,9 @@ constexpr int kRate = 8000;          // synth/playback sample rate
 // adaptive ladder was dropped 2026-10-22 ("match the speed I'm set at").
 constexpr int kWpmFloor = 5, kWpmCeil = 60;
 constexpr int kCallerSpread = 3;
+// Share of callers who score zero (own country in CQ WW): it happens on
+// the air, just not often (2026-10-31).
+constexpr int kOffPoolPct = 10;
 
 // Text -> elements. Self-contained on purpose: the decoder's table maps
 // the other direction and lives behind its own file — sharing it would
@@ -217,11 +220,33 @@ void PracticeEngine::queueOpTx(const QString& text, int wpm, TxKind kind) {
 
 // ---- the simulated station ------------------------------------------------
 
+bool PracticeEngine::scoresZero(const QString& call) const {
+    CtyInfo ci;
+    const bool ok = cty_->info(normalizeForCty(call), ci);
+    CQsoValues q;
+    q.call = call;
+    return def_->points(q, ci, ok, ctx_) <= 0;
+}
+
 void PracticeEngine::spawnCaller(int delayMs) {
-    QString call = pool_.at(randInt(0, pool_.size() - 1));
-    if (pool_.size() > 1)
-        while (call == truth_.call)
-            call = pool_.at(randInt(0, pool_.size() - 1));
+    // Who calls: mostly stations this contest pays for, a zero-pointer
+    // (own country in CQ WW) only kOffPoolPct of the time. The contest's
+    // own points rule decides, so every DX contest is right without a
+    // per-contest table, and domestic ones (all score) are untouched.
+    // Judged per draw — classifying the whole 37k-call SCP up front cost
+    // a 2 s freeze on PRAC. A pool with none of the wanted kind gives up
+    // after kTries and takes what it drew.
+    constexpr int kTries = 200;
+    const bool weighted = def_ && def_->points && cty_ && !ctx_.myCountry.isEmpty();
+    const bool wantZero = weighted && randInt(1, 100) <= kOffPoolPct;
+    QString call;
+    for (int t = 0; t < kTries; ++t) {
+        const QString c = pool_.at(randInt(0, pool_.size() - 1));
+        if (pool_.size() > 1 && c == truth_.call) continue;
+        call = c;
+        if (!weighted || scoresZero(c) == wantZero) break;
+    }
+    if (call.isEmpty()) call = pool_.first();
     truth_ = makeTruth(call);
     callerExchKeyed_ = callerExchText();
     callerWpmActual_ = std::clamp(wpm_ + randInt(-kCallerSpread, kCallerSpread),

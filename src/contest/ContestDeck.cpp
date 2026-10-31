@@ -1585,6 +1585,7 @@ void ContestDeck::setPractice(bool on) {
     // first time), not the keyer speed — coming in at contest wpm cold
     // was too much (live-found). It adapts from there and the last
     // speed carries into the next session.
+    practice_->setContext(ctx_);     // mostly DX callers in a DX contest
     practice_->start(def_, cty_, pool, wpm_ ? wpm_->value() : 25);   // his speed
     // ISOLATION GUARANTEE #4: the mode is unmissable while it's on.
     // The lit PRAC button is the only indicator: a title suffix widened

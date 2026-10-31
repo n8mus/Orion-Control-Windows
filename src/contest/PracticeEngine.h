@@ -56,6 +56,12 @@ public:
 
     void setAudioEnabled(bool on) { audioEnabled_ = on; }   // tests: off
 
+    // My side (call, country, continent), set before start(): callers
+    // whose QSO would score ZERO under this contest's own points rule
+    // (CQ WW: my own country; ARRL DX: other W/VE) call only now and
+    // then — a US op running CQ WW hears mostly DX. Unset = no weighting.
+    void setContext(const ContestContext& ctx) { ctx_ = ctx; }
+
     // Everything the operator keys while practicing lands here (the
     // deck's keyText choke point). Plays as sidetone and drives the
     // protocol: CQ summons a caller, his call + exchange answers it,
@@ -123,10 +129,12 @@ private:
     QVector<qint16> synth(const QString& text, int wpm, double pitchHz,
                           double amp) const;
     int randInt(int lo, int hi);     // inclusive
+    bool scoresZero(const QString& call) const;   // under def_'s points rule
 
     const ContestDef* def_ = nullptr;
     const CtyLookup* cty_ = nullptr;
     QStringList pool_;
+    ContestContext ctx_;
     bool active_ = false;
     bool audioEnabled_ = true;
     QRandomGenerator rng_;
