@@ -21,7 +21,10 @@ ExternalProject_Add(rade_opus
   DOWNLOAD_EXTRACT_TIMESTAMP NO
   SOURCE_DIR ${_opus}
   BUILD_IN_SOURCE 1
-  PATCH_COMMAND sh -c "patch dnn/nnet.h < ${RADE_SRC}/opus-nnet.h.diff && patch dnn/nnet.c < ${RADE_SRC}/opus-nnet.c.diff"
+  # Plain argument lists, never a sh -c string: CMake quotes each argument,
+  # a shell string split a source tree path with a space in it.
+  PATCH_COMMAND patch dnn/nnet.h -i ${RADE_SRC}/opus-nnet.h.diff
+        COMMAND patch dnn/nnet.c -i ${RADE_SRC}/opus-nnet.c.diff
   # autogen.sh fetches the DNN model data and checks its sha256.
   CONFIGURE_COMMAND sh -c "./autogen.sh && ./configure --with-pic --enable-osce --enable-dred --disable-shared --disable-doc --disable-extra-programs"
   BUILD_COMMAND make -j8
