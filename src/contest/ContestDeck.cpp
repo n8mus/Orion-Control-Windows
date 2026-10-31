@@ -2070,13 +2070,12 @@ void ContestDeck::refreshScp() {
                 [this, c] { prefillCall(c); });
         h->addWidget(b);
     }
-    // N+1: calls one keystroke away (busted-call check), not already in
-    // the partial matches — orange, click to take.
-    if (p.size() >= 4) {
-        QStringList n1 = nPlusOne(p, pool, 4);
-        n1.erase(std::remove_if(n1.begin(), n1.end(),
-                                [&m](const QString& c) { return m.contains(c); }),
-                 n1.end());
+    // N+1: calls one keystroke away (busted-call check) — only once
+    // NOTHING starts with what was typed, i.e. a character is probably
+    // miscopied. Alongside live prefix matches it was clutter that didn't
+    // share the first letters (2026-10-31). Orange, click to take.
+    if (p.size() >= 4 && m.isEmpty()) {
+        const QStringList n1 = nPlusOne(p, pool, 4);
         if (!n1.isEmpty()) {
             auto* tag = new QLabel("N+1", scpRow_);
             tag->setStyleSheet("color:#8798a8; font-size:10px;");

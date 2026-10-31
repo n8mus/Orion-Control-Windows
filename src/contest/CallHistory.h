@@ -25,8 +25,8 @@ struct HistoryRow {
 // exchange prefilled the STATE for a month before anyone noticed.
 QList<HistoryRow> parseCallHistory(QIODevice& in, QString* err);
 
-// Check-partial ordering: calls beginning with the partial first, then
-// calls containing it, alphabetical within each group, capped at max.
+// Check partial: the calls BEGINNING with the partial, alphabetical,
+// capped at max — the list narrows as each character is typed.
 // Pure ranking — the caller decorates worked/history status itself.
 QStringList scpMatches(const QString& partial, const QSet<QString>& scp,
                        int max = 30);

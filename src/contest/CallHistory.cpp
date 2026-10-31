@@ -74,15 +74,13 @@ QStringList scpMatches(const QString& partial, const QSet<QString>& scp,
                        int max) {
     const QString p = partial.trimmed().toUpper();
     if (p.size() < 2) return {};
-    QStringList pre, sub;
-    for (const QString& c : scp) {
-        if (c.startsWith(p)) pre << c;
-        else if (c.contains(p)) sub << c;
-    }
-    std::sort(pre.begin(), pre.end());
-    std::sort(sub.begin(), sub.end());
-    QStringList out = pre;
-    out += sub;
+    // Prefix only: each character typed narrows the list. Substring hits
+    // ("DL8" finding W8DL8) buried the real candidates — operator's call,
+    // 2026-10-31; a miscopied first letter is N+1's job, not this list's.
+    QStringList out;
+    for (const QString& c : scp)
+        if (c.startsWith(p)) out << c;
+    std::sort(out.begin(), out.end());
     if (out.size() > max) out = out.mid(0, max);
     return out;
 }

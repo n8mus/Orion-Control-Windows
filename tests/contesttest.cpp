@@ -882,10 +882,12 @@ static void testScp() {
     const QSet<QString> scp = {"DL8WPX", "DL8WAA", "DL8WX", "N3JT",
                                "W8DL8", "K6RB"};
     const QStringList m = scpMatches("DL8", scp);
-    CHECK(m.size() == 4, "scp: prefix + substring matches found");
+    CHECK(m.size() == 3, "scp: prefix matches only");
     CHECK(m[0] == "DL8WAA" && m[1] == "DL8WPX" && m[2] == "DL8WX",
-          "scp: prefix matches first, alphabetical");
-    CHECK(m[3] == "W8DL8", "scp: substring matches after");
+          "scp: alphabetical");
+    CHECK(!m.contains("W8DL8"), "scp: a mid-call hit is not a candidate");
+    CHECK(scpMatches("DL8WP", scp) == QStringList{"DL8WPX"},
+          "scp: narrows to one as the call is typed");
     CHECK(scpMatches("D", scp).isEmpty(), "scp: one char is too little");
 }
 
