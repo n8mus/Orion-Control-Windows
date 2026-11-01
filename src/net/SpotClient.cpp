@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "net/SpotClient.h"
 
+#include <QDebug>
 #include <QRegularExpression>
 #include <QDateTime>
 #include <QTimeZone>
@@ -196,6 +197,11 @@ bool SpotClient::spotDx(const QString& call, qint64 hz,
     const QString cm = comment.trimmed();
     if (!cm.isEmpty()) line += ' ' + cm;
     sock_.write(line.toLatin1() + "\r\n");
+    // The node's answer (dup, bad band, not registered...) is the next
+    // non-spot line; surface it instead of claiming success blind — a spot
+    // "sent" to OK2CQR-1 never showed and nobody could say why (2026-10-31).
+    replyWait_.start();
+    qInfo().noquote() << "[spots] >" << line;
     emit statusChanged(QString("spotted %1 at %2 kHz")
                            .arg(c)
                            .arg(hz / 1000.0, 0, 'f', 1));
@@ -271,6 +277,13 @@ void SpotClient::onData() {
     while ((nl = lineBuf_.indexOf('\n')) >= 0) {
         const QString line = QString::fromLatin1(lineBuf_.left(nl)).trimmed();
         lineBuf_.remove(0, nl + 1);
+        if (replyWait_.isValid() && replyWait_.elapsed() < 10000
+            && !line.isEmpty() && !kSpotRe.match(line).hasMatch()
+            && !line.contains(QLatin1String(" de ")) /* the prompt line */) {
+            replyWait_.invalidate();
+            qInfo().noquote() << "[spots] node replied:" << line;
+            emit statusChanged("cluster: " + line);
+        }
         const auto m = kSpotRe.match(line);
         if (m.hasMatch()) {
             Spot s;

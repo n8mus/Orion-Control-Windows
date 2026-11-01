@@ -110,6 +110,7 @@ private:                       // retry while enabled
     QString    login_;
     bool       enabled_   = false;
     bool       loginSent_ = false;
+    QElapsedTimer replyWait_;                    // armed by spotDx(): the node's answer is due
     bool       ft8Wanted_ = false;
     QString    spotterCty_;                      // DOC/PASS list; empty = all
     QByteArray lineBuf_;
