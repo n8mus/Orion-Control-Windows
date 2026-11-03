@@ -230,8 +230,11 @@ QRN spike gate, measured on a live lightning night's own capture.
   the console's own contest deck, when open, wins.
 - **GPU panadapter** (`src/ui/PanGpuView`, QRhiWidget over OpenGL; DISPLAY ▾
   → GPU panadapter, `display/gpuPan`, `TTC_GPUPAN=0/1`; built only with Qt ≥
-  6.7 + ShaderTools/GuiPrivate — CI's Ubuntu Qt 6.4 and the AppImage build the
-  CPU paint, `-DBUILD_GPU_PAN=OFF` forces that): the waterfall is a raw-dB
+  6.7 + ShaderTools/GuiPrivate — CI's Ubuntu Qt 6.4 builds the CPU paint;
+  the release AppImage uses Qt 6.8 from the official installer since
+  v0.1.3 (2026-11-03) so it ships the GPU pan like the desk build, and the
+  workflow FAILS if configure says "GPU panadapter: off";
+  `-DBUILD_GPU_PAN=OFF` forces CPU paint): the waterfall is a raw-dB
   R32F history texture (palette + view window are shader params), fill/trace/
   3D are GPU geometry, and everything with text is the SAME QPainter code as
   the CPU paint (`paintUnder/Mid/WfLabels/Top`) cached in layer textures,

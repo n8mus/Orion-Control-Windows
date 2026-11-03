@@ -4,10 +4,13 @@
 # it) — the user's own SDRplay API install provides it at runtime, which
 # install.sh sets up. The VOACAP engine (voacapl) IS bundled: its core is
 # US-government public-domain code and the port is open source, so the
-# propagation overlay works out of the box. Built on ubuntu-24.04 (matches
-# CI; Qt6 SerialPort is only packaged there) — so the AppImage needs
-# glibc >= 2.39 (Ubuntu 24.04+, Fedora 40+, current Arch). Fine for the
-# alpha's current-distro testers.
+# propagation overlay works out of the box. Built on ubuntu-24.04 — so the
+# AppImage needs glibc >= 2.39 (Ubuntu 24.04+, Fedora 40+, current Arch).
+# Qt comes from the official installer (aqt, 6.8), NOT Ubuntu's 6.4: the GPU
+# panadapter and the AetherSDR panes need Qt >= 6.7 + ShaderTools, and the
+# operator wants the published build to be the same console as the one on
+# his desk (2026-11-03). CI still compiles against Ubuntu's 6.4 so the CPU
+# paint path stays honest.
 name: Release
 on:
   push:
@@ -25,9 +28,26 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ make gfortran qt6-base-dev qt6-serialport-dev qt6-websockets-dev libqt6sql6-sqlite \
-            libgl1-mesa-dev autoconf automake libtool curl file \
+            cmake g++ make gfortran \
+            libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
+            libegl1 libfontconfig1 libglib2.0-0 \
+            autoconf automake libtool curl file \
             fuse libfuse2 desktop-file-utils libfftw3-dev patch
+
+      # Qt 6.8 from the official installer: base + SerialPort + WebSockets
+      # + ShaderTools (qsb compiles the GPU pan's shaders at build time).
+      # GuiPrivate headers ship with the base package. The sqlite driver
+      # plugin is in base too.
+      - name: Install Qt 6.8
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: 'qtserialport qtwebsockets qtshadertools'
+          cache: true
 
       - name: Build rnnoise from source
         run: |
@@ -81,9 +101,12 @@ jobs:
       - name: Configure + build (with SDRplay)
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SDRPLAY=ON \
-            -DCMAKE_PREFIX_PATH=/usr/local \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;/usr/local" \
             -DCMAKE_CXX_FLAGS=-I/usr/local/include \
-            -DCMAKE_EXE_LINKER_FLAGS=-L/usr/local/lib
+            -DCMAKE_EXE_LINKER_FLAGS=-L/usr/local/lib | tee configure.log
+          # The published build must be the operator's build: a release
+          # that silently fell back to the CPU-only panadapter is a bug.
+          grep -q "GPU panadapter: on" configure.log
           cmake --build build -j"$(nproc)"
 
       - name: Assemble AppDir
@@ -107,7 +130,7 @@ jobs:
           curl -fSL -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           curl -fSL -o linuxdeploy-plugin-qt https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy linuxdeploy-plugin-qt
-          export QMAKE="$(command -v qmake6 || echo /usr/lib/qt6/bin/qmake6)"
+          export QMAKE="$QT_ROOT_DIR/bin/qmake"
           # Qt's TLS backend plugin is NOT deployed by default — without it
           # every https fetch dies (NOAA solar data, the POTA feed, and the
           # VOACAP trigger that waits on a sunspot number). Live-found by
