@@ -406,8 +406,12 @@ void CwDeck::buildUi() {
         rxInfo_ = new QLabel(this);
         rxInfo_->setTextFormat(Qt::RichText);
         rxInfo_->setStyleSheet("color:#6aa5d8; font-size:11px;");
-        rxInfo_->setMinimumWidth(
-            rxInfo_->fontMetrics().horizontalAdvance("88 WPM · 8888 Hz") + 8);
+        // FIXED at the widest text it ever shows: the Hz readout changes
+        // length as the tone wanders, and a label that re-negotiates its
+        // width bounces the whole row (operator, 2026-11-02).
+        rxInfo_->setFixedWidth(
+            rxInfo_->fontMetrics().horizontalAdvance("88 WPM · 8888 Hz") + 12);
+        rxInfo_->setObjectName("cap");       // the shrink loop leaves it
         r8->addWidget(rxInfo_);
         status_ = new QLabel(this);
         status_->setStyleSheet(kCap);
