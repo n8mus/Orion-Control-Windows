@@ -241,7 +241,26 @@ target_compile_definitions(tentec-console PRIVATE TTC_VERSION="${TTC_GIT_VERSION
 option(BUILD_GPU_PAN "GPU panadapter when Qt allows it (OFF = CPU paint only)" ON)
 set(TTC_GPU_PAN OFF)
 if(BUILD_GPU_PAN AND Qt6_VERSION VERSION_GREATER_EQUAL 6.7)
-  find_package(Qt6 COMPONENTS GuiPrivate ShaderTools)   # not QUIET: say WHY when it falls back
+  # Not QUIET: say WHY when it falls back. The GuiPrivate package is
+  # OPTIONAL: distro Qt (Arch) ships lib/cmake/Qt6GuiPrivate, the official
+  # Qt download (the release runner's 6.8, 2026-11-03) does not — but it
+  # does ship the private headers under include/QtGui/<ver>/, which is
+  # all QRhiWidget needs, so the same target is built here by hand.
+  find_package(Qt6 COMPONENTS ShaderTools OPTIONAL_COMPONENTS GuiPrivate)
+  if(NOT TARGET Qt6::GuiPrivate AND TARGET Qt6::Gui)
+    set(_qt_inc "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_HEADERS}")
+    if(EXISTS "${_qt_inc}/QtGui/${Qt6_VERSION}/QtGui/private/qrhi_p.h"
+       OR EXISTS "${_qt_inc}/QtGui/${Qt6_VERSION}/QtGui/private")
+      add_library(Qt6::GuiPrivate INTERFACE IMPORTED)
+      target_include_directories(Qt6::GuiPrivate INTERFACE
+        "${_qt_inc}/QtCore/${Qt6_VERSION}"
+        "${_qt_inc}/QtCore/${Qt6_VERSION}/QtCore"
+        "${_qt_inc}/QtGui/${Qt6_VERSION}"
+        "${_qt_inc}/QtGui/${Qt6_VERSION}/QtGui")
+      target_link_libraries(Qt6::GuiPrivate INTERFACE Qt6::Gui)
+      message(STATUS "GPU panadapter: Qt6::GuiPrivate built from ${_qt_inc} (no package)")
+    endif()
+  endif()
   if(TARGET Qt6::GuiPrivate AND COMMAND qt_add_shaders)
     set(TTC_GPU_PAN ON)
   endif()
