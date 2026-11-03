@@ -28,6 +28,7 @@
 #include "log/QslUploader.h"
 #include "contest/ContestDb.h"
 #include "contest/ContestDeck.h"
+#include "cw/CwDeck.h"
 #include "contest/ContestWindow.h"
 #include <algorithm>
 #include <limits>
@@ -186,12 +187,14 @@ void MainWindow::setupLogUi() {
     connect(pan_, &PanadapterWidget::spotClicked, this,
             [this](const QString& call, QChar kind, const QString& tg) {
                 if (cwWin_) cwWin_->setHisCall(call);
-                if (contestDeckVisible()) {
+                if (anyDeckVisible()) {
                     // The clicked spot's frequency anchors the call.
                     qint64 spotHz = 0;
                     for (const SpotLabel& s : shownSpots_)
                         if (s.call == call) { spotHz = s.hz; break; }
-                    contestDeck_->prefillCall(call, spotHz);
+                    if (contestDeckVisible())
+                        contestDeck_->prefillCall(call, spotHz);
+                    if (cwDeckVisible()) cwDeck_->prefillCall(call, spotHz);
                 }
                 QString park, grid;
                 if (kind == QChar('P')) {
@@ -262,17 +265,7 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
                         6000);
                 });
         connect(logWin_, &LogWindow::qsoLogged, this,
-                [this](qint64 id, const QString& c) {
-                    statusBar()->showMessage("logged " + c, 3000);
-                    if (cwWin_) cwWin_->setHisCall(QString());
-                    if (uploader_) uploader_->pushQso(id);
-                    // Mirror the finished QSO to cqrlog's bridge so both
-                    // logs stay in step. Only console-born QSOs: WSJT-X
-                    // reaches cqrlog on its own 2237 ear, mirroring those
-                    // would double-log them.
-                    if (logDb_) mirrorToCqrlog(logDb_->qso(id));
-                    enrichQso(id, c);
-                });
+                &MainWindow::onQsoLogged);
         // Dial and mode ride in once a second while the window is up — every
         // tune path (knob, band button, WSJT-X, click) funnels into
         // centerHz_/rigMode_, so polling beats hooking each one.
@@ -349,7 +342,7 @@ void MainWindow::openLogbookWindow() {
 // its pane blank at a station that decodes the radio audio (live-found
 // on the first contest-mode drive).
 void MainWindow::applyCwRxRouting() {
-    const bool want = rxWanted_ || contestRx_;
+    const bool want = rxWanted_ || contestRx_ || cwDeckVisible();
     if (cwDec_) cwDec_->setEnabled(want && !rxRadio_);
     if (audioDec_) audioDec_->setEnabled(want && rxRadio_);
     if (audioSrc_) {
@@ -372,6 +365,8 @@ char MainWindow::contestClassify(const QString& call, qint64 hz) const {
 // CONTEST button: swap the waterfall for the contest deck and back. The
 // spectrum above stays live — it IS the band map (operator's sketch).
 void MainWindow::toggleContestMode(bool on) {
+    if (on && cwDeckBtn_ && cwDeckBtn_->isChecked())
+        cwDeckBtn_->setChecked(false);       // one deck under the pan
     if (on) {
         if (!contestDeck_) {
             if (!contestDb_) {
@@ -540,7 +535,7 @@ void MainWindow::toggleContestMode(bool on) {
         if (!contestDeck_->contestActive()) openContestWindow();
     } else {
         if (contestDeck_) contestDeck_->setVisible(false);
-        pan_->removeEventFilter(this);
+        if (!cwDeckVisible()) pan_->removeEventFilter(this);
         if (spotTable_) spotTable_->setContestMode(false);
         DisplaySettings ds = pan_->displaySettings();
         ds.split = savedSplit_ > 0.0f && savedSplit_ < 1.0f ? savedSplit_
@@ -587,7 +582,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
     // (live-found 2026-10-24, CQ WW SSB). Widgets where the arrows have a
     // real job (text cursor, spin box, list, slider) keep them; the deck
     // decides for its own fields (its call-box filter).
-    if (ev->type() == QEvent::KeyPress && contestDeckVisible()
+    if (ev->type() == QEvent::KeyPress && anyDeckVisible()
         && qobject_cast<QWidget*>(obj) && QApplication::activeWindow() == this) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         const int k = ke->key();
@@ -595,8 +590,9 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             || k == Qt::Key_Up || k == Qt::Key_Down;
         if (arrow && ke->modifiers() == Qt::NoModifier) {
             QWidget* fw = QApplication::focusWidget();
-            const bool deckOwns = fw && contestDeck_
-                && contestDeck_->isAncestorOf(fw);
+            const bool deckOwns = fw
+                && ((contestDeck_ && contestDeck_->isAncestorOf(fw))
+                    || (cwDeck_ && cwDeck_->isAncestorOf(fw)));
             const bool editing = fw
                 && (qobject_cast<QLineEdit*>(fw)
                     || qobject_cast<QAbstractSpinBox*>(fw)
@@ -608,8 +604,10 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             if (!deckOwns && (obj == pan_ || !editing)) {
                 if (k == Qt::Key_Left || k == Qt::Key_Right)
                     walkContestSpot(k == Qt::Key_Right ? +1 : -1);
-                else
+                else if (contestDeckVisible())
                     contestDeck_->nudgeSpeed(k == Qt::Key_Up ? +1 : -1);
+                else
+                    cwDeck_->nudgeSpeed(k == Qt::Key_Up ? +1 : -1);
                 return true;
             }
         }
@@ -635,7 +633,7 @@ void MainWindow::walkContestSpot(int dir) {
     // SO2V + RUN: the arrows hunt with VFO B. Fenced to A's band (B on
     // another band is brought back to the run band's first worthy spot),
     // the pan view never moves, the landing goes to the SUB line.
-    const bool walkB = contestDeck_ && contestDeck_->arrowsWalkB();
+    const bool walkB = contestDeckVisible() && contestDeck_->arrowsWalkB();
     const qint64 aHz = qint64(centerHz_);
     const qint64 cur = walkB
         ? (LogbookIndex::bandForHz(qint64(vfoBHz_)) == LogbookIndex::bandForHz(aHz)
@@ -676,7 +674,8 @@ void MainWindow::walkContestSpot(int dir) {
         return;
     }
     onTuneRequested(int(pick->hz - cur), true);
-    if (contestDeck_) contestDeck_->prefillCall(pick->call, pick->hz);
+    if (contestDeckVisible()) contestDeck_->prefillCall(pick->call, pick->hz);
+    if (cwDeckVisible()) cwDeck_->prefillCall(pick->call, pick->hz);
     if (cwWin_) cwWin_->setHisCall(pick->call);
 }
 
@@ -782,6 +781,73 @@ void MainWindow::openContestWindow() {
     contestWin_->activateWindow();
 }
 
+// Every console-born QSO, whichever button logged it (LOG window, CW
+// window's LOG, the CW deck's LOG IT): uploads, the cqrlog mirror, the
+// callbook enrichment, and the CW side forgets the call.
+void MainWindow::onQsoLogged(qint64 id, const QString& c) {
+    statusBar()->showMessage("logged " + c, 3000);
+    if (cwWin_) cwWin_->setHisCall(QString());
+    if (uploader_) uploader_->pushQso(id);
+    // Mirror the finished QSO to cqrlog's bridge so both logs stay in
+    // step. Only console-born QSOs: WSJT-X reaches cqrlog on its own 2237
+    // ear, mirroring those would double-log them.
+    if (logDb_) mirrorToCqrlog(logDb_->qso(id));
+    enrichQso(id, c);
+}
+
+// LOG from the CW side (2026-11-02): the shared record IS the QSO. Call
+// and the two reports are the operator's; dial, mode and UTC are the
+// console's; country/zones from cty.dat; whatever the callbook knows
+// (name, QTH, grid) lands afterwards through enrichQso. The NAME box's
+// word is the HANDLE, and stands in for NAME until the callbook speaks.
+void MainWindow::logFromContext() {
+    QsoContext* ctx = qsoContext();
+    const QString call = ctx->call().trimmed().toUpper();
+    if (call.isEmpty()) {
+        statusBar()->showMessage("nothing to log — no call", 4000);
+        return;
+    }
+    if (!logDb_) {
+        statusBar()->showMessage("station log is not open", 4000);
+        return;
+    }
+    Qso q;
+    q.call = call;
+    q.freqHz = qint64(centerHz_);
+    q.band = LogbookIndex::bandForHz(q.freqHz);
+    q.mode = adifModeText(rigMode_);
+    q.tsUtc = QDateTime::currentDateTimeUtc();
+    q.rstS = ctx->rstSent().isEmpty() ? QStringLiteral("599") : ctx->rstSent();
+    q.rstR = ctx->rstRcvd().isEmpty() ? QStringLiteral("599") : ctx->rstRcvd();
+    q.handle = ctx->handle();
+    q.name = ctx->name().isEmpty() ? ctx->handle() : ctx->name();
+    q.qth = ctx->qth();
+    q.grid = ctx->grid();
+    CtyInfo ci;
+    if (cty_.info(call, ci)) {
+        q.country = ci.country;
+        q.cqz = ci.cq;
+        q.ituz = ci.itu;
+    }
+    // Enter-to-log makes a double Enter easy: the same call on the same
+    // band and mode within five minutes is the same QSO, not a second.
+    if (logDb_->hasNearDuplicate(q)) {
+        statusBar()->showMessage(
+            QString("%1 is already logged on %2 %3 in the last 5 min — not "
+                    "logged again").arg(call, q.band, q.mode), 6000);
+        return;
+    }
+    const qint64 id = logDb_->addQso(q);
+    if (id < 0) {
+        statusBar()->showMessage("log write FAILED — " + call, 8000);
+        return;
+    }
+    onQsoLogged(id, call);
+    ctx->clear();
+    if (cwDeck_) cwDeck_->clearForNext();
+    if (logWin_) logWin_->loggedElsewhere(call);
+}
+
 void MainWindow::enrichQso(qint64 id, const QString& call) {
     if (!qrz_ || id < 0) return;
     if (QSettings().value("up/qrzweb/user").toString().trimmed().isEmpty())
@@ -807,6 +873,7 @@ void MainWindow::openSpotTable() {
                     // deck rides along like any spot click.
                     if (contestDeckVisible())
                         contestDeck_->prefillCall(call, hz);
+                    if (cwDeckVisible()) cwDeck_->prefillCall(call, hz);
                     QString park, grid;
                     if (kind == QChar('P')) {
                         park = tag;
@@ -886,6 +953,8 @@ void MainWindow::ensureCwWindow() {
     // console is the master of the callsign, cqrlog follows.
     // (There is no path the other way — cqrlog's bridge is
     // receive-only, so typing it THERE reaches nothing here.)
+    connect(cwWin_, &CwWindow::logRequested, this,
+            [this] { logFromContext(); });
     connect(cwWin_, &CwWindow::hisCallEntered, this,
             [this](const QString& call) {
                 sendCqrLookup(call);
@@ -1083,28 +1152,29 @@ void MainWindow::setupCwUi() {
     // same reason the SWR menu hangs off a right-click on TUNE.
     cwBtn->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(cwBtn, &QToolButton::customContextMenuRequested, this,
-            [this, cwBtn](const QPoint&) {
-        // Reuse the left-click path wholesale so the keyer gets built and
-        // opened exactly the way it always is.
-        if (!cwWin_) cwBtn->click();
-        auto* wk = qobject_cast<ttc::WinKeyer*>(
-            cwWin_ ? cwWin_->keyer() : nullptr);
-        if (!wk) {
-            statusBar()->showMessage(
-                "WinKeyer control: the WinKeyer is not the active keyer — "
-                "the radio's own keyer has no host-settable element timing "
-                "(SDR ▸ Station setup… to switch)", 8000);
-            return;
-        }
-        if (!wkPanel_) {
-            auto* p = new ttc::WinKeyerPanel(wk, this);
-            p->setAttribute(Qt::WA_DeleteOnClose);
-            wkPanel_ = p;
-        }
-        wkPanel_->show();
-        wkPanel_->raise();
-        wkPanel_->activateWindow();
-    });
+            [this](const QPoint&) { openWinKeyerPanel(); });
+}
+
+// The WinKeyer control box: the CW button's right-click, and the CW
+// deck's WinKeyer… button (a plain click there — the deck has the room).
+void MainWindow::openWinKeyerPanel() {
+    ensureCwWindow();
+    auto* wk = qobject_cast<ttc::WinKeyer*>(cwWin_->keyer());
+    if (!wk) {
+        statusBar()->showMessage(
+            "WinKeyer control: the WinKeyer is not the active keyer — "
+            "the radio's own keyer has no host-settable element timing "
+            "(SDR ▸ Station setup… to switch)", 8000);
+        return;
+    }
+    if (!wkPanel_) {
+        auto* p = new ttc::WinKeyerPanel(wk, this);
+        p->setAttribute(Qt::WA_DeleteOnClose);
+        wkPanel_ = p;
+    }
+    wkPanel_->show();
+    wkPanel_->raise();
+    wkPanel_->activateWindow();
 }
 
 // The CW window's "RADIO — CW" panel: the rig's own sidetone level and
@@ -1395,6 +1465,116 @@ void MainWindow::setupDigiUi() {
     connect(btn, &QToolButton::toggled, this,
             [this](bool on) { toggleContestMode(on); });
     contestBtn_ = btn;
+}
+
+// "CW PNL": the CW deck under the pan (operator's design, 2026-11-02) —
+// the contest deck's shape for an everyday CW QSO, so the reflexes built
+// there carry over. Lit while the deck is up; exclusive with CNTST.
+void MainWindow::setupCwDeckUi() {
+    auto* btn = new QToolButton(topStrip_);
+    btn->setText("CW PNL");
+    btn->setCheckable(true);
+    btn->setFocusPolicy(Qt::NoFocus);
+    btn->setStyleSheet(QString(kSideBtnStyle));
+    btn->setToolTip("CW panel: the waterfall hands its space to a CW deck —\n"
+                    "reader, CALL/NAME/RST entry with LOG IT, F1-F12, the\n"
+                    "keyer and rig CW controls, a type-to-send pane.\n"
+                    "←/→ walk the spots, ↑/↓ change speed, F12 wipes.\n"
+                    "Press again for the waterfall.");
+    topLay2_->addSpacing(8);
+    topLay2_->addWidget(btn);
+    connect(btn, &QToolButton::toggled, this,
+            [this](bool on) { toggleCwDeck(on); });
+    cwDeckBtn_ = btn;
+}
+
+bool MainWindow::cwDeckVisible() const {
+    return cwDeck_ && cwDeck_->isVisible();
+}
+
+void MainWindow::toggleCwDeck(bool on) {
+    if (on && contestBtn_ && contestBtn_->isChecked())
+        contestBtn_->setChecked(false);      // one deck under the pan
+    if (on) {
+        if (!cwDeck_) {
+            ensureCwWindow();                // the keyer + decoders
+            cwDeck_ = new CwDeck(cwWin_, &logbook_, &cty_, &rotor_, qrz_, this);
+            cwDeck_->setContext(qsoContext());
+            layout_->placeUnderPan(cwDeck_);
+            connect(cwDeck_, &CwDeck::logRequested, this,
+                    [this] { logFromContext(); });
+            connect(cwDeck_, &CwDeck::walkSpots, this,
+                    [this](int dir) { walkContestSpot(dir); });
+            connect(cwDeck_, &CwDeck::zeroBeatRequested, this,
+                    [this] { zeroBeat(); });
+            connect(cwDeck_, &CwDeck::winKeyerPanelRequested, this,
+                    [this] { openWinKeyerPanel(); });
+            connect(cwDeck_, &CwDeck::rotorAimed,
+                    rose_, &CompassRoseWidget::pointBearing);
+            connect(cwDeck_, &CwDeck::spotDxRequested, this,
+                    [this](const QString& call, qint64 hz) {
+                        statusBar()->showMessage(
+                            spotClient_.spotDx(call, hz)
+                                ? QString("spotted %1 at %2 kHz")
+                                      .arg(call).arg(hz / 1000.0, 0, 'f', 1)
+                                : QStringLiteral(
+                                      "spot NOT sent — no logged-in cluster "
+                                      "connection (SPOTS ▾)"),
+                            6000);
+                    });
+            // The same two ears the CW window reads, into the deck's pane.
+            for (CwDecoder* d : {cwDec_, audioDec_}) {
+                if (!d) continue;
+                connect(d, &CwDecoder::textDecoded, cwDeck_,
+                        &CwDeck::appendRead, Qt::QueuedConnection);
+                connect(d, &CwDecoder::wpmEstimated, cwDeck_,
+                        &CwDeck::setRxWpm, Qt::QueuedConnection);
+            }
+            if (audioSrc_)
+                connect(audioSrc_, &AudioCwSource::pitchMeasured,
+                        cwDeck_, &CwDeck::setRxPitch);
+            wireRigCwDeck();
+            auto* feed = new QTimer(cwDeck_);
+            feed->setInterval(1000);
+            connect(feed, &QTimer::timeout, cwDeck_, [this] {
+                if (cwDeck_->isVisible())
+                    cwDeck_->setRig(qint64(centerHz_), adifModeText(rigMode_));
+            });
+            feed->start();
+        }
+        cwDeck_->setRig(qint64(centerHz_), adifModeText(rigMode_));
+        savedSplit_ = pan_->displaySettings().split;
+        DisplaySettings ds = pan_->displaySettings();
+        ds.split = 1.0f;                // spectrum takes the whole widget
+        pan_->setDisplaySettings(ds);
+        cwDeck_->setVisible(true);
+        applyCwRxRouting();
+        pan_->installEventFilter(this);      // arrows walk from the pan too
+    } else {
+        if (cwDeck_) cwDeck_->setVisible(false);
+        if (!contestDeckVisible()) pan_->removeEventFilter(this);
+        DisplaySettings ds = pan_->displaySettings();
+        ds.split = savedSplit_ > 0.0f && savedSplit_ < 1.0f ? savedSplit_
+                                                            : 0.42f;
+        pan_->setDisplaySettings(ds);
+        applyCwRxRouting();
+    }
+}
+
+// The deck's rig CW sliders mirror the CW window's (the window owns the
+// CAT send); the radio's poll answers reach both.
+void MainWindow::wireRigCwDeck() {
+    if (!cwDeck_ || !radio_) return;
+    cwDeck_->setRigCwAvailable(radio_->caps().catCwControls && radio_->connected());
+    connect(radio_, &RadioController::cwSidetoneVolReported,
+            cwDeck_, &CwDeck::showRigSidetoneVol);
+    connect(radio_, &RadioController::cwQskDelayReported,
+            cwDeck_, &CwDeck::showRigQskDelay);
+    connect(radio_, &RadioController::cwAttackDecayReported,
+            cwDeck_, &CwDeck::showRigAttackDecay);
+    connect(radio_, &RadioController::cwSidetonePitchReported,
+            cwDeck_, &CwDeck::showRigSidetonePitch);
+    radio_->queryCw();
 }
 
 void MainWindow::setupRotorUi() {

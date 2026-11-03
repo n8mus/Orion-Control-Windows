@@ -173,6 +173,7 @@ add_executable(tentec-console
                                 src/cw/CwKeyer.h
   src/cw/OrionKeyer.cpp         src/cw/OrionKeyer.h
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
+  src/cw/CwDeck.cpp             src/cw/CwDeck.h
   src/cw/CwMacros.cpp           src/cw/CwMacros.h
   src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
   src/cw/FldigiCwEngine.cpp     src/cw/FldigiCwEngine.h

@@ -112,7 +112,18 @@ void UiScript::step() {
         if (n < ss.size()) ss[n]->setValue(a[2].toInt());
         else std::fprintf(stderr, "[uiscript] MISSING slider #%d\n", n);
     } else if (a[0] == "shot" && a.size() > 1) {
-        root_->window()->grab().save(a[1]);
+        // shot <png> [title-word]: the main window, or the top-level
+        // window whose title contains the word (a tool window).
+        QWidget* w = root_->window();
+        if (a.size() > 2) {
+            w = nullptr;
+            for (QWidget* t : QApplication::topLevelWidgets())
+                if (t->isVisible() && t->windowTitle().contains(text(a[2])))
+                    w = t;
+            if (!w) std::fprintf(stderr, "[uiscript] MISSING window '%s'\n",
+                                 qPrintable(a[2]));
+        }
+        if (w) w->grab().save(a[1]);
     } else {
         std::fprintf(stderr, "[uiscript] bad step '%s'\n", qPrintable(line));
     }

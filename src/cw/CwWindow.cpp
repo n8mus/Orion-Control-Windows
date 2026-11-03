@@ -198,6 +198,38 @@ CwWindow::CwWindow(RadioController* radio, QWidget* parent)
         "up or there's nothing to click. Enter also hands it to cqrlog's\n"
         "New QSO. Amber = doesn't look like a callsign yet (sends anyway).");
     memLay->addWidget(dxCall_);
+    // The report both ways and a LOG button right here (2026-11-02): a
+    // CW QSO is call + two reports, and the whole point is never opening
+    // the LOG window for one. Enter in either RST box logs, as the
+    // button does; the boxes ride the shared QsoContext like the DX box.
+    const auto rstBox = [this, memRow, memLay](const char* cap, QLineEdit** out,
+                                               const char* tip) {
+        memLay->addWidget(new QLabel(cap, memRow));
+        auto* e = new QLineEdit(memRow);
+        e->setMaxLength(5);
+        e->setMaximumWidth(58);
+        e->setText("599");
+        e->setToolTip(tip);
+        memLay->addWidget(e);
+        connect(e, &QLineEdit::returnPressed, this,
+                [this] { emit logRequested(); });
+        *out = e;
+    };
+    rstBox("S", &rstS_, "RST you SENT him — what [rst sent] keys.\n"
+                        "Enter here logs the QSO.");
+    rstBox("R", &rstR_, "RST he GAVE you.  Enter here logs the QSO.");
+    auto* logBtn = new QPushButton("LOG", memRow);
+    logBtn->setFocusPolicy(Qt::NoFocus);
+    logBtn->setToolTip("Log this QSO to the station log now: the DX call,\n"
+                       "both reports, dial, mode and UTC. Name/QTH/grid\n"
+                       "fill from the callbook afterwards when one is set.\n"
+                       "Clears the boxes for the next contact.");
+    logBtn->setStyleSheet("QPushButton { background: #2b62c9; color: #ffffff;"
+                          " border: 1px solid #3a73dd; border-radius: 3px;"
+                          " padding: 3px 10px; font-weight: bold; }");
+    connect(logBtn, &QPushButton::clicked, this,
+            [this] { emit logRequested(); });
+    memLay->addWidget(logBtn);
     memLay->addStretch(1);
     // F1-F12 on three rows of four under the DX box: four across is the
     // width the window already had, so more keys cost height only.
@@ -539,6 +571,7 @@ CwWindow::CwWindow(RadioController* radio, QWidget* parent)
         keyer_->setSpeed(v);
         QSettings().setValue("cw/wpm", v);
         updateStatus();
+        emit speedChanged(v);
     });
     connect(live_, &QCheckBox::toggled, this, [this](bool on) {
         if (on) word_->setChecked(false);  // one send style at a time
@@ -855,6 +888,66 @@ void CwWindow::setSpeedWpm(int wpm) {
     const QSignalBlocker b(wpm_);
     wpm_->setValue(wpm);         // spin range does the clamping
     keyer_->setSpeed(wpm_->value());
+    QSettings().setValue("cw/wpm", wpm_->value());
+    updateStatus();
+    emit speedChanged(wpm_->value());
+}
+
+// ---- CW deck hooks ------------------------------------------------------
+
+QString CwWindow::sendTyped(const QString& text) {
+    return sendText(text);
+}
+
+void CwWindow::streamChars(const QString& chars) {
+    if (chars.isEmpty()) return;
+    emit txImminent();
+    openKeyer();
+    keyer_->send(chars);
+    sentView_->setText((sentView_->text() + chars).right(60));
+}
+
+void CwWindow::unsendChars(int n) {
+    for (int i = 0; i < n; ++i) keyer_->backspace();
+}
+
+QAbstractButton* CwWindow::toggle(Toggle t) const {
+    switch (t) {
+        case Toggle::Engine:   return fldEng_;
+        case Toggle::Som:      return som_;
+        case Toggle::Deep:     return deep_;
+        case Toggle::RadioSrc: return radioSrc_;
+        case Toggle::Nr:       return nr_;
+        case Toggle::Live:     return live_;
+        case Toggle::Word:     return word_;
+    }
+    return nullptr;
+}
+
+QSlider* CwWindow::rigSlider(RigCtl c) const {
+    switch (c) {
+        case RigCtl::Vol:   return rigVol_;
+        case RigCtl::Pitch: return rigPitch_;
+        case RigCtl::Qsk:   return rigQsk_;
+        case RigCtl::Rise:  return rigRise_;
+    }
+    return nullptr;
+}
+
+QString CwWindow::rigKeyerText() const {
+    return rigKeyer_ ? rigKeyer_->text() : QString();
+}
+
+bool CwWindow::rigCwAvailable() const {
+    return rigBox_ && rigBox_->isEnabled();
+}
+
+void CwWindow::setTune(bool on) {
+    if (tuneBtn_->isEnabled()) tuneBtn_->setChecked(on);
+}
+
+void CwWindow::editFkey(int i) {
+    if (i >= 0 && i < kFkeys) editMemory(i);
 }
 
 int CwWindow::speedWpm() const { return wpm_->value(); }
@@ -874,10 +967,12 @@ void CwWindow::updateRigKeyerLine() {
         && keyerKind_ == QLatin1String("winkeyer"))
         t += "   ⚠ paddle-mode jack — WinKeyer may key continuous dits";
     rigKeyer_->setText(t);
+    emit rigKeyerTextChanged(t);
 }
 
 void CwWindow::setRigCwAvailable(bool on) {
     if (rigBox_) rigBox_->setEnabled(on);
+    emit rigCwAvailableChanged(on);
 }
 
 // Which engine should be live. "auto" is the public-build path: an Orion
@@ -954,6 +1049,7 @@ void CwWindow::wireKeyer() {
         keyer_->setSpeed(wpm);
         QSettings().setValue("cw/wpm", wpm);
         updateStatus(QString("pot -> %1 WPM").arg(wpm));
+        emit speedChanged(wpm);
     });
     connect(keyer_, &CwKeyer::breakIn, this, [this] {
         sentView_->clear();
@@ -1085,7 +1181,10 @@ CwMacroFields CwWindow::macroFields() const {
     f.hisCall = hisCall_;
     if (ctx_) {
         f.hisHandle = ctx_->handle();
-        f.hisName = ctx_->name();
+        // [his name] keys the name he GAVE when there is one (the deck's
+        // NAME box) and the callbook's otherwise — what you send back
+        // is what he said, not what QRZ says (2026-11-02).
+        f.hisName = ctx_->handle().isEmpty() ? ctx_->name() : ctx_->handle();
         f.hisQth = ctx_->qth();
         f.hisGrid = ctx_->grid();
         f.rstSent = ctx_->rstSent();
@@ -1119,12 +1218,28 @@ void CwWindow::applyFkeyButton(int i) {
 void CwWindow::setContext(QsoContext* ctx) {
     ctx_ = ctx;
     if (!ctx_) return;
+    // The RST boxes write the record as they are typed (textChanged, so a
+    // deck-side fill reaches it too); the echo guard stops the round trip.
+    connect(rstS_, &QLineEdit::textChanged, this, [this](const QString& t) {
+        if (ctxEcho_) return;
+        ctxEcho_ = true; ctx_->setRstSent(t); ctxEcho_ = false;
+    });
+    connect(rstR_, &QLineEdit::textChanged, this, [this](const QString& t) {
+        if (ctxEcho_) return;
+        ctxEcho_ = true; ctx_->setRstRcvd(t); ctxEcho_ = false;
+    });
+    if (!ctx_->rstSent().isEmpty()) rstS_->setText(ctx_->rstSent());
+    else ctx_->setRstSent(rstS_->text());
+    if (!ctx_->rstRcvd().isEmpty()) rstR_->setText(ctx_->rstRcvd());
+    else ctx_->setRstRcvd(rstR_->text());
     connect(ctx_, &QsoContext::changed, this, [this] {
         if (!ctxEcho_) {
             ctxEcho_ = true;
             if (dxCall_->text() != ctx_->call()) dxCall_->setText(ctx_->call());
             hisCall_ = ctx_->call();
             tintDxCall();
+            if (rstS_->text() != ctx_->rstSent()) rstS_->setText(ctx_->rstSent());
+            if (rstR_->text() != ctx_->rstRcvd()) rstR_->setText(ctx_->rstRcvd());
             ctxEcho_ = false;
         }
         // Every tooltip quotes live field values, so they go stale
@@ -1133,7 +1248,7 @@ void CwWindow::setContext(QsoContext* ctx) {
     });
 }
 
-void CwWindow::sendText(const QString& t) {
+QString CwWindow::sendText(const QString& t) {
     // A field the macro asks for that nobody filled used to key a hole in
     // the message (CW2 became " DE N8EM"). Refuse, and name the box that
     // is empty — the DX box and the LOG window are both a glance away.
@@ -1141,10 +1256,11 @@ void CwWindow::sendText(const QString& t) {
     const QString out = expandCwMacro(t, macroFields(), &missing);
     if (!missing.isEmpty()) {
         updateStatus(QString("nothing in %1 — fill it first").arg(missing));
-        if (missing == QLatin1String("his call")) dxCall_->setFocus();
-        return;
+        if (missing == QLatin1String("his call") && isVisible())
+            dxCall_->setFocus();
+        return missing;
     }
-    if (out.isEmpty()) return;
+    if (out.isEmpty()) return QString();
     // Sending his call ON THE AIR is the moment the QSO is real — make
     // sure cqrlog has it even if the box never lost focus (keyboard-only
     // operating: type the call, hit the macro key, never touch the mouse).
@@ -1153,6 +1269,7 @@ void CwWindow::sendText(const QString& t) {
     openKeyer();
     keyer_->send(out);
     sentView_->setText(out.right(60));
+    return QString();
 }
 
 void CwWindow::editMemory(int i) {

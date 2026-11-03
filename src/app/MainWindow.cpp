@@ -982,6 +982,7 @@ MainWindow::MainWindow(QWidget* parent)
     setupCwUi();
     setupSkimUi(stationCall);
     setupDigiUi();
+    setupCwDeckUi();
     setupRotorUi();
 
     // AUDIO: the Orion's output routing (*UC, one VFO per ear for split
@@ -3819,6 +3820,11 @@ MainWindow::MainWindow(QWidget* parent)
     // TTC_CONTEST=1: flip contest mode on at startup (pairs with
     // TTC_SCREENSHOT to review the deck headless; a pre-seeded
     // contest.db + contest/currentId make it open on a real contest).
+    // TTC_CWDECK=1: the CW deck up at startup (headless review).
+    if (std::getenv("TTC_CWDECK"))
+        QTimer::singleShot(0, this, [this] {
+            if (cwDeckBtn_) cwDeckBtn_->setChecked(true);
+        });
     if (std::getenv("TTC_CONTEST"))
         QTimer::singleShot(0, this, [this] {
             if (contestBtn_) contestBtn_->setChecked(true);  // real path

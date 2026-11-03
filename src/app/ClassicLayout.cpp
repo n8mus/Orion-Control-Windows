@@ -205,11 +205,11 @@ void ClassicLayout::finish() {
     }
     // The operator's grid (2026-10-22), four across:
     //   DISPLAY SPOTS SDR BAND / CW LOG SKIM CNTST /
-    //   ROSE ROT TUNER METER / MODE RX AUDIO EQ.
+    //   CW PNL ROSE ROT TUNER / METER MODE RX AUDIO / EQ.
     side_->setOrder({"DISPLAY", "SPOTS", "SDR", "BAND",
                      "CW", "LOG", "SKIM", "CNTST",
-                     "ROSE", "ROT", "TUNER", "METER",
-                     "MODE", "RX", "AUDIO", "EQ"});
+                     "CW PNL", "ROSE", "ROT", "TUNER",
+                     "METER", "MODE", "RX", "AUDIO", "EQ"});
     side_->restore();
     if (const char* st = std::getenv("TTC_SELFTEST"))
         QTimer::singleShot(std::max(500, std::atoi(st) * 1000 - 1500), this,

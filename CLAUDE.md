@@ -386,6 +386,26 @@ QRN spike gate, measured on a live lightning night's own capture.
   repeat-collapse stop whisper's '3, 3, 3...' loop. Nonstop talker in
   asrtest: lag ~3 s (was one 20 s lump ~30 s late). Optional: no whisper = no menu
   entry (CI/release build without it).
+- **CW deck** (CW PNL sidebar button, `src/cw/CwDeck`, 2026-11-02): the
+  contest deck's shape for an everyday CW QSO, in the SAME slot under the
+  pan (exclusive with CNTST; `TTC_CWDECK=1` opens it headless). Reader
+  left, CALL/NAME/S/R/0-BEAT/LOG IT + country line + Spot/SP/LP + F1-F12
+  (the CW window's own `cw/fkey/*` macros, F12 = wipe) + WPM/TUNE/STOP +
+  FLD/SOM/DEEP/RADIO/NR + the rig's VOL/PITCH/QSK/RISE + WinKeyer… in the
+  middle, type pane right (Enter keys the line, history above; LIVE/WORD
+  under it; right-click sizes either pane, `cwdeck/*Pt`). The deck OWNS
+  NOTHING: every send goes through `CwWindow` (`sendTyped`/`streamChars`,
+  single master of the WinKeyer), every toggle/slider is a two-way mirror
+  of that window's own control (`CwWindow::toggle()/rigSlider()`), the
+  QSO is the shared `QsoContext`. ←/→ walk the band map's spots (the
+  contest walk, `walkContestSpot`), ↑/↓ change speed from ANY box, the
+  type pane included. LOG IT / Enter in S, R or NAME / the CW window's
+  new LOG button all call `MainWindow::logFromContext()`: the record +
+  dial/mode/UTC + cty into the station log, the same fan-out as the LOG
+  window's button (`onQsoLogged`: uploads, cqrlog mirror, QRZ enrichment),
+  a 5-minute near-duplicate refused. `[his name]` keys the NAME box's
+  word (handle) when there is one, the callbook's otherwise. The UI
+  script's `shot <png> <title-word>` grabs a tool window.
 - **One current QSO** (`src/log/QsoContext.h`, 2026-10-19): the station
   being worked — call, handle, name, QTH, grid, RST sent/received — held
   once and shared by the LOG and CW windows, so a call or report typed in

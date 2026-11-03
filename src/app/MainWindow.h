@@ -86,6 +86,7 @@ class QsoContext;
 class SolarWidget;
 class TuneBoxWidget;
 class ContestDeck;
+class CwDeck;
 class ContestWindow;
 class CqrlogSync;
 class LogDb;
@@ -132,6 +133,19 @@ private:
     void openLogbookWindow();
     void openContestWindow();          // contest manager window (lazy)
     void toggleContestMode(bool on);   // CONTEST button: deck <-> waterfall
+    // CW PNL (2026-11-02): the CW deck in the same slot — day-to-day CW
+    // on the contest deck's reflexes. Exclusive with CNTST there.
+    void setupCwDeckUi();
+    void toggleCwDeck(bool on);
+    bool cwDeckVisible() const;
+    bool anyDeckVisible() const { return contestDeckVisible() || cwDeckVisible(); }
+    void wireRigCwDeck();              // rig CW reports into the deck's mirrors
+    void openWinKeyerPanel();          // the WinKeyer control box (CW right-click)
+    // Log the shared QsoContext as it stands (LOG IT in the CW deck, LOG
+    // in the CW window): call + reports + dial/mode/UTC + cty; then the
+    // same fan-out the LOG window's button gets.
+    void logFromContext();
+    void onQsoLogged(qint64 id, const QString& call);
     void walkContestSpot(int dir);     // ←/→ from the deck's empty call box
     bool eventFilter(QObject* obj, QEvent* ev) override;  // pan arrows
     void applyCwRxRouting();           // decode enables incl. contest feed
@@ -614,6 +628,8 @@ private:
     ContestWindow* contestWin_ = nullptr;      // contest manager (lazy)
     ContestDeck* contestDeck_ = nullptr;       // in-console deck (lazy)
     QToolButton* contestBtn_ = nullptr;        // CNTST toggle (old DIGI slot)
+    CwDeck* cwDeck_ = nullptr;                 // the CW deck (lazy)
+    QToolButton* cwDeckBtn_ = nullptr;         // CW PNL toggle
     MeterHost*   meterHost_ = nullptr;         // Panel layout's meter box
     MeterHost*   meterBox_  = nullptr;         // Original view's METER sidebar box
     std::unique_ptr<LayoutHost> layout_;          // where things go (app/LayoutHost)

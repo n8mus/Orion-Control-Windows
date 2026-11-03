@@ -15,6 +15,7 @@ class QSlider;
 class QGroupBox;
 class QUdpSocket;
 class QPlainTextEdit;
+class QAbstractButton;
 
 namespace ttc {
 
@@ -69,6 +70,24 @@ public:
     void setSpeedWpm(int wpm);           // clamps to the keyer's range
     int  speedWpm() const;
 
+    // The CW deck (cw/CwDeck, 2026-11-02) is a second front end on this
+    // window's keyer, decoder settings and rig controls — it must never
+    // grow a keyer of its own (two owners of one serial port). These are
+    // the hooks it drives; the window stays the single master.
+    // Typed text with the plain-language fields expanded; returns the
+    // name of an empty field the text asked for (nothing keyed), or "".
+    QString sendTyped(const QString& text);
+    void streamChars(const QString& chars);  // live keys: raw, no expansion
+    void unsendChars(int n);                 // live keys: backspace
+    enum class Toggle { Engine, Som, Deep, RadioSrc, Nr, Live, Word };
+    QAbstractButton* toggle(Toggle t) const; // the window's own check box
+    enum class RigCtl { Vol, Pitch, Qsk, Rise };
+    QSlider* rigSlider(RigCtl c) const;      // the window's own slider
+    QString rigKeyerText() const;            // "rig keyer: off · 29 wpm"
+    bool rigCwAvailable() const;
+    void setTune(bool on);                   // the TUNE button, from outside
+    void editFkey(int i);                    // the F-key editor dialog
+
 public slots:
     void appendRx(const QString& text);  // decoded CW from the SDR reader
     void setRxWpm(int wpm);
@@ -119,6 +138,13 @@ signals:
     void rigSidetonePitchChanged(int hz);
     void rigQskDelayChanged(int val);
     void rigAttackDecayChanged(int ms);
+    // Keying speed moved (spin, pot, cwdaemon, deck) — mirrors follow.
+    void speedChanged(int wpm);
+    void rigKeyerTextChanged(const QString& line);
+    void rigCwAvailableChanged(bool on);
+    // LOG button / Enter in an RST box: log the shared QsoContext as it
+    // stands (the main window owns the log and the fan-out).
+    void logRequested();
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -131,7 +157,7 @@ private:
     // The fields an F-key macro can spend, read fresh at every press.
     CwMacroFields macroFields() const;
     QString substitute(QString t) const;    // plain-language fields
-    void sendText(const QString& t);
+    QString sendText(const QString& t);     // returns the empty field name
     void editMemory(int i);
     void migrateFkeys();                    // CW1-4 texts -> F1-F12, ONCE
     QString fkeySpec(int i) const;          // "label|text", i = 0..7
@@ -157,6 +183,8 @@ private:
     quint16 feedPort2_ = 2337;           // cw/feedPort2 — cqrlog reader; 0 = off
     QLineEdit* line_ = nullptr;
     QLineEdit* dxCall_ = nullptr;        // the station being worked (%c)
+    QLineEdit* rstS_ = nullptr;          // report given / taken, shared
+    QLineEdit* rstR_ = nullptr;          //   with LOG and the CW deck
     QLabel* status_ = nullptr;
     QLabel* sentView_ = nullptr;         // what's queued/sent this over
     QSpinBox* wpm_ = nullptr;
