@@ -74,7 +74,9 @@ jobs:
           cmake --build /tmp/whisper/build -j"$(nproc)"
           sudo cmake --install /tmp/whisper/build
           sudo ldconfig
-          ls /usr/local/lib/libggml-cpu-*.so
+          # ggml installs the dlopen-only CPU variants into the BIN dir, not lib
+          # (that is upstream's install rule for GGML_BACKEND_DL; live-found 2026-11-03).
+          ls /usr/local/bin/libggml-cpu-*.so
           PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --modversion whisper
 
       # voacapl: the real VOACAP engine for the propagation overlay.
@@ -189,9 +191,10 @@ jobs:
           rm -f AppDir/usr/lib/libssl.so* AppDir/usr/lib/libcrypto.so*
           # ggml's CPU backend variants are dlopen'd from the directory of
           # libggml-base (and the executable's); they never appear as ELF
-          # dependencies, so copy them in beside both.
-          cp /usr/local/lib/libggml-cpu-*.so AppDir/usr/lib/
-          cp /usr/local/lib/libggml-cpu-*.so AppDir/usr/bin/
+          # dependencies and ggml installs them under bin/, not lib/,
+          # so copy them in beside both.
+          cp /usr/local/bin/libggml-cpu-*.so AppDir/usr/lib/
+          cp /usr/local/bin/libggml-cpu-*.so AppDir/usr/bin/
           ls AppDir/usr/lib/libggml-cpu-*.so | wc -l
           curl -fSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
