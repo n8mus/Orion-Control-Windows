@@ -55,6 +55,28 @@ jobs:
           cd /tmp/rnnoise && ./autogen.sh && ./configure --prefix=/usr/local
           make -j"$(nproc)" && sudo make install && sudo ldconfig
 
+      # whisper.cpp for Copy Assist — the desk build has Arch's whisper-cpp
+      # 1.9.5, so the release gets the same version, built the way Arch
+      # builds it: shared libs, NOT tuned to the runner's CPU, with the
+      # ggml CPU backends as loadable variants picked at run time
+      # (ggml_backend_load_all). Those backend .so files are dlopen'd, so
+      # the AppImage step copies them in by hand (linuxdeploy can't see
+      # them). The operator's rule (2026-11-03): the release matches the
+      # desk build in everything.
+      - name: Build whisper.cpp (Copy Assist)
+        run: |
+          git clone --depth 1 -b v1.9.5 https://github.com/ggml-org/whisper.cpp /tmp/whisper
+          cmake -S /tmp/whisper -B /tmp/whisper/build -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON -DGGML_NATIVE=OFF \
+            -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON \
+            -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF \
+            -DWHISPER_BUILD_SERVER=OFF -DCMAKE_INSTALL_PREFIX=/usr/local
+          cmake --build /tmp/whisper/build -j"$(nproc)"
+          sudo cmake --install /tmp/whisper/build
+          sudo ldconfig
+          ls /usr/local/lib/libggml-cpu-*.so
+          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --modversion whisper
+
       # voacapl: the real VOACAP engine for the propagation overlay.
       # Public-domain core (NTIA/ITS) — bundling is legal and deliberate.
       - name: Build voacapl (bundled propagation engine)
@@ -100,6 +122,7 @@ jobs:
 
       - name: Configure + build (with SDRplay)
         run: |
+          export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SDRPLAY=ON \
             -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;/usr/local" \
             -DCMAKE_CXX_FLAGS=-I/usr/local/include \
@@ -107,6 +130,9 @@ jobs:
           # The published build must be the operator's build: a release
           # that silently fell back to the CPU-only panadapter is a bug.
           grep -q "GPU panadapter: on" configure.log
+          grep -q "Copy Assist: whisper" configure.log
+          grep -q "WDSP: SDR receive audio enabled" configure.log
+          grep -q "SDRplay RSP source: ENABLED" configure.log
           cmake --build build -j"$(nproc)"
 
       - name: Assemble AppDir
@@ -161,6 +187,12 @@ jobs:
           # pair from the AppDir and repack: hosts load their own matched
           # pair, and 3.x hosts satisfy any bundled lib's 3.0 symbols.
           rm -f AppDir/usr/lib/libssl.so* AppDir/usr/lib/libcrypto.so*
+          # ggml's CPU backend variants are dlopen'd from the directory of
+          # libggml-base (and the executable's); they never appear as ELF
+          # dependencies, so copy them in beside both.
+          cp /usr/local/lib/libggml-cpu-*.so AppDir/usr/lib/
+          cp /usr/local/lib/libggml-cpu-*.so AppDir/usr/bin/
+          ls AppDir/usr/lib/libggml-cpu-*.so | wc -l
           curl -fSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           rm -f "$OUTPUT"
