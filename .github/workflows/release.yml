@@ -140,6 +140,12 @@ jobs:
           # (also live-found), so both openssl libs are excluded below and
           # every host supplies its own matched pair.
           export EXTRA_QT_PLUGINS="tls"
+          # The official Qt ships SQL drivers for Mimer/MySQL/Postgres/ODBC
+          # whose client libraries aren't here, and the qt plugin deploys
+          # every driver it finds and dies on the first missing dependency
+          # (libmimerapi.so, live-found 2026-11-03). The log is SQLite only.
+          find "$QT_ROOT_DIR/plugins/sqldrivers" -name 'libqsql*.so' \
+            ! -name 'libqsqlite.so' -print -delete
           export OUTPUT="tentec-console-${GITHUB_REF_NAME}-x86_64.AppImage"
           ./linuxdeploy --appdir AppDir --plugin qt \
             --executable AppDir/usr/bin/voacapl \
