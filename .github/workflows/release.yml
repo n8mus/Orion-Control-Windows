@@ -31,7 +31,7 @@ jobs:
             cmake g++ make gfortran \
             libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
             libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
-            libegl1 libfontconfig1 libglib2.0-0 \
+            libegl1 libfontconfig1 libglib2.0-0 libvulkan-dev \
             autoconf automake libtool curl file \
             fuse libfuse2 desktop-file-utils libfftw3-dev patch
 

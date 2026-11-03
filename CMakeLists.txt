@@ -241,7 +241,7 @@ target_compile_definitions(tentec-console PRIVATE TTC_VERSION="${TTC_GIT_VERSION
 option(BUILD_GPU_PAN "GPU panadapter when Qt allows it (OFF = CPU paint only)" ON)
 set(TTC_GPU_PAN OFF)
 if(BUILD_GPU_PAN AND Qt6_VERSION VERSION_GREATER_EQUAL 6.7)
-  find_package(Qt6 QUIET COMPONENTS GuiPrivate ShaderTools)
+  find_package(Qt6 COMPONENTS GuiPrivate ShaderTools)   # not QUIET: say WHY when it falls back
   if(TARGET Qt6::GuiPrivate AND COMMAND qt_add_shaders)
     set(TTC_GPU_PAN ON)
   endif()
