@@ -394,7 +394,8 @@ QRN spike gate, measured on a live lightning night's own capture.
   pan (exclusive with CNTST; `TTC_CWDECK=1` opens it headless). Reader
   left, CALL/NAME/S/R/0-BEAT/LOG IT + country line + Spot/SP/LP + F1-F12
   (the CW window's own `cw/fkey/*` macros, F12 = wipe) + WPM/TUNE/STOP +
-  FLD/SOM/DEEP/RADIO/NR + the rig's VOL/PITCH/QSK/RISE + WinKeyer… in the
+  FLD/SOM/DEEP/RADIO/NR + the rig's VOL/PITCH/QSK/RISE/KEYER (the radio's
+  own keyer speed, `*CS`; never `*CK`) + WinKeyer… in the
   middle, type pane right (Enter keys the line, history above; LIVE/WORD
   under it; right-click sizes either pane, `cwdeck/*Pt`). The deck OWNS
   NOTHING: every send goes through `CwWindow` (`sendTyped`/`streamChars`,

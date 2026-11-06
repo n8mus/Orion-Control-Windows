@@ -1192,6 +1192,8 @@ void MainWindow::wireRigCwPanel() {
             [this](int v) { radio_->setCwQskDelay(v); });
     connect(cwWin_, &CwWindow::rigAttackDecayChanged, this,
             [this](int v) { radio_->setCwAttackDecay(v); });
+    connect(cwWin_, &CwWindow::rigKeyerSpeedChanged, this,
+            [this](int v) { radio_->setCwKeyerSpeed(v); });
     connect(cwWin_, &CwWindow::rigSidetonePitchChanged, this, [this](int hz) {
         radio_->setCwSidetonePitch(hz);
         applyCwPitch(hz);                  // follow our own change at once

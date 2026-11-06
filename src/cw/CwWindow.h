@@ -81,7 +81,7 @@ public:
     void unsendChars(int n);                 // live keys: backspace
     enum class Toggle { Engine, Som, Deep, RadioSrc, Nr, Live, Word };
     QAbstractButton* toggle(Toggle t) const; // the window's own check box
-    enum class RigCtl { Vol, Pitch, Qsk, Rise };
+    enum class RigCtl { Vol, Pitch, Qsk, Rise, Keyer };
     QSlider* rigSlider(RigCtl c) const;      // the window's own slider
     QString rigKeyerText() const;            // "rig keyer: off · 29 wpm"
     bool rigCwAvailable() const;
@@ -138,6 +138,7 @@ signals:
     void rigSidetonePitchChanged(int hz);
     void rigQskDelayChanged(int val);
     void rigAttackDecayChanged(int ms);
+    void rigKeyerSpeedChanged(int wpm);      // the RADIO's keyer (*CS)
     // Keying speed moved (spin, pot, cwdaemon, deck) — mirrors follow.
     void speedChanged(int wpm);
     void rigKeyerTextChanged(const QString& line);
@@ -216,6 +217,7 @@ private:
     QSlider* rigPitch_    = nullptr;     QLabel* rigPitchVal_ = nullptr;
     QSlider* rigQsk_      = nullptr;     QLabel* rigQskVal_   = nullptr;
     QSlider* rigRise_     = nullptr;     QLabel* rigRiseVal_  = nullptr;
+    QSlider* rigSpeed_    = nullptr;     QLabel* rigSpeedVal_ = nullptr;
     QLabel*  rigKeyer_    = nullptr;     // the radio's keyer, read-only
     int rigKeyerWpm_ = 0, rigKeyerWt_ = 0, rigKeyerOn_ = -1;
 

@@ -345,7 +345,7 @@ void CwDeck::buildUi() {
                                  this));
         mid->addLayout(r5);
 
-        // Rows 6-7: the radio's own CW settings over CAT, mirrors of the
+        // Rows 6-7b: the radio's own CW settings over CAT, mirrors of the
         // CW window's sliders — a drag here moves that slider (which
         // owns the throttled CAT send); that slider moving moves this.
         const auto rigRow = [this](int row) {
@@ -396,6 +396,11 @@ void CwDeck::buildUi() {
         mirror(r7, "QSK", CwWindow::RigCtl::Qsk, &rigQsk_, &rigQskVal_);
         mirror(r7, "RISE", CwWindow::RigCtl::Rise, &rigRise_, &rigRiseVal_);
         mid->addWidget(rigRow_[1]);
+        // Row 7b: the RADIO's own keyer speed (*CS) — the paddle on the
+        // rig's jack, not the WinKeyer's WPM in row 5.
+        auto* r7b = rigRow(2);
+        mirror(r7b, "KEYER", CwWindow::RigCtl::Keyer, &rigSpeed_, &rigSpeedVal_);
+        mid->addWidget(rigRow_[2]);
         setRigCwAvailable(cw_->rigCwAvailable());
         connect(cw_, &CwWindow::rigCwAvailableChanged, this,
                 &CwDeck::setRigCwAvailable);

@@ -425,10 +425,11 @@ CwWindow::CwWindow(RadioController* radio, QWidget* parent)
     // side — the Orion makes the sidetone and shapes the CW envelope
     // whenever it transmits CW, no matter what did the keying — so they
     // work with the WinKeyer sending, and belong beside it. The internal
-    // keyer's own controls (*CK on/off, *CS speed, *CW weight) are
-    // deliberately NOT here: enabling that keyer re-reads the key jack as
-    // a paddle and would fight the WinKeyer wired into it. It's shown
-    // read-only instead, so the operator can see what the rig thinks.
+    // keyer's on/off (*CK) is deliberately NOT here: enabling that keyer
+    // re-reads the key jack as a paddle and would fight the WinKeyer
+    // wired into it. Its SPEED (*CS) is (2026-11-06): a paddle on the
+    // radio's own keyer wants a speed knob, and *CS never touches *CK.
+    // On/off and weight stay read-only on the line below.
     rigBox_ = new QGroupBox("RADIO — CW (over CAT)", this);
     rigBox_->setStyleSheet(
         "QGroupBox { border: 1px solid #3a4a5e; border-radius: 4px;"
@@ -509,14 +510,20 @@ CwWindow::CwWindow(RadioController* radio, QWidget* parent)
               "wider on the band; higher is softer and easier on the ears.",
               3, 10, 1, &rigRise_, &rigRiseVal_,
               &CwWindow::rigAttackDecayChanged);
+    rigSlider(2, 0, "KEYER",
+              "The RADIO's internal keyer speed in WPM (*CS) — the paddle\n"
+              "on the rig's key jack. Not the WinKeyer's speed (WPM above):\n"
+              "setting it never turns the rig keyer on.",
+              10, 60, 1, &rigSpeed_, &rigSpeedVal_,
+              &CwWindow::rigKeyerSpeedChanged);
     rigKeyer_ = new QLabel(this);
     rigKeyer_->setStyleSheet("color: #7f93a8; font-size: 13px;");
     rigKeyer_->setToolTip(
-        "The RADIO's built-in keyer, shown read-only.\n"
-        "The console doesn't drive it: turning it on re-reads the key\n"
-        "jack as a paddle, which would fight the WinKeyer plugged in\n"
-        "there. Your sending speed is the WinKeyer's (and its pot).");
-    rg->addWidget(rigKeyer_, 2, 0, 1, 6);
+        "The RADIO's built-in keyer: on/off and weight, read-only.\n"
+        "The console never turns it on: that re-reads the key jack as\n"
+        "a paddle, which would fight the WinKeyer plugged in there.\n"
+        "Its speed is the KEYER slider; the WinKeyer's is WPM above.");
+    rg->addWidget(rigKeyer_, 2, 3, 1, 3);
     g->addWidget(rigBox_, 6, 0, 1, 5);
     updateRigKeyerLine();
     rigBox_->setEnabled(false);            // until a radio says it can
@@ -842,7 +849,11 @@ void CwWindow::showRigSidetonePitch(int hz) {
     showRig(rigPitch_, rigPitchVal_, hz);
 }
 
-void CwWindow::showRigKeyerSpeed(int wpm)  { rigKeyerWpm_ = wpm; updateRigKeyerLine(); }
+void CwWindow::showRigKeyerSpeed(int wpm) {
+    rigKeyerWpm_ = wpm;
+    showRig(rigSpeed_, rigSpeedVal_, wpm);
+    updateRigKeyerLine();
+}
 void CwWindow::showRigKeyerWeight(int pct) { rigKeyerWt_ = pct;  updateRigKeyerLine(); }
 void CwWindow::showRigKeyerEnabled(bool on){ rigKeyerOn_ = on;   updateRigKeyerLine(); }
 
@@ -930,6 +941,7 @@ QSlider* CwWindow::rigSlider(RigCtl c) const {
         case RigCtl::Pitch: return rigPitch_;
         case RigCtl::Qsk:   return rigQsk_;
         case RigCtl::Rise:  return rigRise_;
+        case RigCtl::Keyer: return rigSpeed_;
     }
     return nullptr;
 }

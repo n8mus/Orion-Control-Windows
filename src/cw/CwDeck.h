@@ -33,7 +33,7 @@ class RotorLink;
 //               [ country · wkd b4         Spot SP LP  ]
 //               [ F1 .. F12, two rows of six             ]
 //               [ WPM TUNE STOP      FLD SOM DEEP RADIO NR ]
-//               [ VOL / PITCH   QSK / RISE   (rig, over CAT) ]
+//               [ VOL / PITCH   QSK / RISE   KEYER wpm  (rig, CAT) ]
 //               [ read wpm · Hz    WinKeyer…   rig keyer line ]
 //
 // Day-to-day CW on the contest deck's reflexes: ←/→ walk the band map's
@@ -151,7 +151,8 @@ private:
     QSlider* rigPitch_ = nullptr; QLabel* rigPitchVal_ = nullptr;
     QSlider* rigQsk_ = nullptr;   QLabel* rigQskVal_ = nullptr;
     QSlider* rigRise_ = nullptr;  QLabel* rigRiseVal_ = nullptr;
-    QWidget* rigRow_[2] = {};
+    QSlider* rigSpeed_ = nullptr; QLabel* rigSpeedVal_ = nullptr;
+    QWidget* rigRow_[3] = {};
     QLabel* rigKeyer_ = nullptr;
     QLabel* rxInfo_ = nullptr;
     QLabel* status_ = nullptr;
