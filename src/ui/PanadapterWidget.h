@@ -242,6 +242,9 @@ public:
     // radio's audio-Hz notch through the mode sideband. Ignored mid-drag.
     // peak = SAF flavor (green, passes the band instead of rejecting it).
     void setNotch(bool on, int rfOffsetHz, int widthHz, bool peak = false);
+    // The RTTY deck's tone pair (RF offsets from the centre): two thin
+    // lines showing where the demodulator listens — and transmits.
+    void setDigiTones(bool on, int rfLoHz, int rfHiHz);
     void setSpectrum(const std::vector<float>& magsDb);
     void setCenterHz(uint64_t hz);                 // dial freq, for grid labels
     void setSpots(const QVector<SpotLabel>& s);    // empty = feature off
@@ -384,6 +387,8 @@ private:
     int bwAnchor_ = 0;                             // see setBwAnchor
     QVector<BandZone> zones_;                      // regulatory overlays
     bool notchOn_     = false;
+    bool digiTonesOn_ = false;
+    int  digiToneLoHz_ = 0, digiToneHiHz_ = 0;
     bool notchPeak_   = false;                     // SAF flavor (green marker)
     int  notchRfHz_   = 0;                         // marker center, RF offset
     int  notchWidthHz_ = 0;

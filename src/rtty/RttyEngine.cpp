@@ -36,6 +36,7 @@ RttyEngine::Settings RttyEngine::loadSettings() {
     s.diddle = q.value("rtty/diddle", s.diddle).toBool();
     s.txLevelDb = q.value("rtty/txLevelDb", s.txLevelDb).toInt();
     s.squelch = q.value("rtty/squelch", s.squelch).toDouble();
+    s.afc = q.value("rtty/afc", s.afc).toBool();
     return s;
 }
 
@@ -49,6 +50,7 @@ void RttyEngine::saveSettings(const Settings& s) {
     q.setValue("rtty/diddle", s.diddle);
     q.setValue("rtty/txLevelDb", s.txLevelDb);
     q.setValue("rtty/squelch", s.squelch);
+    q.setValue("rtty/afc", s.afc);
 }
 
 RttyEngine::RttyEngine(QObject* parent) : QObject(parent) {
@@ -58,16 +60,18 @@ RttyEngine::RttyEngine(QObject* parent) : QObject(parent) {
 
 RttyEngine::~RttyEngine() { stopProcess(); }
 
-void RttyEngine::apply(const Settings& s) {
+void RttyEngine::apply(const Settings& s, bool save) {
     s_ = s;
+    const bool rev = s.reverse != usb_;        // USB flips the sense itself
     RttyDemod::Params dp;
     dp.sampleRate = kRate;
     dp.markHz = s.markHz;
     dp.spaceHz = s.markHz + s.shiftHz;
     dp.baud = s.baud;
-    dp.reverse = s.reverse;
+    dp.reverse = rev;
     dp.usos = s.usos;
     dp.squelch = s.squelch;
+    dp.afc = s.afc;
     demod_.setParams(dp);                      // resets the channel
     RttyMod::Params mp;
     mp.sampleRate = kRate;
@@ -75,12 +79,28 @@ void RttyEngine::apply(const Settings& s) {
     mp.spaceHz = s.markHz + s.shiftHz;
     mp.baud = s.baud;
     mp.stopBits = s.baud > 60 ? 2.0 : 1.5;
-    mp.reverse = s.reverse;
+    mp.reverse = rev;
     mp.usos = s.usos;
     mp.diddle = s.diddle;
     mp.level = float(std::pow(10.0, std::clamp(s.txLevelDb, -30, 0) / 20.0));
     mod_.setParams(mp);
-    saveSettings(s);
+    if (save) saveSettings(s);
+}
+
+void RttyEngine::setSidebandUsb(bool usb) {
+    if (usb == usb_) return;
+    usb_ = usb;
+    apply(s_, false);
+}
+
+void RttyEngine::setToneCenterHz(int hz) {
+    Settings s = s_;
+    s.markHz = std::clamp(hz - s.shiftHz / 2, 300, 3500);
+    apply(s, false);
+}
+
+double RttyEngine::effectiveMarkHz() const {
+    return s_.markHz + demod_.afcHz();
 }
 
 // ---- receive ---------------------------------------------------------------
@@ -136,6 +156,15 @@ bool RttyEngine::start(const QString& sinkNode) {
     if (sinkNode.isEmpty()) { emit txFailed("no SignaLink playback device"); return false; }
     stopProcess();
     mod_.clear();
+    {
+        // Transmit where we receive (fldigi's rule): the AFC's trim rides
+        // along, so the far end hears us on the pair it is sending on.
+        RttyMod::Params mp = mod_.params();
+        const int mark = int(std::lround(effectiveMarkHz()));
+        mp.markHz = mark;
+        mp.spaceHz = mark + s_.shiftHz;
+        mod_.setParams(mp);
+    }
     ending_ = tailDone_ = false;
     tailSamples_ = 0;
     play_ = new QProcess(this);

@@ -155,6 +155,13 @@ private:
     void rttyAbort();                  // now
     void rttySetNarrow(bool on);
     void ensureRtty();                 // the engine + its audio tap
+    // RF offsets from the dial of the demodulator's mark and of the tone
+    // pair's centre (AFC included): below the dial on LSB, above on USB.
+    // 0 outside RTTY. A spot (mark by convention) or a click lands on
+    // them: dial = f - offset.
+    int rttyMarkRfOffset() const;
+    int rttyCenterRfOffset() const;
+    void rttyRefreshTones();           // the pan's RY lines
     void wireRigCwDeck();              // rig CW reports into the deck's mirrors
     void openWinKeyerPanel();          // the WinKeyer control box (CW right-click)
     // Log the shared QsoContext as it stands (LOG IT in the CW deck, LOG
@@ -657,6 +664,9 @@ private:
         int bw = 2400, pbt = 0, txBw = 2850;
         bool dig = false;
     } rttySaved_;
+    QTimer* rttyTick_ = nullptr;               // 250 ms: sideband follow, AFC reset, markers
+    qint64 rttyLastHz_ = 0;
+    Mode rttyLastMode_ = Mode::USB;
     struct RttyHeard { QString call; qint64 hz, atSecs; bool toMe; };
     QList<RttyHeard> rttyHeard_;               // our own decodes, for the band map
     MeterHost*   meterHost_ = nullptr;         // Panel layout's meter box

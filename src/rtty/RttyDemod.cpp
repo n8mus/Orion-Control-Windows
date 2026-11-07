@@ -18,14 +18,27 @@ void RttyDemod::setParams(const Params& p) {
     decim_ = std::max(1, int(std::lround(p.sampleRate / 1000.0)));
     const double rate1k = p.sampleRate / decim_;
     bitLen_ = rate1k / p.baud;
-    const double mHz = p.reverse ? p.spaceHz : p.markHz;
-    const double sHz = p.reverse ? p.markHz : p.spaceHz;
-    rotM_ = std::polar(1.0, -2.0 * kPi * mHz / p.sampleRate);
-    rotS_ = std::polar(1.0, -2.0 * kPi * sHz / p.sampleRate);
+    mHz_ = p.reverse ? p.spaceHz : p.markHz;
+    sHz_ = p.reverse ? p.markHz : p.spaceHz;
+    afcHz_ = 0.0;
+    setRotations();
     const size_t L = std::max<size_t>(2, size_t(std::lround(bitLen_)));
     ringM_.assign(L, {0, 0});
     ringS_.assign(L, {0, 0});
+    afcRing_.assign(256, {0, 0});
     reset();
+}
+
+void RttyDemod::setRotations() {
+    rotM_ = std::polar(1.0, -2.0 * kPi * (mHz_ + afcHz_) / p_.sampleRate);
+    rotS_ = std::polar(1.0, -2.0 * kPi * (sHz_ + afcHz_) / p_.sampleRate);
+}
+
+void RttyDemod::resetAfc() {
+    afcHz_ = 0.0;
+    setRotations();
+    afcFill_ = 0;
+    st_.afcHz = 0.0f;
 }
 
 void RttyDemod::reset() {
@@ -46,6 +59,10 @@ void RttyDemod::reset() {
     lastBit_ = 1;
     ita_.reset();
     st_ = {};
+    std::fill(afcRing_.begin(), afcRing_.end(), std::complex<double>{0, 0});
+    afcPos_ = 0;
+    afcFill_ = afcTick_ = 0;
+    st_.afcHz = float(afcHz_);
 }
 
 void RttyDemod::processReal(const float* s, size_t n) {
@@ -77,10 +94,75 @@ void RttyDemod::process(const std::complex<float>* s, size_t n) {
             ringM_[ringPos_] = accM_;
             ringS_[ringPos_] = accS_;
             if (++ringPos_ >= ringM_.size()) ringPos_ = 0;
+            // The AFC's window: the mark-mixed stream, 256 ms of it.
+            if (p_.afc && !afcRing_.empty()) {
+                afcRing_[afcPos_] = accM_;
+                if (++afcPos_ >= afcRing_.size()) afcPos_ = 0;
+                if (afcFill_ < afcRing_.size()) ++afcFill_;
+                if (++afcTick_ >= 250) {
+                    afcTick_ = 0;
+                    if (afcFill_ >= afcRing_.size()) acquire();
+                }
+            }
             accM_ = accS_ = {0, 0};
             accN_ = 0;
             decimated(float(std::abs(sumM_)), float(std::abs(sumS_)));
         }
+    }
+}
+
+// One DFT bin of the AFC window at `hz` relative to the mark mixer.
+std::complex<double> RttyDemod::probe(double hz) const {
+    const std::complex<double> rot =
+        std::polar(1.0, -2.0 * kPi * hz * decim_ / p_.sampleRate);
+    std::complex<double> ph(1, 0), acc(0, 0);
+    const size_t N = afcRing_.size();
+    for (size_t i = 0; i < N; ++i) {
+        size_t k = afcPos_ + i;
+        if (k >= N) k -= N;
+        acc += afcRing_[k] * ph;
+        ph *= rot;
+    }
+    return acc;
+}
+
+// Find the tone pair: the offset d (within the range) where BOTH a tone
+// at d and one at d + (space - mark) stand out — scored by the WEAKER of
+// the two bins, so a lone tone scores like noise. (The geometric mean
+// was tried first: a mark idling alone at 40 dB made sqrt(tone x noise)
+// pass at d = 0 and d = -shift alike, and the first characters of every
+// over came out garbled while it guessed.) 10 Hz grid, then 2 Hz about
+// the best, 60 % of the way per step. No pair = hold: a station idling
+// on mark between overs must not lose its trim.
+void RttyDemod::acquire() {
+    const double rel = sHz_ - mHz_;
+    const double range = p_.afcRangeHz;
+    std::vector<double> pm;
+    pm.reserve(64);
+    double bestD = 0.0, bestS = -1.0;
+    for (double d = -range; d <= range + 1e-9; d += 10.0) {
+        const double Pm = std::norm(probe(d));
+        const double Ps = std::norm(probe(d + rel));
+        pm.push_back(Pm);
+        const double sc = std::min(Pm, Ps);
+        if (sc > bestS) { bestS = sc; bestD = d; }
+    }
+    std::nth_element(pm.begin(), pm.begin() + pm.size() / 2, pm.end());
+    const double median = pm[pm.size() / 2];
+    if (bestS < 10.0 * std::max(median, 1e-30)) return;
+    double rd = bestD, rs = bestS;
+    for (double d = bestD - 10.0; d <= bestD + 10.0 + 1e-9; d += 2.0) {
+        const double sc = std::min(std::norm(probe(d)), std::norm(probe(d + rel)));
+        if (sc > rs) { rs = sc; rd = d; }
+    }
+    // Clearly off (a click on the other line): all the way at once; near:
+    // 60 % per step, so the trim settles without hunting.
+    const double step = std::abs(rd) >= 30.0 ? 1.0 : 0.6;
+    const double next = std::clamp(afcHz_ + step * rd, -range, range);
+    if (std::abs(next - afcHz_) >= 1.0) {
+        afcHz_ = next;
+        setRotations();
+        st_.afcHz = float(afcHz_);
     }
 }
 

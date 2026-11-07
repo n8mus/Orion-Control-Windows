@@ -45,20 +45,24 @@ namespace ttc {
 class RttyTuneWidget : public QWidget {
 public:
     explicit RttyTuneWidget(QWidget* parent = nullptr) : QWidget(parent) {
-        setMinimumSize(60, 44);
-        setToolTip("Mark (left) and space (right) tone levels. Tune until both\n"
-                   "bars stand tall and swap as the station keys; green =\n"
-                   "the squelch is open and text prints.");
+        setMinimumSize(60, 56);
+        setToolTip("Mark (left) and space (right) tone levels. Click the signal on\n"
+                   "the waterfall; the AFC pulls in the last +-200 Hz. Both bars tall\n"
+                   "and swapping as the station keys = tuned; green = the squelch is\n"
+                   "open and text prints. Below: signal over noise, keying contrast,\n"
+                   "and the mark tone with the AFC's trim.");
     }
-    void set(float mark, float space, float quality, float snrDb, bool open) {
+    void set(float mark, float space, float quality, float snrDb, bool open,
+             float afcHz, int markHz) {
         m_ = mark; s_ = space; q_ = quality; snr_ = snrDb; open_ = open;
+        afc_ = afcHz; markHz_ = markHz;
         update();
     }
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.fillRect(rect(), QColor("#0e141b"));
-        const int w = width(), h = height() - 12;
+        const int w = width(), h = height() - 24;
         const int bw = std::max(6, (w - 18) / 2);
         const QColor on = open_ ? QColor("#82de8c") : QColor("#6aa5d8");
         const auto bar = [&](int x, float v) {
@@ -75,9 +79,14 @@ protected:
         p.setFont(f);
         p.drawText(QRect(0, h, w, 12), Qt::AlignCenter,
                    QString("%1 dB · %2").arg(int(snr_)).arg(q_, 0, 'f', 2));
+        // Where the pair sits: the nominal mark and the AFC's trim on it.
+        p.drawText(QRect(0, h + 12, w, 12), Qt::AlignCenter,
+                   QString("%1%2%3").arg(markHz_)
+                       .arg(afc_ >= 0 ? "+" : "").arg(int(afc_)));
     }
 private:
-    float m_ = 0, s_ = 0, q_ = 0, snr_ = 0;
+    float m_ = 0, s_ = 0, q_ = 0, snr_ = 0, afc_ = 0;
+    int markHz_ = 2125;
     bool open_ = false;
 };
 
@@ -169,7 +178,7 @@ RttyDeck::RttyDeck(RttyEngine* eng, LogbookIndex* idx, const CtyLookup* cty,
     connect(tick_, &QTimer::timeout, this, [this] {
         if (!eng_ || !tune_) return;
         const auto st = eng_->rxStatus();
-        tune_->set(st.mark, st.space, st.quality, st.snrDb, st.open);
+        tune_->set(st.mark, st.space, st.quality, st.snrDb, st.open, st.afcHz, eng_->markHz());
     });
 }
 
@@ -377,7 +386,8 @@ void RttyDeck::buildUi() {
         usosBtn_ = toggleBtn("USOS", "Unshift on space: a space returns to letters (most stations)", this);
         diddleBtn_ = toggleBtn("DIDL", "Diddle: send LTRS while keyed with nothing to say", this);
         sqlBtn_ = toggleBtn("SQL", "Squelch: print only while the tones key cleanly (off = print everything)", this);
-        for (QPushButton* b : {revBtn_, usosBtn_, diddleBtn_, sqlBtn_}) r5->addWidget(b);
+        afcBtn_ = toggleBtn("AFC", "Pull the tone pair onto the signal, +-200 Hz (off = the tones stay put)", this);
+        for (QPushButton* b : {revBtn_, usosBtn_, diddleBtn_, sqlBtn_, afcBtn_}) r5->addWidget(b);
         r5->addWidget(cap("LVL"));
         level_ = new QSpinBox(this);
         level_->setRange(-30, 0);
@@ -392,7 +402,7 @@ void RttyDeck::buildUi() {
         pullSettings();
         connect(baud_, &QComboBox::currentIndexChanged, this, [this] { pushSettings(); });
         connect(shift_, &QComboBox::currentIndexChanged, this, [this] { pushSettings(); });
-        for (QPushButton* b : {revBtn_, usosBtn_, diddleBtn_, sqlBtn_})
+        for (QPushButton* b : {revBtn_, usosBtn_, diddleBtn_, sqlBtn_, afcBtn_})
             connect(b, &QPushButton::toggled, this, [this] { pushSettings(); });
         connect(level_, &QSpinBox::valueChanged, this, [this] { pushSettings(); });
 
@@ -503,6 +513,7 @@ void RttyDeck::pullSettings() {
     usosBtn_->setChecked(s.usos);
     diddleBtn_->setChecked(s.diddle);
     sqlBtn_->setChecked(s.squelch > 0.0);
+    afcBtn_->setChecked(s.afc);
     level_->setValue(s.txLevelDb);
     settingsEcho_ = false;
 }
@@ -518,6 +529,7 @@ void RttyDeck::pushSettings() {
     s.usos = usosBtn_->isChecked();
     s.diddle = diddleBtn_->isChecked();
     s.squelch = sqlBtn_->isChecked() ? 0.5 : 0.0;
+    s.afc = afcBtn_->isChecked();
     s.txLevelDb = level_->value();
     eng_->apply(s);
     setStatus(QString("%1 Bd · %2 Hz%3").arg(s.baud).arg(s.shiftHz)

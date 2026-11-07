@@ -46,15 +46,18 @@ struct Run {
 // Modulate the message, add noise at snrDb (in a 3 kHz bandwidth, 0 dB =
 // tone power equals the noise power in 3 kHz), run the demod.
 static Run loopback(double baud, double snrDb, bool reverseTx, bool reverseRx,
-                    bool iq, unsigned seed = 1) {
+                    bool iq, unsigned seed = 1, double offHz = 0.0, bool afc = true) {
     RttyMod::Params mp;
     mp.baud = baud;
     mp.reverse = reverseTx;
     mp.stopBits = baud > 60 ? 2.0 : 1.5;
+    mp.markHz += offHz;                        // the sender is off our tones
+    mp.spaceHz += offHz;
     RttyMod mod(mp);
     RttyDemod::Params dp;
     dp.baud = baud;
     dp.reverse = reverseRx;
+    dp.afc = afc;
     if (iq) { dp.markHz = 85.0; dp.spaceHz = -85.0; }
     RttyDemod dem(dp);
     Run r;
@@ -131,7 +134,8 @@ int main(int argc, char** argv) {
     }
 
     // Loopback matrix.
-    struct Row { const char* name; double baud; double snr; bool rtx, rrx, iq; double need; };
+    struct Row { const char* name; double baud; double snr; bool rtx, rrx, iq; double need;
+                 double off = 0.0; bool afc = true; };
     const std::vector<Row> rows = {
         {"45.45 clean",        45.45,  40, false, false, false, 100},
         {"45.45 +10 dB",       45.45,  10, false, false, false, 100},
@@ -144,15 +148,29 @@ int main(int argc, char** argv) {
         {"45.45 reversed both", 45.45,  10, true,  true,  false, 100},
         {"45.45 IQ +10 dB",    45.45,  10, false, false, true,  100},
         {"45.45 IQ   0 dB",    45.45,   0, false, false, true,   97},
+        // The AFC: the sender 80 Hz high, 180 Hz low (the operator clicked
+        // the other line), and 80 Hz high at 0 dB; without AFC 80 Hz off
+        // must read badly (so the rows above prove something).
+        {"AFC +80 Hz, +10 dB",  45.45,  10, false, false, false,  95,  80.0, true},
+        {"AFC -180 Hz, +10 dB", 45.45,  10, false, false, false,  95, -180.0, true},
+        {"AFC +80 Hz,   0 dB",  45.45,   0, false, false, false,  90,  80.0, true},
+        {"AFC +80 Hz, IQ",      45.45,  10, false, false, true,   95,  80.0, true},
     };
     std::printf("%-22s %7s\n", "case", "copy%");
     for (const Row& r : rows) {
         if (quick && r.snr < 0) continue;
-        const Run run = loopback(r.baud, r.snr, r.rtx, r.rrx, r.iq);
+        const Run run = loopback(r.baud, r.snr, r.rtx, r.rrx, r.iq, 1, r.off, r.afc);
         const double acc = accuracy(kMsg, run.got);
         const bool ok = acc >= r.need;
         std::printf("%-22s %6.1f%% %s\n", r.name, acc, ok ? "" : "  FAIL");
         if (!ok) { std::printf("  got: %s\n", run.got.c_str()); ++fails; }
+    }
+    // No AFC, 80 Hz off: must read badly, or the AFC rows prove nothing.
+    {
+        const Run run = loopback(45.45, 10, false, false, false, 1, 80.0, false);
+        const double acc = accuracy(kMsg, run.got);
+        std::printf("%-22s %6.1f%% %s\n", "no AFC, +80 Hz", acc, acc < 50 ? "(lost, as it should)" : "  FAIL");
+        if (acc >= 50) ++fails;
     }
     // Wrong-sense receive must NOT read the message (it reads garbage or
     // nothing) — a sanity check that reverse does something.

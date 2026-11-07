@@ -3,6 +3,7 @@
 // passband + notch overlay math and the coalesced drag-to-filter streams.
 // Split out of MainWindow.cpp so tuning work doesn't collide with UI work.
 #include "app/MainWindow.h"
+#include "rtty/RttyEngine.h"
 #ifdef HAVE_WDSP
 #include "sdr/SdrRx.h"
 #endif
@@ -46,6 +47,26 @@ void MainWindow::onTuneRequested(int offsetHz, bool exact) {
             }
         }
     }
+    // RTTY (2026-11-07): the fldigi waterfall click. Inside the passband
+    // the click moves the DEMODULATOR's tone pair onto the signal and
+    // leaves the radio alone (the AFC settles the last few Hz); outside
+    // it, the radio tunes so the clicked signal lands on the pair.
+    // Shift (exact) always tunes the radio plainly.
+    if (rttyMode_ && rtty_ && !exact) {
+        int lo = 0, hi = 0;
+        edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
+        if (offsetHz >= lo && offsetHz <= hi) {
+            const int audio = pbtRfSign(rigMode_) * offsetHz;
+            if (audio >= 300 && audio <= 3500) {
+                rtty_->setToneCenterHz(audio);
+                rttyRefreshTones();
+                statusBar()->showMessage(
+                    QString("RTTY tones -> %1 Hz in the passband (AFC trims)").arg(audio), 4000);
+                return;
+            }
+        }
+        offsetHz -= rttyCenterRfOffset();
+    }
     // CW zap: a click is ~a pixel wide but the ear wants single-digit Hz.
     // Snap to the true carrier near the click; Shift (exact) bypasses.
     if (!exact && cwZap_
@@ -66,7 +87,7 @@ void MainWindow::onTuneRequested(int offsetHz, bool exact) {
     // (CW keeps its carrier zap above; SAM keeps a precise zero-beat) and any
     // exact tune — Shift+click for the odd-split station, and the wheel's
     // 100 Hz fine steps pass exact=true so they nudge off the round kHz.
-    const bool tight = samActive_
+    const bool tight = samActive_ || rttyMode_
                     || rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
     if (!exact && !tight) {
         const int64_t target = static_cast<int64_t>(centerHz_) + offsetHz;

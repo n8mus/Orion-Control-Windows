@@ -677,7 +677,8 @@ void MainWindow::walkContestSpot(int dir) {
                                      .arg(pick->call).arg(pick->hz / 1000.0, 0, 'f', 1));
         return;
     }
-    onTuneRequested(int(pick->hz - cur), true);
+    // In RTTY a spot (the mark, by convention) lands on the demod's mark.
+    onTuneRequested(int(pick->hz - cur) - rttyMarkRfOffset(), true);
     if (contestDeckVisible()) contestDeck_->prefillCall(pick->call, pick->hz);
     if (cwDeckVisible()) cwDeck_->prefillCall(pick->call, pick->hz);
     if (rttyDeckVisible()) rttyDeck_->prefillCall(pick->call, pick->hz);
@@ -872,7 +873,7 @@ void MainWindow::openSpotTable() {
         connect(spotTable_, &SpotTableWindow::spotActivated, this,
                 [this](const QString& call, qint64 hz, QChar kind,
                        const QString& tag) {
-                    if (hz > 0) radio_->setFrequencyHz(Rx::Main, hz);
+                    if (hz > 0) radio_->setFrequencyHz(Rx::Main, hz - rttyMarkRfOffset());
                     if (cwWin_) cwWin_->setHisCall(call);
                     // A table row is the deliberate cross-band gesture
                     // (antennas and tuner follow the operator) — the

@@ -42,6 +42,7 @@ public:
         bool diddle = true;           // LTRS idle while keyed with nothing to say
         int txLevelDb = -6;           // AFSK level, dBFS peak (-30..0)
         double squelch = 0.5;         // demod keying-contrast squelch, 0 = off
+        bool afc = true;              // the demod's pair search (+-200 Hz)
     };
     static Settings loadSettings();           // rtty/*
     static void saveSettings(const Settings& s);
@@ -49,8 +50,21 @@ public:
     explicit RttyEngine(QObject* parent = nullptr);
     ~RttyEngine() override;
 
-    void apply(const Settings& s);            // both directions, and saves
+    void apply(const Settings& s, bool save = true);   // both directions
     const Settings& settings() const { return s_; }
+    // The radio's sideband. On USB the standard signal (mark the higher
+    // RF) lands with the mark as the HIGHER audio tone, i.e. reversed
+    // against the LSB convention the tones are named for — so USB flips
+    // the sense itself; REV is the operator's extra flip on top.
+    void setSidebandUsb(bool usb);
+    bool sidebandUsb() const { return usb_; }
+    // Put the tone pair where the operator clicked in the passband (the
+    // fldigi waterfall click): mark = centre - shift/2, not saved — a
+    // fresh session starts on the convention again. The AFC trims it.
+    void setToneCenterHz(int hz);
+    int markHz() const { return s_.markHz; }                 // nominal
+    double effectiveMarkHz() const;                          // + AFC
+    void resetAfc() { demod_.resetAfc(); }
 
     // ---- receive ----
     void setRxEnabled(bool on);
@@ -84,6 +98,7 @@ private:
     void stopProcess();
 
     Settings s_;
+    bool usb_ = false;
     RttyDemod demod_;
     RttyMod mod_;
     bool rxOn_ = false;

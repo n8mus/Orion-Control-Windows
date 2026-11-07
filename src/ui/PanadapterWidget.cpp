@@ -986,6 +986,14 @@ void PanadapterWidget::setNotch(bool on, int rfOffsetHz, int widthHz, bool peak)
     changed(__func__);
 }
 
+void PanadapterWidget::setDigiTones(bool on, int rfLoHz, int rfHiHz) {
+    if (on == digiTonesOn_ && rfLoHz == digiToneLoHz_ && rfHiHz == digiToneHiHz_) return;
+    digiTonesOn_ = on;
+    digiToneLoHz_ = rfLoHz;
+    digiToneHiHz_ = rfHiHz;
+    changed(__func__);
+}
+
 bool PanadapterWidget::overNotch(int x) const {
     if (!notchOn_) return false;
     const int halfPx = (hzToX(notchRfHz_ + notchWidthHz_ / 2)
@@ -2065,6 +2073,15 @@ void PanadapterWidget::paintMid(QPainter& p, int hSpec) {
         const int xnC = hzToX(notchRfHz_);
         p.drawLine(xnC, 0, xnC, height());
         p.drawText(xnC + 3, hSpec - 6, notchPeak_ ? "SAF" : "N");
+    }
+    // RTTY tone pair: where the deck's demodulator listens (and sends).
+    if (digiTonesOn_) {
+        p.setPen(QPen(QColor(240, 120, 120, 200), 1, Qt::DashLine));
+        const int xa = hzToX(digiToneLoHz_), xb = hzToX(digiToneHiHz_);
+        p.drawLine(xa, 0, xa, height());
+        p.drawLine(xb, 0, xb, height());
+        p.setPen(QColor(240, 120, 120));
+        p.drawText(std::max(xa, xb) + 3, hSpec - 18, "RY");
     }
 
     // Frequency scale band on the divider (after the tints, so it stays clean),

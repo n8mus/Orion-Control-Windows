@@ -39,6 +39,13 @@ public:
         // noise alone ~0.4 whatever its level. Opens above `squelch`,
         // closes 0.05 under it; 0 = always open.
         double squelch = 0.5;
+        // AFC: every 250 ms a 256 ms window of the mark-mixed stream is
+        // searched for the tone PAIR (mark, and space `shift` away) within
+        // +-afcRangeHz; a pair standing 10 dB over the window's noise
+        // steers both mixers onto it. A pair, never a lone tone: that is
+        // what keeps the mark from locking into the space filter.
+        bool afc = true;
+        double afcRangeHz = 200.0;
     };
     RttyDemod();
     explicit RttyDemod(const Params& p);
@@ -57,18 +64,31 @@ public:
     // sample: normalised tone levels (0..1 of their recent peaks), the
     // signal's peak over the noise floor in dB, the keying contrast the
     // squelch judges by, and whether it is open.
-    struct Status { float mark = 0, space = 0, snrDb = 0, quality = 0; bool open = false; };
+    struct Status {
+        float mark = 0, space = 0, snrDb = 0, quality = 0, afcHz = 0;
+        bool open = false;
+    };
     Status status() const { return st_; }
+    double afcHz() const { return afcHz_; }
+    void resetAfc();                    // the dial moved: start from 0
     unsigned framingErrors() const { return frameErr_; }
     unsigned charsDecoded() const { return chars_; }
 
 private:
     void decimated(float m, float s);   // one 1 kHz sample of each tone
     void bit(bool mark);                // one 1 kHz hard decision
+    void setRotations();                // mixers at the tones + AFC
+    std::complex<double> probe(double hz) const;   // DFT bin over the AFC window
+    void acquire();                     // the pair search (see Params::afc)
 
     Params p_;
     // Mixers (recurrence phasors) + 1 ms accumulators.
     std::complex<double> phM_{1, 0}, phS_{1, 0}, rotM_{1, 0}, rotS_{1, 0};
+    double mHz_ = 2125.0, sHz_ = 2295.0;   // the mixers' tones after `reverse`
+    double afcHz_ = 0.0;
+    std::vector<std::complex<double>> afcRing_;   // 256 mark-mixed 1 kHz samples
+    size_t afcPos_ = 0;
+    unsigned afcFill_ = 0, afcTick_ = 0;
     std::complex<double> accM_{0, 0}, accS_{0, 0};
     int decim_ = 48, accN_ = 0;
     // One-bit boxcars at 1 kHz.

@@ -141,6 +141,7 @@ private:
     QPushButton* usosBtn_ = nullptr;
     QPushButton* diddleBtn_ = nullptr;
     QPushButton* sqlBtn_ = nullptr;
+    QPushButton* afcBtn_ = nullptr;
     QSpinBox* level_ = nullptr;
     QLabel* status_ = nullptr;
     QTimer* tick_ = nullptr;

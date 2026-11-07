@@ -12,6 +12,8 @@
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolButton>
+#include <algorithm>
+#include <cmath>
 
 #include "app/MainWindowInternal.h"
 #include "cw/AudioCwSource.h"
@@ -55,7 +57,8 @@ void MainWindow::ensureRtty() {
         const qint64 now = QDateTime::currentSecsSinceEpoch();
         for (int i = rttyHeard_.size() - 1; i >= 0; --i)
             if (rttyHeard_[i].call == call) rttyHeard_.removeAt(i);
-        rttyHeard_.push_back({call, qint64(centerHz_), now, toMe});
+        // The spot carries the MARK's RF, the cluster convention.
+        rttyHeard_.push_back({call, qint64(centerHz_) + rttyMarkRfOffset(), now, toMe});
         if (pushSpots_) pushSpots_();
         if (toMe) statusBar()->showMessage(QString("RTTY: %1 is calling you").arg(call), 8000);
     });
@@ -67,6 +70,29 @@ void MainWindow::ensureRtty() {
         txBar_->showMoxActive(false);
         if (rttyDeck_) rttyDeck_->showTx(false);
         statusBar()->showMessage("RTTY: over sent, un-keyed", 3000);
+    });
+    // Every 250 ms while RTTY is on: follow the radio's sideband (a band
+    // change recalls the band's mode — 20 m comes up USB — and USB flips
+    // the tones' sense, which the engine handles; CW/AM recalled by a
+    // band register go back to the sideband RTTY was on), restart the
+    // AFC when the dial moves, and keep the pan's RY lines on the tones.
+    rttyTick_ = new QTimer(this);
+    rttyTick_->setInterval(250);
+    connect(rttyTick_, &QTimer::timeout, this, [this] {
+        if (!rttyMode_ || !rtty_) return;
+        if (rigMode_ == Mode::USB || rigMode_ == Mode::LSB) {
+            rttySb_ = rigMode_;
+            rtty_->setSidebandUsb(rigMode_ == Mode::USB);
+        } else if (rigMode_ != rttyLastMode_) {
+            applyMode(rttySb_);
+            panel_->clearModeSelection();
+        }
+        rttyLastMode_ = rigMode_;
+        if (qint64(centerHz_) != rttyLastHz_) {
+            rttyLastHz_ = qint64(centerHz_);
+            rtty_->resetAfc();
+        }
+        rttyRefreshTones();
     });
     connect(rtty_, &RttyEngine::txFailed, this, [this](const QString& why) {
         if (rttyTxOn_) radio_->setPtt(false);
@@ -172,16 +198,24 @@ void MainWindow::setRttyMode(bool on, bool keepMode) {
         rttyMode_ = true;
         ensureRtty();
         rtty_->setMyCall(QSettings().value("station/callsign", "").toString());
+        rtty_->setSidebandUsb(rttySb_ == Mode::USB);
         rtty_->setRxEnabled(true);
         applyCwRxRouting();                  // the SignaLink capture runs
         if (rttyNarrow_) rttySetNarrow(true);
+        rttyLastHz_ = qint64(centerHz_);
+        rttyLastMode_ = rigMode_;
+        rttyRefreshTones();
+        if (rttyTick_) rttyTick_->start();
         panel_->showRtty(true);
         if (rttyDeckBtn_ && !rttyDeckBtn_->isChecked()) rttyDeckBtn_->setChecked(true);
-        statusBar()->showMessage("RTTY: LSB, line input, reading the radio's audio. F-keys / Enter "
-                                 "send an over; TX holds the key; MOX / space likewise.", 10000);
+        statusBar()->showMessage("RTTY: LSB, line input, reading the radio's audio. Click the signal "
+                                 "on the waterfall (the RY lines follow); F-keys / Enter send an over; "
+                                 "TX holds the key; MOX / space likewise.", 10000);
     } else {
         if (rttyTxOn_) rttyAbort();
         rttyMode_ = false;
+        if (rttyTick_) rttyTick_->stop();
+        rttyRefreshTones();                  // lines off
         if (rtty_) rtty_->setRxEnabled(false);
         applyCwRxRouting();
         if (!rttySaved_.dig && digital_) setDigitalMode(false);
@@ -267,6 +301,28 @@ void MainWindow::rttySetNarrow(bool on) {
         radio_->setPbtHz(Rx::Main, rttySaved_.pbt);
     }
     if (rttyDeck_) rttyDeck_->showNarrow(on);
+}
+
+int MainWindow::rttyMarkRfOffset() const {
+    if (!rttyMode_ || !rtty_) return 0;
+    return pbtRfSign(rigMode_) * int(std::lround(rtty_->effectiveMarkHz()));
+}
+
+int MainWindow::rttyCenterRfOffset() const {
+    if (!rttyMode_ || !rtty_) return 0;
+    return pbtRfSign(rigMode_)
+         * int(std::lround(rtty_->effectiveMarkHz() + rtty_->settings().shiftHz / 2.0));
+}
+
+// The pan's RY lines: the mark and the space, where the demodulator
+// listens right now (AFC included). Only a change reaches the pan — its
+// marker layer is rebuilt on every change.
+void MainWindow::rttyRefreshTones() {
+    if (!pan_) return;
+    if (!rttyMode_ || !rtty_) { pan_->setDigiTones(false, 0, 0); return; }
+    const int mark = rttyMarkRfOffset();
+    const int space = mark + pbtRfSign(rigMode_) * rtty_->settings().shiftHz;
+    pan_->setDigiTones(true, std::min(mark, space), std::max(mark, space));
 }
 
 }  // namespace ttc
