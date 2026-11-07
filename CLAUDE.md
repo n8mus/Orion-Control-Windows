@@ -440,7 +440,13 @@ QRN spike gate, measured on a live lightning night's own capture.
   console's passband model — the nominal low-cut is unreadable, so the
   PBT slider trims it. Logging via `logFromContext` with mode RTTY.
   Calls in "CQ ... DE X" / "N8EM DE X" go to the band map as kind 'R'
-  (salmon, 15 min, "calling you" rings orange), SPOTS table chip RTTY.
+  (salmon, 15 min, "calling you" rings orange). RTTY is a per-source
+  switch like the rest — SPOTS ▾ "RTTY spots" (`spots/rtty`) for the band
+  map, the SPOTS table's RTTY chip for the table — governing every spot
+  that says RTTY (cluster comment) plus the deck's own decodes; DX off +
+  RTTY on shows RTTY alone. Never an exclusive "RTTY only" filter: the
+  one added that day emptied the map after a restart and was pulled the
+  same day (the operator mixes the chips himself).
   F1-F12 are `rtty/fkey/*` in the CW window's plain-language fields
   (defaults seeded once). Settings `rtty/*`. `TTC_RTTYDECK=1` opens the
   deck headless. Omni VII: the same AFSK path (its CAT FSK mode is not

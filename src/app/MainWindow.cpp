@@ -803,6 +803,15 @@ MainWindow::MainWindow(QWidget* parent)
     fdvOn->setToolTip("Who is on FreeDV / RADE digital voice now, from qso.freedv.org\n"
                       "(orange labels; watch-only — nothing about this station is sent)");
     fdvSpotsAct_ = fdvOn;
+    // RTTY spots (2026-11-07): a per-source switch like the rest, for the
+    // band map what the table's RTTY chip is for the table — cluster spots
+    // whose comment says RTTY (RBN's RTTY skimmers included) and the RTTY
+    // deck's own decodes. DX off + RTTY on leaves RTTY alone on the map.
+    auto* rttyOn = spotsMenu->addAction("RTTY spots");
+    rttyOn->setCheckable(true);
+    rttyOn->setToolTip("Cluster spots whose comment says RTTY (RBN's RTTY skimmers\n"
+                       "included) and the RTTY deck's own decodes (salmon labels).\n"
+                       "Turn the other sources off to see RTTY alone.");
     auto* n1Dupes = spotsMenu->addAction("Gray Not1MM contest dupes");
     n1Dupes->setCheckable(true);
     n1Dupes->setToolTip("While Not1MM runs, stations already worked in its current contest\n"
@@ -969,6 +978,7 @@ MainWindow::MainWindow(QWidget* parent)
         potaOn->setChecked(s.value("spots/pota", true).toBool());
         ft8On->setChecked(s.value("spots/ft8", true).toBool());
         fdvOn->setChecked(s.value("spots/freedv", false).toBool());
+        rttyOn->setChecked(s.value("spots/rtty", true).toBool());
         n1Dupes->setChecked(s.value("spots/not1mmDupes", true).toBool());
     }
     spotsBtn->setMenu(spotsMenu);
@@ -1080,8 +1090,8 @@ MainWindow::MainWindow(QWidget* parent)
         l.needB = nd.band.toLatin1();
         l.needM = nd.mode.toLatin1();
     };
-    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, wsjtOn, fdvOn, ctyPlace, logStatus,
-                      needFill, watchBeep] {
+    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, wsjtOn, fdvOn, rttyOn, ctyPlace,
+                      logStatus, needFill, watchBeep] {
         QVector<SpotLabel> labels;
         if (spotsOn->isChecked()) {
             QSet<QString> seen;                    // POTA API entry wins (has
@@ -1111,9 +1121,15 @@ MainWindow::MainWindow(QWidget* parent)
                     labels.push_back(l);
                 }
             for (const Spot& s : spotClient_.spots()) {
-                if (s.kind == 'D' && !dxOn->isChecked()) continue;
-                if (s.kind == 'F' && !ft8On->isChecked()) continue;
-                if (s.kind == 'P' && !potaOn->isChecked()) continue;
+                // A spot that says RTTY answers to the RTTY switch, not
+                // its source's (the table's chip rule, SpotTableWindow).
+                if (guessSpotMode(s.kind, s.comment, s.hz) == QLatin1String("RTTY")) {
+                    if (!rttyOn->isChecked()) continue;
+                } else {
+                    if (s.kind == 'D' && !dxOn->isChecked()) continue;
+                    if (s.kind == 'F' && !ft8On->isChecked()) continue;
+                    if (s.kind == 'P' && !potaOn->isChecked()) continue;
+                }
                 if (seen.contains(s.call)) continue;
                 SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag, s.lat, s.lon};
                 if (l.lat > 500.0) ctyPlace(l);
@@ -1137,7 +1153,7 @@ MainWindow::MainWindow(QWidget* parent)
             }
         // Our own RTTY decodes ('R'): calls heard in CQ / DE patterns on
         // the radio's audio, anchored at the dial, 15 minutes.
-        if (!rttyHeard_.isEmpty()) {
+        if (!rttyHeard_.isEmpty() && rttyOn->isChecked()) {
             const qint64 nowSecs = QDateTime::currentSecsSinceEpoch();
             for (int i = rttyHeard_.size() - 1; i >= 0; --i)
                 if (nowSecs - rttyHeard_[i].atSecs > 900) rttyHeard_.removeAt(i);
@@ -1487,6 +1503,10 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(dxOn, &QAction::toggled, this, [pushSpots](bool on) {
         QSettings().setValue("spots/dx", on);
+        pushSpots();
+    });
+    connect(rttyOn, &QAction::toggled, this, [pushSpots](bool on) {
+        QSettings().setValue("spots/rtty", on);
         pushSpots();
     });
     // Spotter area: push the country list to the node (live if connected),
