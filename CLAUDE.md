@@ -103,7 +103,7 @@ senders and weak-signal cases are the hard set.
 | `cwmacrotest` | plain-language CW macros (`src/cw/CwMacros`): the `[his call]` fields, the old `%mc`/`%c` spellings, a typo left visible, the missing-field report the CW window refuses to key on, and `QsoContext`'s no-echo rule | — |
 | `wktest` | WinKeyer wire format against a pty it drives itself — every timing command asserted against the K1EL WK3 manual's own worked examples, plus range clamping. Never touches `/dev/cwkeyer` | — |
 | `dsstest` | AetherSDR's own DssRenderer test (`tests/dsstest.cpp` = their dss_renderer_test): frequency frames, reprojection, overhang coverage, history | — |
-| `rttytest` | the RTTY core (`src/rtty`): ITA2 round trip, modulator -> demodulator loopback at 45.45/50/75 Bd and swept SNR (AWGN in 3 kHz: 100% to -3 dB, ~97% at -6), reversed tones, the IQ feed (mark +85 Hz about the channel), mismatched sense reads garbage, 30 s dead channel prints nothing (`--quick` skips the sub-zero rows) | — |
+| `rttytest` | the RTTY core (`src/rtty`): ITA2 round trip, modulator -> demodulator loopback at 45.45/50/75 Bd and swept SNR (AWGN in 3 kHz: 100% to -3 dB, ~95% at -6), reversed tones, the IQ feed (mark +85 Hz about the channel), the AFC pulling in +80 / -180 Hz (and a no-AFC control that must lose), mismatched sense reads garbage, 30 s dead channel prints nothing, and the off-air IK3ORD capture when present (`--quick` skips the sub-zero rows) | — |
 | `nrtest` | noise-reduction ruler: keyed 550 Hz tone at swept SNR through {none, RNNoise, SpectralNr} into the audio-path decoder. Verdict 2026-07-16: RNNoise perfect to -6 dB; our SpectralNr lost and stays test-only | — |
 
 **Classic layout guard** (`tests/classic_guard.sh`, the Panel-layout work's
@@ -450,9 +450,15 @@ QRN spike gate, measured on a live lightning night's own capture.
   F1-F12 are `rtty/fkey/*` in the CW window's plain-language fields
   (defaults seeded once). Settings `rtty/*`. `TTC_RTTYDECK=1` opens the
   deck headless. Omni VII: the same AFSK path (its CAT FSK mode is not
-  driven). UNVERIFIED ON AIR as of 2026-11-07: tone level into the
-  SignaLink, the NARROW PBT offset, and copy on real signals — a
-  SignaLink recording of real RTTY is the ground truth still owed.
+  driven). ON AIR 2026-11-07: first QSO KH8A, split 14.097/14.098
+  (decode, AFSK TX, PTT, logging all live-verified). The AFC: full-
+  passband acquisition of the strongest KEYED pair on its own 8 kHz
+  Hann-windowed window, then lock-and-track +-60 Hz, release after 5 s
+  quiet; a click locks where it lands. Ground truth lives in
+  `~/.local/share/n8mus/tentec-console/audio/` (README there): the
+  IK3ORD capture, which `rttytest` decodes from the deck's cold-start
+  defaults when present (IK3ORD twice, or FAIL). Still unverified: the
+  NARROW PBT offset.
 - **One current QSO** (`src/log/QsoContext.h`, 2026-10-19): the station
   being worked — call, handle, name, QTH, grid, RST sent/received — held
   once and shared by the LOG and CW windows, so a call or report typed in

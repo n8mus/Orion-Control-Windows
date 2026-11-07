@@ -9,6 +9,9 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <fstream>
+#include <cstdlib>
+#include <cstdint>
 #include <random>
 #include <string>
 #include <vector>
@@ -194,6 +197,35 @@ int main(int argc, char** argv) {
         dem.processReal(noise.data(), noise.size());
         std::printf("%-22s %u chars in 30 s %s\n", "dead channel", n, n <= 3 ? "" : "  FAIL");
         if (n > 3) ++fails;
+    }
+    // The real thing, when the station's ground-truth capture is here:
+    // IK3ORD on 20 m, 2026-11-07, tones ~1046/1218 Hz, the console's own
+    // default start (2125/2295 + AFC). Must read his call twice.
+    {
+        const char* home = std::getenv("HOME");
+        const std::string path = std::string(home ? home : "") +
+            "/.local/share/n8mus/tentec-console/audio/rtty-20261107-ik3ord-signalink-48k-s16.raw";
+        std::ifstream g(path, std::ios::binary);
+        if (g) {
+            std::vector<char> bytes((std::istreambuf_iterator<char>(g)), {});
+            const size_t n = bytes.size() / 2;
+            std::vector<float> x(n);
+            const auto* p = reinterpret_cast<const int16_t*>(bytes.data());
+            for (size_t i = 0; i < n; ++i) x[i] = p[i] / 32768.0f;
+            RttyDemod dem;                       // the deck's defaults
+            std::string text;
+            dem.onChar = [&](char c) { text += c; };
+            dem.processReal(x.data(), n);
+            size_t hits = 0;
+            for (size_t pos = text.find("IK3ORD"); pos != std::string::npos;
+                 pos = text.find("IK3ORD", pos + 1)) ++hits;
+            std::replace(text.begin(), text.end(), '\n', '/');
+            std::printf("%-22s afc %+.0f Hz, IK3ORD x%zu: %s %s\n", "IK3ORD off-air", dem.afcHz(),
+                        hits, text.c_str(), hits >= 2 ? "" : "  FAIL");
+            if (hits < 2) ++fails;
+        } else {
+            std::printf("%-22s (no capture at %s)\n", "IK3ORD off-air", path.c_str());
+        }
     }
     std::printf(fails ? "RTTY: %d FAIL\n" : "RTTY: all OK\n", fails);
     return fails ? 1 : 0;
