@@ -88,7 +88,8 @@ struct SpotLabel {
     qint64  hz = 0;
     qint64  atSecs = 0;
     char    kind = 'D';         // D DX, P POTA, F FT8 (cluster), S skimmer,
-                                // V FreeDV, J our own WSJT-X decode
+                                // V FreeDV, J our own WSJT-X decode,
+                                // R our own RTTY decode
     QString tag;
     double  lat = 999.0;        // station location (999 = unknown) — clicking
     double  lon = 999.0;        // the label swings the compass rose to it

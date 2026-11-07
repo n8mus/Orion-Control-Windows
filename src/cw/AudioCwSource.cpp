@@ -365,7 +365,7 @@ void AudioCwSource::processPcm(const QByteArray& pcm) {
     const int usable = data.size() & ~1;   // whole int16 samples only
     carry_ = data.mid(usable);
     const int n = usable / 2;
-    if (n <= 0 || !sink_) return;
+    if (n <= 0) return;
     const auto* s = reinterpret_cast<const int16_t*>(data.constData());
     constexpr float kNorm = 1.0f / 32768.0f;
     // Pitch meter: rolling raw window, one measurement per quarter second.
@@ -380,6 +380,12 @@ void AudioCwSource::processPcm(const QByteArray& pcm) {
             measurePitch();
         }
     }
+    if (rawTap_) {
+        rawBuf_.resize(size_t(n));
+        for (int i = 0; i < n; ++i) rawBuf_[size_t(i)] = s[i] * kNorm;
+        rawTap_(rawBuf_.data(), n);
+    }
+    if (!sink_) return;
     if (!nrOn_) {
         buf_.resize(size_t(n));
         for (int i = 0; i < n; ++i)

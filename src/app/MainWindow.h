@@ -87,6 +87,8 @@ class SolarWidget;
 class TuneBoxWidget;
 class ContestDeck;
 class CwDeck;
+class RttyDeck;
+class RttyEngine;
 class ContestWindow;
 class CqrlogSync;
 class LogDb;
@@ -138,7 +140,21 @@ private:
     void setupCwDeckUi();
     void toggleCwDeck(bool on);
     bool cwDeckVisible() const;
-    bool anyDeckVisible() const { return contestDeckVisible() || cwDeckVisible(); }
+    bool anyDeckVisible() const {
+        return contestDeckVisible() || cwDeckVisible() || rttyDeckVisible();
+    }
+    // RTTY (2026-11-07, src/app/MainWindowRtty.cpp): the MODE panel's RTTY
+    // pseudo-mode (LSB + DIG + the deck; off restores), the RTTY PNL deck
+    // in the same slot, and the over: key, play, un-key when drained.
+    void setupRttyDeckUi();
+    void toggleRttyDeck(bool on);
+    bool rttyDeckVisible() const;
+    void setRttyMode(bool on, bool keepMode = false);
+    void rttySend(const QString& text, bool hold);
+    void rttyEndOver();                // let it drain, then PTT off
+    void rttyAbort();                  // now
+    void rttySetNarrow(bool on);
+    void ensureRtty();                 // the engine + its audio tap
     void wireRigCwDeck();              // rig CW reports into the deck's mirrors
     void openWinKeyerPanel();          // the WinKeyer control box (CW right-click)
     // Log the shared QsoContext as it stands (LOG IT in the CW deck, LOG
@@ -630,6 +646,19 @@ private:
     QToolButton* contestBtn_ = nullptr;        // CNTST toggle (old DIGI slot)
     CwDeck* cwDeck_ = nullptr;                 // the CW deck (lazy)
     QToolButton* cwDeckBtn_ = nullptr;         // CW PNL toggle
+    RttyEngine* rtty_ = nullptr;               // the RTTY modem (lazy)
+    RttyDeck* rttyDeck_ = nullptr;             // the RTTY deck (lazy)
+    QToolButton* rttyDeckBtn_ = nullptr;       // RTTY PNL toggle
+    bool rttyMode_ = false;                    // the MODE panel's RTTY
+    bool rttyTxOn_ = false, rttyHold_ = false, rttyNarrow_ = false;
+    Mode rttySb_ = Mode::LSB;
+    struct RttySaved {
+        Mode mode = Mode::USB;
+        int bw = 2400, pbt = 0, txBw = 2850;
+        bool dig = false;
+    } rttySaved_;
+    struct RttyHeard { QString call; qint64 hz, atSecs; bool toMe; };
+    QList<RttyHeard> rttyHeard_;               // our own decodes, for the band map
     MeterHost*   meterHost_ = nullptr;         // Panel layout's meter box
     MeterHost*   meterBox_  = nullptr;         // Original view's METER sidebar box
     std::unique_ptr<LayoutHost> layout_;          // where things go (app/LayoutHost)

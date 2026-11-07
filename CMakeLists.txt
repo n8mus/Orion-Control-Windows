@@ -108,8 +108,13 @@ add_executable(tentec-console
   src/ui/SolarWidget.cpp        src/ui/SolarWidget.h
   src/app/MainWindow.cpp        src/app/MainWindow.h
   src/app/MainWindowTuning.cpp  src/app/MainWindowOps.cpp
-  src/app/MainWindowTools.cpp
+  src/app/MainWindowTools.cpp   src/app/MainWindowRtty.cpp
   src/app/MainWindowInternal.h
+  src/rtty/Ita2.cpp             src/rtty/Ita2.h
+  src/rtty/RttyDemod.cpp        src/rtty/RttyDemod.h
+  src/rtty/RttyMod.cpp          src/rtty/RttyMod.h
+  src/rtty/RttyEngine.cpp       src/rtty/RttyEngine.h
+  src/rtty/RttyDeck.cpp         src/rtty/RttyDeck.h
   src/app/Voacap.cpp            src/app/Voacap.h
   src/app/Bands.h
   src/radio/RadioController.h
@@ -379,6 +384,15 @@ add_executable(cwmacrotest EXCLUDE_FROM_ALL
   tests/cwmacrotest.cpp src/cw/CwMacros.cpp src/log/QsoContext.h)
 target_include_directories(cwmacrotest PRIVATE src)
 target_link_libraries(cwmacrotest PRIVATE Qt6::Core)
+
+# RTTY core: ITA2, modulator -> demodulator loopback at swept SNR, both
+# feeds (audio tones, IQ at +-85 Hz), dead channel quiet.
+add_executable(rttytest EXCLUDE_FROM_ALL
+  tests/rttytest.cpp
+  src/rtty/Ita2.cpp src/rtty/Ita2.h
+  src/rtty/RttyDemod.cpp src/rtty/RttyDemod.h
+  src/rtty/RttyMod.cpp src/rtty/RttyMod.h)
+target_include_directories(rttytest PRIVATE src)
 
 add_executable(wktest EXCLUDE_FROM_ALL
   tests/wktest.cpp

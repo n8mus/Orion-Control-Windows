@@ -29,6 +29,7 @@
 #include "contest/ContestDb.h"
 #include "contest/ContestDeck.h"
 #include "cw/CwDeck.h"
+#include "rtty/RttyDeck.h"
 #include "contest/ContestWindow.h"
 #include <algorithm>
 #include <limits>
@@ -195,6 +196,7 @@ void MainWindow::setupLogUi() {
                     if (contestDeckVisible())
                         contestDeck_->prefillCall(call, spotHz);
                     if (cwDeckVisible()) cwDeck_->prefillCall(call, spotHz);
+                    if (rttyDeckVisible()) rttyDeck_->prefillCall(call, spotHz);
                 }
                 QString park, grid;
                 if (kind == QChar('P')) {
@@ -342,7 +344,7 @@ void MainWindow::openLogbookWindow() {
 // its pane blank at a station that decodes the radio audio (live-found
 // on the first contest-mode drive).
 void MainWindow::applyCwRxRouting() {
-    const bool want = rxWanted_ || contestRx_ || cwDeckVisible();
+    const bool want = rxWanted_ || contestRx_ || cwDeckVisible() || rttyMode_;
     if (cwDec_) cwDec_->setEnabled(want && !rxRadio_);
     if (audioDec_) audioDec_->setEnabled(want && rxRadio_);
     if (audioSrc_) {
@@ -367,6 +369,8 @@ char MainWindow::contestClassify(const QString& call, qint64 hz) const {
 void MainWindow::toggleContestMode(bool on) {
     if (on && cwDeckBtn_ && cwDeckBtn_->isChecked())
         cwDeckBtn_->setChecked(false);       // one deck under the pan
+    if (on && rttyDeckBtn_ && rttyDeckBtn_->isChecked())
+        rttyDeckBtn_->setChecked(false);
     if (on) {
         if (!contestDeck_) {
             if (!contestDb_) {
@@ -676,6 +680,7 @@ void MainWindow::walkContestSpot(int dir) {
     onTuneRequested(int(pick->hz - cur), true);
     if (contestDeckVisible()) contestDeck_->prefillCall(pick->call, pick->hz);
     if (cwDeckVisible()) cwDeck_->prefillCall(pick->call, pick->hz);
+    if (rttyDeckVisible()) rttyDeck_->prefillCall(pick->call, pick->hz);
     if (cwWin_) cwWin_->setHisCall(pick->call);
 }
 
@@ -815,7 +820,7 @@ void MainWindow::logFromContext() {
     q.call = call;
     q.freqHz = qint64(centerHz_);
     q.band = LogbookIndex::bandForHz(q.freqHz);
-    q.mode = adifModeText(rigMode_);
+    q.mode = rttyMode_ ? QStringLiteral("RTTY") : adifModeText(rigMode_);
     q.tsUtc = QDateTime::currentDateTimeUtc();
     q.rstS = ctx->rstSent().isEmpty() ? QStringLiteral("599") : ctx->rstSent();
     q.rstR = ctx->rstRcvd().isEmpty() ? QStringLiteral("599") : ctx->rstRcvd();
@@ -845,6 +850,7 @@ void MainWindow::logFromContext() {
     onQsoLogged(id, call);
     ctx->clear();
     if (cwDeck_) cwDeck_->clearForNext();
+    if (rttyDeck_) rttyDeck_->clearForNext();
     if (logWin_) logWin_->loggedElsewhere(call);
 }
 
@@ -874,6 +880,7 @@ void MainWindow::openSpotTable() {
                     if (contestDeckVisible())
                         contestDeck_->prefillCall(call, hz);
                     if (cwDeckVisible()) cwDeck_->prefillCall(call, hz);
+                    if (rttyDeckVisible()) rttyDeck_->prefillCall(call, hz);
                     QString park, grid;
                     if (kind == QChar('P')) {
                         park = tag;
@@ -1497,6 +1504,8 @@ bool MainWindow::cwDeckVisible() const {
 void MainWindow::toggleCwDeck(bool on) {
     if (on && contestBtn_ && contestBtn_->isChecked())
         contestBtn_->setChecked(false);      // one deck under the pan
+    if (on && rttyDeckBtn_ && rttyDeckBtn_->isChecked())
+        rttyDeckBtn_->setChecked(false);
     if (on) {
         if (!cwDeck_) {
             ensureCwWindow();                // the keyer + decoders
@@ -1554,7 +1563,7 @@ void MainWindow::toggleCwDeck(bool on) {
         pan_->installEventFilter(this);      // arrows walk from the pan too
     } else {
         if (cwDeck_) cwDeck_->setVisible(false);
-        if (!contestDeckVisible()) pan_->removeEventFilter(this);
+        if (!contestDeckVisible() && !rttyDeckVisible()) pan_->removeEventFilter(this);
         DisplaySettings ds = pan_->displaySettings();
         ds.split = savedSplit_ > 0.0f && savedSplit_ < 1.0f ? savedSplit_
                                                             : 0.42f;

@@ -103,6 +103,7 @@ senders and weak-signal cases are the hard set.
 | `cwmacrotest` | plain-language CW macros (`src/cw/CwMacros`): the `[his call]` fields, the old `%mc`/`%c` spellings, a typo left visible, the missing-field report the CW window refuses to key on, and `QsoContext`'s no-echo rule | — |
 | `wktest` | WinKeyer wire format against a pty it drives itself — every timing command asserted against the K1EL WK3 manual's own worked examples, plus range clamping. Never touches `/dev/cwkeyer` | — |
 | `dsstest` | AetherSDR's own DssRenderer test (`tests/dsstest.cpp` = their dss_renderer_test): frequency frames, reprojection, overhang coverage, history | — |
+| `rttytest` | the RTTY core (`src/rtty`): ITA2 round trip, modulator -> demodulator loopback at 45.45/50/75 Bd and swept SNR (AWGN in 3 kHz: 100% to -3 dB, ~97% at -6), reversed tones, the IQ feed (mark +85 Hz about the channel), mismatched sense reads garbage, 30 s dead channel prints nothing (`--quick` skips the sub-zero rows) | — |
 | `nrtest` | noise-reduction ruler: keyed 550 Hz tone at swept SNR through {none, RNNoise, SpectralNr} into the audio-path decoder. Verdict 2026-07-16: RNNoise perfect to -6 dB; our SpectralNr lost and stays test-only | — |
 
 **Classic layout guard** (`tests/classic_guard.sh`, the Panel-layout work's
@@ -391,7 +392,7 @@ QRN spike gate, measured on a live lightning night's own capture.
   entry (CI/release build without it).
 - **CW deck** (CW PNL sidebar button, `src/cw/CwDeck`, 2026-11-02): the
   contest deck's shape for an everyday CW QSO, in the SAME slot under the
-  pan (exclusive with CNTST; `TTC_CWDECK=1` opens it headless). Reader
+  pan (exclusive with CNTST and RTTY PNL; `TTC_CWDECK=1` opens it headless). Reader
   left, CALL/NAME/S/R/0-BEAT/LOG IT + country line + Spot/SP/LP + F1-F12
   (the CW window's own `cw/fkey/*` macros, F12 = wipe) + WPM/TUNE/STOP +
   FLD/SOM/DEEP/RADIO/NR + the rig's VOL/PITCH/QSK/RISE/KEYER (the radio's
@@ -410,6 +411,42 @@ QRN spike gate, measured on a live lightning night's own capture.
   a 5-minute near-duplicate refused. `[his name]` keys the NAME box's
   word (handle) when there is one, the callbook's otherwise. The UI
   script's `shot <png> <title-word>` grabs a tool window.
+- **RTTY** (MODE panel → RTTY + the RTTY PNL deck, `src/rtty`,
+  `src/app/MainWindowRtty.cpp`, 2026-11-07): the console's own modem.
+  RECEIVE is `RttyDemod` on the RADIO's audio — the SignaLink capture the
+  CW reader already owns (`AudioCwSource::setRawTap`), because decode from
+  the Orion's ear beats the SDR IQ on air (operator's CW finding; the IQ
+  feed is kept in the demod — `process()` takes complex, mark at
+  +shift/2 — for a RTTY SKIMMER bank later, not built yet). Chain: two
+  recurrence-phasor mixers -> 1 ms boxcar -> 1 kHz -> one-bit boxcar per
+  tone (non-coherent FSK matched filter) -> per-tone peak normalisation
+  (fldigi's ATC idea, each peak clamped to >= -12 dB of the other or an
+  idle sender's leakage reads as a tone) -> UART with a fractional bit
+  length, stop bit checked -> ITA2 with USOS. The SQUELCH judges keying
+  CONTRAST |m-s|/(m+s) averaged ~1 s (keying 0.6-1.0, noise ~0.4 at any
+  level), opens above 0.5 — that is what keeps a dead channel quiet.
+  TRANSMIT is `RttyMod` -> pacat into the SignaLink (the DVR's path): AFSK
+  on LSB, mark 2125 / space 2295, 170 Hz, 45.45 Bd, 1.5 stop bits, diddle
+  (LTRS) while keyed with nothing to say; the engine paces ~140 ms ahead
+  of the clock. An OVER = `rttySend`: CAT PTT up, text plays, `end()`
+  lets the queue finish, 200 ms mark tail, waits for the pipe to drain,
+  THEN `txDrained` drops PTT (the RADE end-of-over pattern); the TX
+  button / MOX / space hold the key between lines; Esc aborts. The
+  pseudo-mode (`setRttyMode`, FreeDV's shape): saves mode/filter/PBT/TX
+  filter/DIG, sets LSB (USB/LSB buttons flip it inside RTTY), TX filter
+  >= 2800, DIG, LIVE off; refused under Winlink / WSJT-X TX; refuses VK,
+  replay, LIVE, DIG-off while on; off restores (SSB on the band's
+  sideband). NARROW = 500 Hz with PBT = (mark+shift/2) - 250 by the
+  console's passband model — the nominal low-cut is unreadable, so the
+  PBT slider trims it. Logging via `logFromContext` with mode RTTY.
+  Calls in "CQ ... DE X" / "N8EM DE X" go to the band map as kind 'R'
+  (salmon, 15 min, "calling you" rings orange), SPOTS table chip RTTY.
+  F1-F12 are `rtty/fkey/*` in the CW window's plain-language fields
+  (defaults seeded once). Settings `rtty/*`. `TTC_RTTYDECK=1` opens the
+  deck headless. Omni VII: the same AFSK path (its CAT FSK mode is not
+  driven). UNVERIFIED ON AIR as of 2026-11-07: tone level into the
+  SignaLink, the NARROW PBT offset, and copy on real signals — a
+  SignaLink recording of real RTTY is the ground truth still owed.
 - **One current QSO** (`src/log/QsoContext.h`, 2026-10-19): the station
   being worked — call, handle, name, QTH, grid, RST sent/received — held
   once and shared by the LOG and CW windows, so a call or report typed in

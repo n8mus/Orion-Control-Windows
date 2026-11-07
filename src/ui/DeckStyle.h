@@ -12,7 +12,7 @@ namespace ttc {
 // fixed-width buttons). Widget-level sheets (dupe colours, refusal
 // flashes, PRAC amber) still win over these rules.
 inline constexpr const char* kDeckStyle =
-    "QWidget#contestDeck, QWidget#cwDeck, QDialog#contestPane"
+    "QWidget#contestDeck, QWidget#cwDeck, QWidget#rttyDeck, QDialog#contestPane"
     " { background:#121921; }"
     "QWidget { color:#e8eef5; }"
     "QLabel { color:#c8d4e0; background:transparent; }"

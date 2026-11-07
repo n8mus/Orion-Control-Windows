@@ -983,6 +983,7 @@ MainWindow::MainWindow(QWidget* parent)
     setupSkimUi(stationCall);
     setupDigiUi();
     setupCwDeckUi();
+    setupRttyDeckUi();
     setupRotorUi();
 
     // AUDIO: the Orion's output routing (*UC, one VFO per ear for split
@@ -1134,6 +1135,23 @@ MainWindow::MainWindow(QWidget* parent)
                 needFill(l);
                 labels.push_back(l);
             }
+        // Our own RTTY decodes ('R'): calls heard in CQ / DE patterns on
+        // the radio's audio, anchored at the dial, 15 minutes.
+        if (!rttyHeard_.isEmpty()) {
+            const qint64 nowSecs = QDateTime::currentSecsSinceEpoch();
+            for (int i = rttyHeard_.size() - 1; i >= 0; --i)
+                if (nowSecs - rttyHeard_[i].atSecs > 900) rttyHeard_.removeAt(i);
+            for (const RttyHeard& h : rttyHeard_) {
+                SpotLabel l{h.call, h.hz, h.atSecs, 'R', QStringLiteral("RTTY")};
+                ctyPlace(l);
+                l.status = logStatus(l);
+                l.spotter = h.toMe ? QStringLiteral("calling you") : QStringLiteral("RTTY deck");
+                l.comment = QStringLiteral("RTTY");
+                l.alert = h.toMe;
+                needFill(l);
+                labels.push_back(l);
+            }
+        }
         // Our own WSJT-X decodes (CQs + calls to us), like the skimmer's
         // finds: this station's ears, independent of the cluster feeds.
         if (wsjtx_ && wsjtOn->isChecked())
@@ -2638,6 +2656,13 @@ MainWindow::MainWindow(QWidget* parent)
             txBar_->showTuneActive(false);
             stopManualTune();
         }
+        // RTTY: MOX on = key up with the modem diddling (held); MOX off =
+        // let what is queued play out, then PTT drops on txDrained.
+        if (rttyMode_) {
+            if (on) rttySend(QString(), /*hold*/ true);
+            else rttyEndOver();
+            return;
+        }
         // RADE: the end of over (callsign) must be on the air before PTT
         // drops — hold the key until LiveVoice says it has played out
         // (~0.5-0.9 s), with a 2 s backstop.
@@ -2711,8 +2736,8 @@ MainWindow::MainWindow(QWidget* parent)
             statusBar()->showMessage("Replay refused: WSJT-X is transmitting", 6000);
             return;
         }
-        if (overAir && (winlinkActive_ || fdvMode_)) {
-            statusBar()->showMessage("Replay refused: Winlink / FreeDV owns the transmitter", 6000);
+        if (overAir && (winlinkActive_ || fdvMode_ || rttyMode_)) {
+            statusBar()->showMessage("Replay refused: Winlink / FreeDV / RTTY owns the transmitter", 6000);
             return;
         }
         QString f = dvrLastRx_;
@@ -2762,12 +2787,21 @@ MainWindow::MainWindow(QWidget* parent)
             statusBar()->showMessage("Voice keyer refused: FreeDV transmits RADE (the VK is analog)", 6000);
             return;
         }
+        if (rttyMode_) {
+            statusBar()->showMessage("Voice keyer refused: RTTY owns the SignaLink", 6000);
+            return;
+        }
         playVoiceSlot(slot);
     });
     connect(txBar_, &TxBar::liveMicToggled, this, [this](bool on) {
         if (fdvMode_) {                            // FreeDV owns the LIVE path
             txBar_->showLiveMic(liveMic_);
             statusBar()->showMessage("LIVE is RADE in FreeDV mode — leave FreeDV for voice LIVE", 6000);
+            return;
+        }
+        if (rttyMode_ && on) {
+            txBar_->showLiveMic(false);
+            statusBar()->showMessage("LIVE refused: RTTY owns the SignaLink — leave RTTY for voice", 6000);
             return;
         }
         setLiveMic(on);
@@ -2817,6 +2851,11 @@ MainWindow::MainWindow(QWidget* parent)
         if (fdvMode_ && !on) {                     // RADE rides the line input
             panel_->showDigital(true);
             statusBar()->showMessage("DIG stays on in FreeDV — leave FreeDV to go back to the mic", 6000);
+            return;
+        }
+        if (rttyMode_ && !on) {                    // AFSK rides the line input
+            panel_->showDigital(true);
+            statusBar()->showMessage("DIG stays on in RTTY — leave RTTY to go back to the mic", 6000);
             return;
         }
         setDigitalMode(on);
@@ -2926,6 +2965,16 @@ MainWindow::MainWindow(QWidget* parent)
             statusBar()->showMessage(QString("FreeDV on %1").arg(m == Mode::LSB ? "LSB" : "USB"), 4000);
             return;
         }
+        if (rttyMode_ && (m == Mode::USB || m == Mode::LSB)) {
+            // In RTTY the sideband buttons flip the sideband (a station
+            // on the wrong one reads reversed) — RTTY stays on.
+            rttySb_ = m;
+            applyMode(m);
+            panel_->clearModeSelection();
+            statusBar()->showMessage(QString("RTTY on %1").arg(m == Mode::LSB ? "LSB" : "USB"), 4000);
+            return;
+        }
+        if (rttyMode_) setRttyMode(false, /*keepMode*/ true);  // any other mode ends RTTY
         if (fdvMode_) setFdvMode(false, /*keepMode*/ true);   // any other mode ends FreeDV
         if (samActive_) {                          // picking a real mode ends SAM
             samActive_ = false;
@@ -2935,6 +2984,9 @@ MainWindow::MainWindow(QWidget* parent)
         applyMode(m);
         panel_->showMode(m);
     });
+
+    connect(panel_, &ControlPanel::rttyToggled, this,
+            [this](bool on) { setRttyMode(on); });
 
     // SAM (ECSS): the Orion has no true sync-AM, so receive the
     // AM signal in USB with the carrier zero-beaten instead. Engaging swaps
@@ -3824,6 +3876,11 @@ MainWindow::MainWindow(QWidget* parent)
     if (std::getenv("TTC_CWDECK"))
         QTimer::singleShot(0, this, [this] {
             if (cwDeckBtn_) cwDeckBtn_->setChecked(true);
+        });
+    // TTC_RTTYDECK=1: the RTTY deck up at startup (headless review).
+    if (std::getenv("TTC_RTTYDECK"))
+        QTimer::singleShot(0, this, [this] {
+            if (rttyDeckBtn_) rttyDeckBtn_->setChecked(true);
         });
     if (std::getenv("TTC_CONTEST"))
         QTimer::singleShot(0, this, [this] {

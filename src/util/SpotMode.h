@@ -10,6 +10,7 @@ namespace ttc {
 inline QString guessSpotMode(char kind, const QString& comment, qint64 hz) {
     if (kind == 'F') return QStringLiteral("FT8");
     if (kind == 'S') return QStringLiteral("CW");
+    if (kind == 'R') return QStringLiteral("RTTY");
     if (kind == 'V') return QStringLiteral("DIGITALVOICE");   // FreeDV/RADE (ADIF)
     const QString c = comment.toUpper();
     if (c.contains(QLatin1String("FT8")) || c.contains(QLatin1String("FT4")))

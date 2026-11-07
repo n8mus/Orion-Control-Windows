@@ -35,6 +35,7 @@ signals:
     void digitalToggled(bool on);         // line-in vs mic audio switch
     void fdvToggled(bool on);             // FreeDV (RADE) pseudo-mode
     void ft8Clicked();                    // start/raise/close WSJT-X
+    void rttyToggled(bool on);            // RTTY (AFSK) pseudo-mode
     void agcSelected(char agc);           // 'F','M','S','P','O'
     void agcThresholdChanged(int uv);     // programmable-AGC threshold slider
     void agcHangChanged(int tenths);      // hang time, tenths of a second (0 = off)
@@ -61,6 +62,7 @@ public slots:
     void showDigital(bool on);            // no emit
     void showFdv(bool on);                // no emit
     void showFt8(bool on);                // WSJT-X running; no emit
+    void showRtty(bool on);               // no emit
     void clearModeSelection();            // SAM presents as its own mode
     void showAgc(char agc);
     void showAgcThreshold(double uv);     // radio's actual (quantized) values
@@ -105,6 +107,7 @@ private:
     QPushButton* digBtn_   = nullptr;
     QPushButton* fdvBtn_   = nullptr;
     QPushButton* ft8Btn_   = nullptr;
+    QPushButton* rttyBtn_  = nullptr;
     QLabel* pbtVal_ = nullptr;
     QSlider* pbt_   = nullptr;
     // Trailing-edge coalescer for slider drags (the Orion's UART services

@@ -110,6 +110,7 @@ SpotTableWindow::SpotTableWindow(LogbookIndex* idx, RotorLink* rotor,
     chip(&fFdv_, "FreeDV", "FreeDV / RADE stations online now, every band "
                            "(SPOTS ▾ → FreeDV Reporter spots): who is ON AIR, "
                            "who transmitted lately, who is listening", true);
+    chip(&fRtty_, "RTTY", "Calls this station's own RTTY deck decoded (CQ / DE)", true);
     chip(&fNeed_, "NEED ONLY",
          "Only rows where the country, this band, or this mode is still "
          "needed", false);
@@ -225,6 +226,7 @@ void SpotTableWindow::rebuild() {
         if (l.kind == 'F' && !fFt8_->isChecked()) continue;
         if (l.kind == 'S' && !fSkim_->isChecked()) continue;
         if (l.kind == 'V' && !fFdv_->isChecked()) continue;
+        if (l.kind == 'R' && !fRtty_->isChecked()) continue;
         const QString band = LogbookIndex::bandForHz(l.hz);
         const QString mode = modeGuess(l);
         const bool cRow = contestMode_ && l.contest != 0;

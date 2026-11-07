@@ -882,6 +882,7 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
                                               ? QColor(96, 200, 255) // FT8
                            : v.s->kind == 'S' ? QColor(205, 140, 255)// skimmer
                            : v.s->kind == 'V' ? QColor(255, 140, 0)  // FreeDV
+                           : v.s->kind == 'R' ? QColor(240, 120, 120) // own RTTY decode
                                               : QColor(255, 216, 50);// DX
         // Worked-before coloring (cqrlog DX-cluster convention): the CALL
         // text carries the logbook status; the source kind stays readable

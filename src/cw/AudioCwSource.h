@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QString>
 #include <complex>
+#include <functional>
 #include <vector>
 
 class QProcess;
@@ -49,6 +50,14 @@ public:
     // restart because the conviction isn't persisted).
     void setTargetPitch(int hz);
 
+    // A second reader of the same ear: the RAW 48 kHz float stream (before
+    // NR), on this object's thread, every chunk. The RTTY demodulator
+    // listens here (2026-11-07) — the SignaLink is captured once and
+    // shared, the way fldigi shares it with us. Null to detach.
+    void setRawTap(std::function<void(const float*, int)> tap) {
+        rawTap_ = std::move(tap);
+    }
+
     // Linux: PipeWire can quietly hand parec a DIFFERENT source when the
     // asked-for one has vanished (live-found 2026-10-16: the SignaLink's
     // input node went missing and the RADIO ear recorded the HDMI speakers'
@@ -85,6 +94,8 @@ private:
     AudioCapture* cap_ = nullptr;          // Windows capture endpoint
     QByteArray carry_;                     // odd trailing byte between reads
     std::vector<std::complex<float>> buf_;
+    std::function<void(const float*, int)> rawTap_;
+    std::vector<float> rawBuf_;
     bool nrOn_ = false;
     DenoiseState* nrSt_ = nullptr;         // lazily created, reset on start
     std::vector<float> nrIn_;              // 480-sample frame accumulator

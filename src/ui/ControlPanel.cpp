@@ -156,6 +156,18 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
         ft8Btn_->setChecked(!ft8Btn_->isChecked());   // the light is ours
         emit ft8Clicked();
     });
+    // Row 6: RTTY (left), the console's own RTTY modem — AFSK on LSB,
+    // decoded from the radio's audio, keyed through the SignaLink. Like
+    // FreeDV a pseudo-mode: it sets the radio up and puts it back.
+    rttyBtn_ = makeButton("RTTY");
+    rttyBtn_->setToolTip("RTTY (AFSK, 45.45 Bd, 170 Hz, mark 2125 Hz): LSB, line input,\n"
+                         "the RTTY deck under the pan reading the radio's audio and\n"
+                         "sending through the SignaLink with CAT PTT. USB/LSB flip the\n"
+                         "sideband; off restores mode, filter and TX filter.");
+    modeGrid->addWidget(rttyBtn_, 5, 0);
+    connect(rttyBtn_, &QPushButton::toggled, this, [this](bool on) {
+        if (!rttyBtn_->signalsBlocked()) emit rttyToggled(on);
+    });
     lay->addWidget(modeBox);
     groups_[ModeGroup] = modeBox;
 
@@ -526,6 +538,12 @@ void ControlPanel::showFdv(bool on) {
 void ControlPanel::showFt8(bool on) {
     QSignalBlocker b(ft8Btn_);
     ft8Btn_->setChecked(on);
+}
+
+void ControlPanel::showRtty(bool on) {
+    if (!rttyBtn_) return;
+    const QSignalBlocker b(rttyBtn_);
+    rttyBtn_->setChecked(on);
 }
 
 void ControlPanel::showDigital(bool on) {
