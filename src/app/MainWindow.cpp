@@ -806,7 +806,9 @@ MainWindow::MainWindow(QWidget* parent)
     // RTTY activity only (2026-11-07): to find where RTTY is before an
     // outing — the band map and table keep cluster spots whose comment
     // says RTTY (RBN's RTTY skimmers included) and the RTTY deck's own
-    // decodes, and drop everything else. A filter, not a source.
+    // decodes, and drop everything else. A filter, not a source — and
+    // session-only, off at every start: left on across a restart it read
+    // as "no spots for any mode" (live-found the day it was added).
     auto* rttyOnly = spotsMenu->addAction("RTTY activity only");
     rttyOnly->setCheckable(true);
     rttyOnly->setToolTip("Keep only RTTY on the band map and in the table: cluster spots\n"
@@ -978,7 +980,6 @@ MainWindow::MainWindow(QWidget* parent)
         potaOn->setChecked(s.value("spots/pota", true).toBool());
         ft8On->setChecked(s.value("spots/ft8", true).toBool());
         fdvOn->setChecked(s.value("spots/freedv", false).toBool());
-        rttyOnly->setChecked(s.value("spots/rttyOnly", false).toBool());
         n1Dupes->setChecked(s.value("spots/not1mmDupes", true).toBool());
     }
     spotsBtn->setMenu(spotsMenu);
@@ -1510,10 +1511,12 @@ MainWindow::MainWindow(QWidget* parent)
         pushSpots();
     });
     connect(rttyOnly, &QAction::toggled, this, [this, pushSpots](bool on) {
-        QSettings().setValue("spots/rttyOnly", on);
         pushSpots();
-        statusBar()->showMessage(on ? QStringLiteral("SPOTS: RTTY activity only")
-                                    : QStringLiteral("SPOTS: every mode"), 3000);
+        statusBar()->showMessage(
+            on ? QString("SPOTS: RTTY activity only — %1 RTTY spot%2 in the feed right now "
+                         "(fills during a RTTY contest; SPOTS ▾ turns it off)")
+                     .arg(shownSpots_.size()).arg(shownSpots_.size() == 1 ? "" : "s")
+               : QStringLiteral("SPOTS: every mode again"), 8000);
     });
     // Spotter area: push the country list to the node (live if connected),
     // remember the park scope for POTA, and re-filter what's on screen.
