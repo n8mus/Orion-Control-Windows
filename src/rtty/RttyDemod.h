@@ -40,12 +40,18 @@ public:
         // closes 0.05 under it; 0 = always open.
         double squelch = 0.5;
         // AFC: every 250 ms a 256 ms window of the mark-mixed stream is
-        // searched for the tone PAIR (mark, and space `shift` away) within
-        // +-afcRangeHz; a pair standing 10 dB over the window's noise
-        // steers both mixers onto it. A pair, never a lone tone: that is
-        // what keeps the mark from locking into the space filter.
+        // searched for the tone PAIR (mark, and space `shift` away). A
+        // pair standing 10 dB over the window's noise steers both mixers
+        // onto it. A pair, never a lone tone: that is what keeps the mark
+        // from locking into the space filter. Two gaits: ACQUIRE searches
+        // +-afcRangeHz (the whole passband) and locks on the strongest
+        // pair; once locked it TRACKS +-afcTrackHz only, so a louder
+        // neighbour never steals the station (several in a 3 kHz
+        // passband, live 2026-11-07). resetAfc() = acquire again (the dial
+        // moved); setAfcTrack(true) = the operator clicked a station.
         bool afc = true;
-        double afcRangeHz = 200.0;
+        double afcRangeHz = 1100.0;
+        double afcTrackHz = 60.0;
     };
     RttyDemod();
     explicit RttyDemod(const Params& p);
@@ -70,7 +76,9 @@ public:
     };
     Status status() const { return st_; }
     double afcHz() const { return afcHz_; }
-    void resetAfc();                    // the dial moved: start from 0
+    bool afcLocked() const { return afcTrack_; }
+    void resetAfc();                    // the dial moved: 0, acquire again
+    void setAfcTrack(bool on) { afcTrack_ = on; }   // a click: hold here
     unsigned framingErrors() const { return frameErr_; }
     unsigned charsDecoded() const { return chars_; }
 
@@ -79,6 +87,7 @@ private:
     void bit(bool mark);                // one 1 kHz hard decision
     void setRotations();                // mixers at the tones + AFC
     std::complex<double> probe(double hz) const;   // DFT bin over the AFC window
+    bool pairKeyed(double d) const;     // both tones take turns in the window
     void acquire();                     // the pair search (see Params::afc)
 
     Params p_;
@@ -86,9 +95,18 @@ private:
     std::complex<double> phM_{1, 0}, phS_{1, 0}, rotM_{1, 0}, rotS_{1, 0};
     double mHz_ = 2125.0, sHz_ = 2295.0;   // the mixers' tones after `reverse`
     double afcHz_ = 0.0;
-    std::vector<std::complex<double>> afcRing_;   // 256 mark-mixed 1 kHz samples
+    // The AFC window: 256 ms of the mark-mixed stream at ~8 kHz (its own
+    // decimation — the 1 kHz decode stream folds everything past +-500 Hz
+    // back in, and a full-passband search on it locked 1000 Hz off).
+    std::vector<std::complex<double>> afcRing_;
+    std::vector<double> afcWin_;        // Hann: a lone 40 dB mark's leakage
+                                        // read as a pair 170 Hz away without it
     size_t afcPos_ = 0;
+    int afcDecim_ = 6, afcAccN_ = 0;
+    std::complex<double> afcAcc_{0, 0};
     unsigned afcFill_ = 0, afcTick_ = 0;
+    bool afcTrack_ = false;             // locked on a pair: narrow search
+    unsigned afcMiss_ = 0;              // 250 ms ticks without a keyed pair
     std::complex<double> accM_{0, 0}, accS_{0, 0};
     int decim_ = 48, accN_ = 0;
     // One-bit boxcars at 1 kHz.

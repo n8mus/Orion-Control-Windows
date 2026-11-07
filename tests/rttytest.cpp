@@ -152,7 +152,9 @@ int main(int argc, char** argv) {
         // the other line), and 80 Hz high at 0 dB; without AFC 80 Hz off
         // must read badly (so the rows above prove something).
         {"AFC +80 Hz, +10 dB",  45.45,  10, false, false, false,  95,  80.0, true},
-        {"AFC -180 Hz, +10 dB", 45.45,  10, false, false, false,  95, -180.0, true},
+        // (the first two characters of the over go while the AFC steps:
+        // 90, not 95 — the price of clicking the wrong line)
+        {"AFC -180 Hz, +10 dB", 45.45,  10, false, false, false,  90, -180.0, true},
         {"AFC +80 Hz,   0 dB",  45.45,   0, false, false, false,  90,  80.0, true},
         {"AFC +80 Hz, IQ",      45.45,  10, false, false, true,   95,  80.0, true},
     };

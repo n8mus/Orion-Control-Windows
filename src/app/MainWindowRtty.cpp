@@ -189,8 +189,12 @@ void MainWindow::setRttyMode(bool on, bool keepMode) {
             panel_->setSamLabel("SAM");
         }
         rttySaved_ = {rigMode_, rigBwHz_, rigPbtHz_, txBwHz_, digital_};
-        rttySb_ = Mode::LSB;
-        applyMode(rttySb_);
+        // The sideband you are on stays (the engine reads USB's sense
+        // itself); LSB, the convention, only from CW/AM/FM. Forcing LSB
+        // swung the passband off a station being watched on USB
+        // (live-found 2026-11-07).
+        rttySb_ = rigMode_ == Mode::USB ? Mode::USB : Mode::LSB;
+        if (rigMode_ != rttySb_) applyMode(rttySb_);
         panel_->clearModeSelection();
         if (txBwHz_ < 2800) { radio_->setTxFilter(2800); txBar_->showTxFilter(2800); }
         if (liveMic_) setLiveMic(false);
@@ -208,9 +212,11 @@ void MainWindow::setRttyMode(bool on, bool keepMode) {
         if (rttyTick_) rttyTick_->start();
         panel_->showRtty(true);
         if (rttyDeckBtn_ && !rttyDeckBtn_->isChecked()) rttyDeckBtn_->setChecked(true);
-        statusBar()->showMessage("RTTY: LSB, line input, reading the radio's audio. Click the signal "
-                                 "on the waterfall (the RY lines follow); F-keys / Enter send an over; "
-                                 "TX holds the key; MOX / space likewise.", 10000);
+        statusBar()->showMessage(QString("RTTY on %1: line input, reading the radio's audio; the AFC "
+                                         "locks the strongest pair in the passband, a click on the waterfall "
+                                         "picks another (the RY lines show which). F-keys / Enter send an "
+                                         "over; TX holds the key; MOX / space likewise.")
+                                     .arg(rttySb_ == Mode::USB ? "USB" : "LSB"), 10000);
     } else {
         if (rttyTxOn_) rttyAbort();
         rttyMode_ = false;

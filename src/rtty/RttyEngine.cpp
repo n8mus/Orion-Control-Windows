@@ -97,6 +97,7 @@ void RttyEngine::setToneCenterHz(int hz) {
     Settings s = s_;
     s.markHz = std::clamp(hz - s.shiftHz / 2, 300, 3500);
     apply(s, false);
+    demod_.setAfcTrack(true);           // the operator's pick: hold here
 }
 
 double RttyEngine::effectiveMarkHz() const {

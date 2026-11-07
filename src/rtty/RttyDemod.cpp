@@ -2,6 +2,7 @@
 #include "rtty/RttyDemod.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace ttc {
 
@@ -25,7 +26,12 @@ void RttyDemod::setParams(const Params& p) {
     const size_t L = std::max<size_t>(2, size_t(std::lround(bitLen_)));
     ringM_.assign(L, {0, 0});
     ringS_.assign(L, {0, 0});
-    afcRing_.assign(256, {0, 0});
+    afcDecim_ = std::max(1, int(std::lround(p.sampleRate / 8000.0)));
+    const double afcRate = p.sampleRate / afcDecim_;
+    afcRing_.assign(size_t(std::lround(afcRate * 0.256)), {0, 0});
+    afcWin_.resize(afcRing_.size());
+    for (size_t i = 0; i < afcWin_.size(); ++i)
+        afcWin_[i] = 0.5 - 0.5 * std::cos(2.0 * kPi * (i + 0.5) / afcWin_.size());
     reset();
 }
 
@@ -38,6 +44,8 @@ void RttyDemod::resetAfc() {
     afcHz_ = 0.0;
     setRotations();
     afcFill_ = 0;
+    afcTrack_ = false;
+    afcMiss_ = 0;
     st_.afcHz = 0.0f;
 }
 
@@ -62,6 +70,8 @@ void RttyDemod::reset() {
     std::fill(afcRing_.begin(), afcRing_.end(), std::complex<double>{0, 0});
     afcPos_ = 0;
     afcFill_ = afcTick_ = 0;
+    afcAcc_ = {0, 0};
+    afcAccN_ = 0;
     st_.afcHz = float(afcHz_);
 }
 
@@ -82,6 +92,16 @@ void RttyDemod::process(const std::complex<float>* s, size_t n) {
         const std::complex<double> x(s[i].real(), s[i].imag());
         accM_ += x * phM_;
         accS_ += x * phS_;
+        if (p_.afc && !afcRing_.empty()) {
+            afcAcc_ += x * phM_;
+            if (++afcAccN_ >= afcDecim_) {
+                afcRing_[afcPos_] = afcAcc_;
+                if (++afcPos_ >= afcRing_.size()) afcPos_ = 0;
+                if (afcFill_ < afcRing_.size()) ++afcFill_;
+                afcAcc_ = {0, 0};
+                afcAccN_ = 0;
+            }
+        }
         phM_ *= rotM_;
         phS_ *= rotS_;
         if (++accN_ >= decim_) {
@@ -94,15 +114,10 @@ void RttyDemod::process(const std::complex<float>* s, size_t n) {
             ringM_[ringPos_] = accM_;
             ringS_[ringPos_] = accS_;
             if (++ringPos_ >= ringM_.size()) ringPos_ = 0;
-            // The AFC's window: the mark-mixed stream, 256 ms of it.
-            if (p_.afc && !afcRing_.empty()) {
-                afcRing_[afcPos_] = accM_;
-                if (++afcPos_ >= afcRing_.size()) afcPos_ = 0;
-                if (afcFill_ < afcRing_.size()) ++afcFill_;
-                if (++afcTick_ >= 250) {
-                    afcTick_ = 0;
-                    if (afcFill_ >= afcRing_.size()) acquire();
-                }
+            // The AFC looks every 250 ms once its window has filled.
+            if (p_.afc && !afcRing_.empty() && ++afcTick_ >= 250) {
+                afcTick_ = 0;
+                if (afcFill_ >= afcRing_.size()) acquire();
             }
             accM_ = accS_ = {0, 0};
             accN_ = 0;
@@ -114,16 +129,49 @@ void RttyDemod::process(const std::complex<float>* s, size_t n) {
 // One DFT bin of the AFC window at `hz` relative to the mark mixer.
 std::complex<double> RttyDemod::probe(double hz) const {
     const std::complex<double> rot =
-        std::polar(1.0, -2.0 * kPi * hz * decim_ / p_.sampleRate);
+        std::polar(1.0, -2.0 * kPi * hz * afcDecim_ / p_.sampleRate);
     std::complex<double> ph(1, 0), acc(0, 0);
     const size_t N = afcRing_.size();
     for (size_t i = 0; i < N; ++i) {
         size_t k = afcPos_ + i;
         if (k >= N) k -= N;
-        acc += afcRing_[k] * ph;
+        acc += afcRing_[k] * (afcWin_[i] * ph);
         ph *= rot;
     }
     return acc;
+}
+
+// RTTY keys: one tone at a time. Over the window in 16 ms pieces, each
+// tone must be clearly the louder one in some pieces (a 22 ms element
+// always covers one). Two steady carriers 170 Hz apart — a busy band has them — fail
+// this; they held a false lock live (2026-11-07, 614 + 790 Hz).
+bool RttyDemod::pairKeyed(double d) const {
+    const double rel = sHz_ - mHz_;
+    const size_t N = afcRing_.size();
+    const size_t piece = std::max<size_t>(8, size_t(std::lround(0.016 * p_.sampleRate / afcDecim_)));
+    const std::complex<double> rotM = std::polar(1.0, -2.0 * kPi * d * afcDecim_ / p_.sampleRate);
+    const std::complex<double> rotS = std::polar(1.0, -2.0 * kPi * (d + rel) * afcDecim_ / p_.sampleRate);
+    std::complex<double> phM(1, 0), phS(1, 0), am(0, 0), as(0, 0);
+    int nM = 0, nS = 0;
+    size_t inPiece = 0;
+    for (size_t i = 0; i < N; ++i) {
+        size_t k = afcPos_ + i;
+        if (k >= N) k -= N;
+        am += afcRing_[k] * phM;
+        as += afcRing_[k] * phS;
+        phM *= rotM;
+        phS *= rotS;
+        if (++inPiece >= piece) {
+            const double em = std::abs(am), es = std::abs(as);
+            if (em > 2.0 * es) ++nM;
+            else if (es > 2.0 * em) ++nS;
+            am = as = {0, 0};
+            inPiece = 0;
+        }
+    }
+    // Two pieces each at 2:1 — text keys both tones ~half the time; two
+    // carriers wobbling about equal level never swap that decisively.
+    return nM >= 2 && nS >= 2;
 }
 
 // Find the tone pair: the offset d (within the range) where BOTH a tone
@@ -136,20 +184,46 @@ std::complex<double> RttyDemod::probe(double hz) const {
 // on mark between overs must not lose its trim.
 void RttyDemod::acquire() {
     const double rel = sHz_ - mHz_;
-    const double range = p_.afcRangeHz;
+    const double range = afcTrack_ ? p_.afcTrackHz : p_.afcRangeHz;
+    // The audio feed's tones must stay inside the audio band; the IQ feed
+    // (tones at +-shift/2 about 0) has no such edge.
+    const bool audio = std::abs(p_.markHz) > 400.0;
+    const double lo = std::min(mHz_, sHz_) + afcHz_, hi = std::max(mHz_, sHz_) + afcHz_;
     std::vector<double> pm;
-    pm.reserve(64);
-    double bestD = 0.0, bestS = -1.0;
+    pm.reserve(256);
+    std::vector<std::pair<double, double>> cand;   // (score, d)
     for (double d = -range; d <= range + 1e-9; d += 10.0) {
+        if (audio && (lo + d < 200.0 || hi + d > 3600.0)) continue;
         const double Pm = std::norm(probe(d));
         const double Ps = std::norm(probe(d + rel));
         pm.push_back(Pm);
-        const double sc = std::min(Pm, Ps);
-        if (sc > bestS) { bestS = sc; bestD = d; }
+        cand.emplace_back(std::min(Pm, Ps), d);
     }
+    if (pm.size() < 3) return;
     std::nth_element(pm.begin(), pm.begin() + pm.size() / 2, pm.end());
     const double median = pm[pm.size() / 2];
-    if (bestS < 10.0 * std::max(median, 1e-30)) return;
+    // The strongest pairs over the floor, keyed ones only (three looks).
+    std::sort(cand.begin(), cand.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    double bestD = 0.0, bestS = -1.0;
+    for (size_t i = 0; i < cand.size() && i < 3; ++i) {
+        if (cand[i].first < 10.0 * std::max(median, 1e-30)) break;
+        if (pairKeyed(cand[i].second)) { bestS = cand[i].first; bestD = cand[i].second; break; }
+    }
+#ifdef RTTY_AFC_DEBUG
+    std::fprintf(stderr, "[afc] %s afc=%.0f top d=%.0f (%.1fx) keyed-best d=%.0f q=%.2f miss=%u\n",
+                 afcTrack_ ? "track" : "acq", afcHz_, cand.empty() ? 0.0 : cand[0].second,
+                 cand.empty() ? 0.0 : cand[0].first / std::max(median, 1e-30), bestS < 0 ? 999.0 : bestD,
+                 quality_, afcMiss_);
+#endif
+    // Nothing keyed, or a lock whose squelch stays shut: count it; after
+    // 5 s of that a lock is released and the full range searched again.
+    const bool quiet = p_.squelch > 0.0 && quality_ < p_.squelch - 0.1;
+    if (bestS < 0.0 || (afcTrack_ && quiet)) {
+        if (afcTrack_ && ++afcMiss_ >= 20) { afcTrack_ = false; afcMiss_ = 0; }
+        return;
+    }
+    afcMiss_ = 0;
+    afcTrack_ = true;                   // locked: from here on, follow it
     double rd = bestD, rs = bestS;
     for (double d = bestD - 10.0; d <= bestD + 10.0 + 1e-9; d += 2.0) {
         const double sc = std::min(std::norm(probe(d)), std::norm(probe(d + rel)));
@@ -158,7 +232,9 @@ void RttyDemod::acquire() {
     // Clearly off (a click on the other line): all the way at once; near:
     // 60 % per step, so the trim settles without hunting.
     const double step = std::abs(rd) >= 30.0 ? 1.0 : 0.6;
-    const double next = std::clamp(afcHz_ + step * rd, -range, range);
+    // Clamp the ABSOLUTE trim to the acquisition range, never the track
+    // window (that snapped a lock 1070 Hz away back to -60, live-found).
+    const double next = std::clamp(afcHz_ + step * rd, -p_.afcRangeHz, p_.afcRangeHz);
     if (std::abs(next - afcHz_) >= 1.0) {
         afcHz_ = next;
         setRotations();
