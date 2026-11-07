@@ -803,17 +803,6 @@ MainWindow::MainWindow(QWidget* parent)
     fdvOn->setToolTip("Who is on FreeDV / RADE digital voice now, from qso.freedv.org\n"
                       "(orange labels; watch-only — nothing about this station is sent)");
     fdvSpotsAct_ = fdvOn;
-    // RTTY activity only (2026-11-07): to find where RTTY is before an
-    // outing — the band map and table keep cluster spots whose comment
-    // says RTTY (RBN's RTTY skimmers included) and the RTTY deck's own
-    // decodes, and drop everything else. A filter, not a source — and
-    // session-only, off at every start: left on across a restart it read
-    // as "no spots for any mode" (live-found the day it was added).
-    auto* rttyOnly = spotsMenu->addAction("RTTY activity only");
-    rttyOnly->setCheckable(true);
-    rttyOnly->setToolTip("Keep only RTTY on the band map and in the table: cluster spots\n"
-                         "whose comment says RTTY (RBN's RTTY skimmers included) and the\n"
-                         "RTTY deck's own decodes. Off = every mode again.");
     auto* n1Dupes = spotsMenu->addAction("Gray Not1MM contest dupes");
     n1Dupes->setCheckable(true);
     n1Dupes->setToolTip("While Not1MM runs, stations already worked in its current contest\n"
@@ -1091,8 +1080,8 @@ MainWindow::MainWindow(QWidget* parent)
         l.needB = nd.band.toLatin1();
         l.needM = nd.mode.toLatin1();
     };
-    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, wsjtOn, fdvOn, rttyOnly, ctyPlace,
-                      logStatus, needFill, watchBeep] {
+    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, wsjtOn, fdvOn, ctyPlace, logStatus,
+                      needFill, watchBeep] {
         QVector<SpotLabel> labels;
         if (spotsOn->isChecked()) {
             QSet<QString> seen;                    // POTA API entry wins (has
@@ -1302,16 +1291,6 @@ MainWindow::MainWindow(QWidget* parent)
                 if (not1mm_.isDupe(l.call, l.hz, guessSpotMode(l.kind, l.comment, l.hz)))
                     l.contest = 'W';
         }
-        // RTTY activity only (SPOTS ▾): what the comment calls RTTY, plus
-        // our own decodes. Contest mode's own filter wins while it is up.
-        if (rttyOnly->isChecked() && !(contestDeck_ && contestDeckVisible()))
-            labels.erase(std::remove_if(labels.begin(), labels.end(),
-                                        [](const SpotLabel& l) {
-                                            return l.kind != 'R'
-                                                && guessSpotMode(l.kind, l.comment, l.hz)
-                                                       != QLatin1String("RTTY");
-                                        }),
-                         labels.end());
         shownSpots_ = labels;
         pan_->setSpots(labels);
         if (spotTable_) spotTable_->setSpots(labels);
@@ -1509,14 +1488,6 @@ MainWindow::MainWindow(QWidget* parent)
     connect(dxOn, &QAction::toggled, this, [pushSpots](bool on) {
         QSettings().setValue("spots/dx", on);
         pushSpots();
-    });
-    connect(rttyOnly, &QAction::toggled, this, [this, pushSpots](bool on) {
-        pushSpots();
-        statusBar()->showMessage(
-            on ? QString("SPOTS: RTTY activity only — %1 RTTY spot%2 in the feed right now "
-                         "(fills during a RTTY contest; SPOTS ▾ turns it off)")
-                     .arg(shownSpots_.size()).arg(shownSpots_.size() == 1 ? "" : "s")
-               : QStringLiteral("SPOTS: every mode again"), 8000);
     });
     // Spotter area: push the country list to the node (live if connected),
     // remember the park scope for POTA, and re-filter what's on screen.

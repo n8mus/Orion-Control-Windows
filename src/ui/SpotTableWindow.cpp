@@ -110,7 +110,9 @@ SpotTableWindow::SpotTableWindow(LogbookIndex* idx, RotorLink* rotor,
     chip(&fFdv_, "FreeDV", "FreeDV / RADE stations online now, every band "
                            "(SPOTS ▾ → FreeDV Reporter spots): who is ON AIR, "
                            "who transmitted lately, who is listening", true);
-    chip(&fRtty_, "RTTY", "Calls this station's own RTTY deck decoded (CQ / DE)", true);
+    chip(&fRtty_, "RTTY", "RTTY spots: cluster spots whose comment says RTTY (RBN's RTTY "
+                          "skimmers included) and the RTTY deck's own decodes. Turn the "
+                          "other chips off to see RTTY alone", true);
     chip(&fNeed_, "NEED ONLY",
          "Only rows where the country, this band, or this mode is still "
          "needed", false);
@@ -221,14 +223,21 @@ void SpotTableWindow::rebuild() {
     table_->setRowCount(0);
     int shown = 0;
     for (const SpotLabel& l : rows) {
-        if (l.kind == 'D' && !fDx_->isChecked()) continue;
-        if (l.kind == 'P' && !fPota_->isChecked()) continue;
-        if (l.kind == 'F' && !fFt8_->isChecked()) continue;
-        if (l.kind == 'S' && !fSkim_->isChecked()) continue;
-        if (l.kind == 'V' && !fFdv_->isChecked()) continue;
-        if (l.kind == 'R' && !fRtty_->isChecked()) continue;
-        const QString band = LogbookIndex::bandForHz(l.hz);
         const QString mode = modeGuess(l);
+        // RTTY is a chip like the rest (operator, 2026-11-07): it governs
+        // every RTTY spot — a cluster spot whose comment says RTTY and the
+        // RTTY deck's own decodes — so DX off + RTTY on shows RTTY alone.
+        const bool rtty = l.kind == 'R' || mode == QLatin1String("RTTY");
+        if (rtty) {
+            if (!fRtty_->isChecked()) continue;
+        } else {
+            if (l.kind == 'D' && !fDx_->isChecked()) continue;
+            if (l.kind == 'P' && !fPota_->isChecked()) continue;
+            if (l.kind == 'F' && !fFt8_->isChecked()) continue;
+            if (l.kind == 'S' && !fSkim_->isChecked()) continue;
+            if (l.kind == 'V' && !fFdv_->isChecked()) continue;
+        }
+        const QString band = LogbookIndex::bandForHz(l.hz);
         const bool cRow = contestMode_ && l.contest != 0;
         const LogbookIndex::Need nd =
             idx_ ? idx_->need(l.call, band, mode) : LogbookIndex::Need{};
