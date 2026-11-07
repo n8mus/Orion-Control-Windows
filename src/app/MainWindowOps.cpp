@@ -621,6 +621,34 @@ bool MainWindow::meterConfiguredButSilent() const {
 // The antenna picker, shared by the SWR menu and the tuner box's menu:
 // one list, so an antenna added from either place shows up in both and
 // tags SWR sweeps and tuner settings alike.
+void MainWindow::setAntenna(const QString& ant) {
+    curAntenna_ = ant;
+    QSettings s;
+    s.setValue("swr/currentAntenna", curAntenna_);
+    // Remember it for the band the TX dial is on: the Moxon is a 40 m
+    // antenna, the KT34 lives on 20/15/10 — coming back to a band should
+    // bring back the antenna that was in use there (operator, 2026-11-07).
+    const int band = bandIndexOf(txDialHz());
+    if (band >= 0)
+        s.setValue(QString("swr/antennaByBand/%1").arg(kBands[band].label),
+                   curAntenna_);
+    refreshSwrOverlay();
+}
+
+void MainWindow::recallBandAntenna(int band) {
+    if (band < 0) return;
+    const QVariant v = QSettings().value(
+        QString("swr/antennaByBand/%1").arg(kBands[band].label));
+    if (!v.isValid()) return;                      // never been here: keep it
+    const QString ant = v.toString();
+    if (ant == curAntenna_) return;
+    curAntenna_ = ant;
+    QSettings().setValue("swr/currentAntenna", curAntenna_);
+    statusBar()->showMessage(
+        QString("Antenna: %1 (last used on %2 m)")
+            .arg(ant.isEmpty() ? "(unlabeled)" : ant, kBands[band].label), 4000);
+}
+
 void MainWindow::fillAntennaMenu(QMenu* antMenu) {
     styleMenu(antMenu);
     auto* antGroup = new QActionGroup(antMenu);
@@ -629,21 +657,13 @@ void MainWindow::fillAntennaMenu(QMenu* antMenu) {
     unlabeled->setCheckable(true);
     unlabeled->setChecked(curAntenna_.isEmpty());
     antGroup->addAction(unlabeled);
-    connect(unlabeled, &QAction::triggered, this, [this] {
-        curAntenna_.clear();
-        QSettings().setValue("swr/currentAntenna", curAntenna_);
-        refreshSwrOverlay();
-    });
+    connect(unlabeled, &QAction::triggered, this, [this] { setAntenna({}); });
     for (const QString& name : QSettings().value("swr/antennas").toStringList()) {
         QAction* a = antMenu->addAction(name);
         a->setCheckable(true);
         a->setChecked(curAntenna_ == name);
         antGroup->addAction(a);
-        connect(a, &QAction::triggered, this, [this, name] {
-            curAntenna_ = name;
-            QSettings().setValue("swr/currentAntenna", curAntenna_);
-            refreshSwrOverlay();
-        });
+        connect(a, &QAction::triggered, this, [this, name] { setAntenna(name); });
     }
     antMenu->addSeparator();
     QAction* newAnt = antMenu->addAction("New antenna…");
@@ -662,18 +682,14 @@ void MainWindow::fillAntennaMenu(QMenu* antMenu) {
                 statusBar()->showMessage(
                     QString("SWR: using existing antenna \"%1\" instead "
                             "(close match)").arg(k), 6000);
-                curAntenna_ = k;
-                s.setValue("swr/currentAntenna", curAntenna_);
-                refreshSwrOverlay();
+                setAntenna(k);
                 return;
             }
         if (!known.contains(name)) {
             known << name;
             s.setValue("swr/antennas", known);
         }
-        curAntenna_ = name;
-        s.setValue("swr/currentAntenna", curAntenna_);
-        refreshSwrOverlay();
+        setAntenna(name);
     });
 }
 
@@ -1358,9 +1374,10 @@ void MainWindow::saveBandMemory() {
 // register always holds "where I last was on this band" — the same semantics
 // as the Orion's own (unreadable-over-CAT) band stack, kept in lockstep.
 void MainWindow::syncBandRegister() {
-    refreshTuneBox();                           // box follows the TX dial
     const int idx = bandIndexOf(centerHz_);
     const bool crossed = (idx != curBand_);
+    if (crossed) recallBandAntenna(idx);        // the band's last antenna
+    refreshTuneBox();                           // box follows the TX dial
     if (crossed) {
         curBand_ = idx;
         panel_->showBand(idx);
@@ -1619,6 +1636,19 @@ void MainWindow::refreshTuneBox() {
         }
     }
     tuneCard_->setBox(b);
+    // The dropdown: antennas with settings on this band first (those are
+    // the ones that work here), the rest of the station's list after.
+    QStringList all = QSettings().value("swr/antennas").toStringList();
+    for (const QString& a : tuneTable_.antennas())
+        if (!a.isEmpty() && !all.contains(a)) all << a;
+    all.prepend(QString());                        // (unlabeled)
+    QStringList onBand, others;
+    for (const QString& a : all) {
+        const bool here = band >= 0
+            && tuneTable_.bands(a).contains(QLatin1String(kBands[band].label));
+        (here ? onBand : others) << a;
+    }
+    tuneCard_->setAntennas(onBand, others, curAntenna_);
 }
 
 // Box click: the entry at this kHz if there is one (edit), else a new

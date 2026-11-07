@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/TuneBoxWidget.h"
 
+#include <QComboBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QSignalBlocker>
 #include <algorithm>
 
 namespace ttc {
@@ -17,6 +19,46 @@ TuneBoxWidget::TuneBoxWidget(QWidget* parent) : QWidget(parent) {
     setToolTip("Tuner / amp settings saved for this antenna and band\n"
                "Click: edit or add the setting here\nRight-click: more");
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    combo_ = new QComboBox(this);
+    combo_->setToolTip("Antenna the tuner settings are filed under\n"
+                       "(remembered per band)");
+    combo_->setStyleSheet(
+        "QComboBox { background: #1c2430; color: #5db2f0; font-weight: bold;"
+        " border: 1px solid #2a3644; border-radius: 3px; padding: 2px 8px; }"
+        "QComboBox QAbstractItemView { background: #1c2430; color: #c8d4e0;"
+        " selection-background-color: #2a3644; }");
+    combo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    combo_->setMinimumContentsLength(8);
+    connect(combo_, &QComboBox::activated, this, [this](int i) {
+        if (i < 0) return;
+        emit antennaChosen(combo_->itemData(i).toString());
+    });
+}
+
+int TuneBoxWidget::comboBand() const {
+    return combo_->sizeHint().height() + 4;
+}
+
+void TuneBoxWidget::setAntennas(const QStringList& onBand,
+                                const QStringList& others,
+                                const QString& current) {
+    const QSignalBlocker block(combo_);
+    combo_->clear();
+    const auto add = [this](const QString& a) {
+        combo_->addItem(a.isEmpty() ? QStringLiteral("(unlabeled)") : a, a);
+    };
+    for (const QString& a : onBand) add(a);
+    if (!onBand.isEmpty() && !others.isEmpty()) combo_->insertSeparator(combo_->count());
+    for (const QString& a : others) add(a);
+    int idx = combo_->findData(current);
+    if (idx < 0) { add(current); idx = combo_->count() - 1; }
+    combo_->setCurrentIndex(idx);
+}
+
+void TuneBoxWidget::resizeEvent(QResizeEvent* e) {
+    QWidget::resizeEvent(e);
+    combo_->setGeometry(kOuter, kOuter, width() - 2 * kOuter,
+                        combo_->sizeHint().height());
 }
 
 QFont TuneBoxWidget::cardFont() const {
@@ -37,7 +79,7 @@ int TuneBoxWidget::rowCount() const {
 QSize TuneBoxWidget::sizeHint() const {
     const QFontMetrics fm(cardFont());
     const int lineH = fm.height() + 3;
-    return {280, rowCount() * lineH + 2 * kPad + 2 * kOuter};
+    return {280, rowCount() * lineH + 2 * kPad + 2 * kOuter + comboBand()};
 }
 
 void TuneBoxWidget::setBox(const Box& b) {
@@ -67,7 +109,7 @@ void TuneBoxWidget::paintEvent(QPaintEvent*) {
                  cValue(255, 255, 255), cDim(111, 135, 160),
                  cExact(160, 215, 255);
     const int lineH = fm.height() + 3;
-    const QRect card = rect().adjusted(kOuter, kOuter, -kOuter, -kOuter);
+    const QRect card = rect().adjusted(kOuter, kOuter + comboBand(), -kOuter, -kOuter);
     p.fillRect(card, QColor(0x1c, 0x24, 0x30));
     p.setPen(QColor(0x2a, 0x36, 0x44));
     p.drawRect(card.adjusted(0, 0, -1, -1));

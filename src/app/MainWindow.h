@@ -225,6 +225,10 @@ private:
     void refreshSwrOverlay();          // push current antenna+band's runs to the pan
     void showSwrHistory();             // browse/delete every saved sweep
     void fillAntennaMenu(QMenu* m);    // the SWR antenna picker (shared)
+    // The one way curAntenna_ changes: saves it, remembers it as the
+    // TX band's antenna (swr/antennaByBand/<band>), refreshes overlay+box.
+    void setAntenna(const QString& ant);
+    void recallBandAntenna(int band); // crossing a band: its last antenna
     // Tuner/amp box (238C + Titan III settings by antenna/band/frequency).
     uint64_t txDialHz() const { return txVfo_ == 'B' ? vfoBHz_ : centerHz_; }
     void refreshTuneBox();             // nearest saved point -> the pan's box

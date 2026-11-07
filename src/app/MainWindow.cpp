@@ -2601,6 +2601,8 @@ MainWindow::MainWindow(QWidget* parent)
             &MainWindow::openTuneEntryHere);
     connect(tuneCard_, &TuneBoxWidget::menuRequested, this,
             &MainWindow::showTuneBoxMenu);
+    connect(tuneCard_, &TuneBoxWidget::antennaChosen, this,
+            &MainWindow::setAntenna);
     loadSwrRuns();                                 // antenna+band curves from disk
     pan_->setShowSwr(QSettings().value("swr/show", true).toBool());
     refreshSwrOverlay();
