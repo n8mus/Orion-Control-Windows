@@ -30,6 +30,8 @@ class AudioCwSource : public QObject {
     Q_OBJECT
 public:
     explicit AudioCwSource(CwDecoder* sink, QObject* parent = nullptr);
+    ~AudioCwSource() override;             // stops parec: a running QProcess
+                                           // destroyed = a warning + a stray process
 
     void start();                          // spawn parec (idempotent)
     void stop();

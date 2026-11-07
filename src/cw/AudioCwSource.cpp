@@ -42,6 +42,14 @@ const char* kDefaultDevWin = "USB Audio";
 AudioCwSource::AudioCwSource(CwDecoder* sink, QObject* parent)
     : QObject(parent), sink_(sink) {}
 
+AudioCwSource::~AudioCwSource() {
+    if (proc_) {
+        proc_->disconnect(this);
+        proc_->kill();
+        proc_->waitForFinished(300);
+    }
+}
+
 #if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
 
 // Windows: Qt Multimedia capture (WASAPI shared mode — other programs can
