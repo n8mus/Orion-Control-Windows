@@ -260,9 +260,12 @@ private:
     QWidget* typeTop_ = nullptr;     // CW TYPE box (hidden on phone)
     QWidget* logPane_ = nullptr;     // LAST QSOs wrapper
     QPlainTextEdit* read_ = nullptr;
-    QLabel* rxInfo_ = nullptr;           // "nn WPM · nnn Hz"
+    QLabel* rxInfo_ = nullptr;           // "nn WPM · nnn Hz" (score line)
+    QPushButton* zbBtn_ = nullptr;
+    QTimer* rxTimer_ = nullptr;          // the 500 ms tone presenter
+    QList<double> rxPitches_;            // last ~1.2 s of measurements
     int rxWpm_ = 0;
-    double rxPitch_ = -1.0;
+    double rxPitch_ = -1.0;              // what is shown
     QWidget* scpRow_ = nullptr;
     QLabel* title_ = nullptr;
     QLabel* score_ = nullptr;

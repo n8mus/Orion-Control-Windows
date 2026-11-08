@@ -192,27 +192,6 @@ void ContestDeck::buildUi() {
         t->setStyleSheet("color:#8798a8; font-size:10px;");
         trow->addWidget(t);
         trow->addStretch(1);
-        // The CW deck's reader readouts and its 0-BEAT, here too
-        // (operator, 2026-11-07). Fixed width: the Hz text changes
-        // length as the tone wanders and would bounce the row.
-        rxInfo_ = new QLabel(this);
-        rxInfo_->setTextFormat(Qt::RichText);
-        rxInfo_->setStyleSheet("color:#6aa5d8; font-size:11px;");
-        rxInfo_->setFixedWidth(
-            rxInfo_->fontMetrics().horizontalAdvance("88 WPM · 8888 Hz") + 12);
-        trow->addWidget(rxInfo_);
-        auto* zb = new QPushButton("0-BEAT", this);
-        zb->setFocusPolicy(Qt::NoFocus);
-        zb->setToolTip("Zero-beat: tune the strongest signal in the "
-                       "passband onto the CW pitch");
-        zb->setStyleSheet("QPushButton { color:#dde7f0; background:#24303e;"
-                          " border:1px solid #3a4a5e; border-radius:3px;"
-                          " padding:1px 8px; font-size:11px; font-weight:bold; }"
-                          "QPushButton:hover { border-color:#6aa5d8; }");
-        connect(zb, &QPushButton::clicked, this,
-                [this] { emit zeroBeatRequested(); });
-        trow->addWidget(zb);
-        setRxWpm(0);
         auto* clr = new QPushButton("clear", this);
         clr->setFlat(true);
         clr->setFocusPolicy(Qt::NoFocus);
@@ -450,11 +429,55 @@ void ContestDeck::buildUi() {
         hdr->addWidget(wpm_);
         mid->addLayout(hdr);
 
-        // Score / rate on its own line under the contest name.
+        // Score / rate on its own line under the contest name — with the
+        // CW deck's reader readout (speed · tone) and its 0-BEAT at the
+        // right end (operator, 2026-11-07: under the RUN line). Fixed
+        // width, digits right-aligned: the Hz text would bounce the row.
+        auto* scoreRow = new QHBoxLayout;
+        scoreRow->setSpacing(6);
         score_ = new QLabel(this);
         score_->setStyleSheet("color:#8798a8;");
         score_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        mid->addWidget(score_);
+        scoreRow->addWidget(score_, 1);
+        rxInfo_ = new QLabel(this);
+        rxInfo_->setTextFormat(Qt::RichText);
+        rxInfo_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        rxInfo_->setStyleSheet("color:#6aa5d8; font-size:11px;");
+        rxInfo_->setFixedWidth(
+            rxInfo_->fontMetrics().horizontalAdvance("88 WPM · 8888 Hz") + 12);
+        scoreRow->addWidget(rxInfo_);
+        zbBtn_ = new QPushButton("0-BEAT", this);
+        zbBtn_->setFocusPolicy(Qt::NoFocus);
+        zbBtn_->setToolTip("Zero-beat: tune the strongest signal in the "
+                           "passband onto the CW pitch");
+        zbBtn_->setStyleSheet(
+            "QPushButton { color:#dde7f0; background:#24303e;"
+            " border:1px solid #3a4a5e; border-radius:3px;"
+            " padding:1px 8px; font-size:11px; font-weight:bold; }"
+            "QPushButton:hover { border-color:#6aa5d8; }");
+        connect(zbBtn_, &QPushButton::clicked, this,
+                [this] { emit zeroBeatRequested(); });
+        scoreRow->addWidget(zbBtn_);
+        mid->addLayout(scoreRow);
+        // The tone readout: median of the last ~1.2 s of measurements,
+        // presented twice a second — the raw 4/s reading jumped between
+        // signals and read as noise (operator, 2026-11-07).
+        rxTimer_ = new QTimer(this);
+        rxTimer_->setInterval(500);
+        connect(rxTimer_, &QTimer::timeout, this, [this] {
+            double shown = -1.0;
+            QVector<double> v;
+            for (double h : rxPitches_) if (h > 0) v << h;
+            if (v.size() >= 3) {              // most of the window had a tone
+                std::sort(v.begin(), v.end());
+                shown = v[v.size() / 2];
+            }
+            if (shown < 0 || rxPitch_ < 0 || std::abs(shown - rxPitch_) > 1.5)
+                rxPitch_ = shown;
+            setRxWpm(rxWpm_);
+        });
+        rxTimer_->start();
+        setRxWpm(0);
 
         // SUPER CHECK: one match line, DIRECTLY above the call box (the
         // sketch's placement) — populates as the partial grows.
@@ -984,6 +1007,8 @@ void ContestDeck::applyPaneVisibility() {
     vis("read", !phone);
     vis("type", !phone);
     vis("log", true);
+    if (rxInfo_) rxInfo_->setVisible(!phone);
+    if (zbBtn_) zbBtn_->setVisible(!phone);
 }
 
 bool ContestDeck::openContestId(qint64 id) {
@@ -1241,12 +1266,9 @@ void ContestDeck::setRxWpm(int wpm) {
                      + "&nbsp;·&nbsp;" + hz);
 }
 
-// Shown only when the tone moved > 1.5 Hz: a readout that flickers
-// between 549 and 550 reads as noise (the CW deck's rule).
 void ContestDeck::setRxPitch(double hz) {
-    if (hz < 0) rxPitch_ = -1.0;
-    else if (rxPitch_ < 0 || std::abs(hz - rxPitch_) > 1.5) rxPitch_ = hz;
-    setRxWpm(rxWpm_);
+    rxPitches_.append(hz);                 // -1 = no tone this window
+    while (rxPitches_.size() > 5) rxPitches_.removeFirst();
 }
 
 void ContestDeck::appendRead(const QString& text) {
