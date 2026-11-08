@@ -19,8 +19,8 @@
 #include <csignal>
 #include <thread>
 #ifdef Q_OS_WIN
-#include <io.h>                        // _isatty (fd 2 = stderr in the CRT)
-#define isatty _isatty
+#include <io.h>                        // _isatty / _fileno
+#include <stdlib.h>                    // _set_invalid_parameter_handler
 #else
 #include <execinfo.h>
 #include <pthread.h>
@@ -160,10 +160,34 @@ int main(int argc, char** argv) {
     // Previous session is kept as console.log.1.
     // TTC_LOG=<file>: stderr to that file regardless (the Windows release
     // job's smoke test — a GUI-subsystem exe hands the runner no stderr).
+    //
+    // Windows (live-found on the v0.1.8 release job, exit 0xC0000409 =
+    // the CRT's invalid-parameter fail-fast): a GUI-subsystem exe started
+    // from an icon has NO std handles, so _isatty(2) on the unopened fd,
+    // and setvbuf with size 0 (fine in glibc, invalid in the UCRT), each
+    // kill the process before the window exists. Hence stderrIsTty() and
+    // the unbuffered stream there, and an invalid-parameter handler that
+    // logs instead of terminating.
+#ifdef Q_OS_WIN
+    _set_invalid_parameter_handler([](const wchar_t*, const wchar_t*,
+                                      const wchar_t*, unsigned, uintptr_t) {
+        fprintf(stderr, "[crt] invalid parameter in a C runtime call (ignored)\n");
+    });
+    const auto stderrIsTty = [] {
+        const int fd = _fileno(stderr);
+        return fd >= 0 && _isatty(fd) != 0;
+    };
+    const auto crashSafe = [] { setvbuf(stderr, nullptr, _IONBF, 0); };
+#else
+    const auto stderrIsTty = [] { return isatty(2) != 0; };
+    const auto crashSafe = [] { setvbuf(stderr, nullptr, _IOLBF, 0); };
+#endif
     if (const char* forced = std::getenv("TTC_LOG")) {
-        if (freopen(forced, "w", stderr))
-            setvbuf(stderr, nullptr, _IOLBF, 0);
-    } else if (!isatty(2) && !std::getenv("TTC_SELFTEST")) {
+        if (freopen(forced, "w", stderr)) {
+            crashSafe();
+            fprintf(stderr, "[log] TTC_LOG session start\n");
+        }
+    } else if (!stderrIsTty() && !std::getenv("TTC_SELFTEST")) {
         const QString dir =
             QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
         QDir().mkpath(dir);
@@ -171,7 +195,7 @@ int main(int argc, char** argv) {
         QFile::remove(log + ".1");
         QFile::rename(log, log + ".1");
         if (freopen(qPrintable(log), "w", stderr))
-            setvbuf(stderr, nullptr, _IOLBF, 0);   // line-buffered: crash-safe
+            crashSafe();                           // crash-safe: nothing buffered
     }
     qInstallMessageHandler(qtMessage);
     signal(SIGSEGV, fatalSignal);
