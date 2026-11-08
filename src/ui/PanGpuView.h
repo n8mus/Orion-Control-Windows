@@ -115,6 +115,7 @@ private:
     quint64 dssRowGenUploaded_ = ~0ull, dssLutToken_ = ~0ull;
     QByteArray dssRowScratch_, dssTexScratch_;
     bool pipesBuilt_ = false, quadUploaded_ = false;
+    bool failed_ = false;                // a pipeline would not build: renderFailed sent
 };
 
 } // namespace ttc

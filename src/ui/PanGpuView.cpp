@@ -725,7 +725,16 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
         if (blend) gp->setTargetBlends({premul});
         gp->setShaderResourceBindings(layoutSrb);
         gp->setRenderPassDescriptor(rp);
-        gp->create();
+        if (!gp->create()) {
+            // No usable shader for this GL (the shaders are GLSL 330; the
+            // Windows release job's runner had Qt's opengl32sw = Mesa 11,
+            // GL 3.0, and the pan showed an uncleared texture — pipeline
+            // failure is not a render failure to Qt, so it must become
+            // one here, 2026-11-08).
+            std::fprintf(stderr, "[pan] GPU pipeline %s + %s failed to build\n", vs, fs);
+            delete gp;
+            return static_cast<QRhiGraphicsPipeline*>(nullptr);
+        }
         return gp;
     };
     const auto stages = QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage;
@@ -756,6 +765,17 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     if (!fillPipe_) fillPipe_ = makePipe("pan_quad.vert", "pan_fill.frag", fillSrb_, true, false);
     if (!linePipe_) linePipe_ = makePipe("pan_line.vert", "pan_line.frag", traceSrb_, true, true);
     if (!widePipe_) widePipe_ = makePipe("pan_trace.vert", "pan_trace.frag", traceSrb_, true, true);
+    if (!overlayPipe_ || !wfPipe_ || !fillPipe_ || !linePipe_ || !widePipe_) {
+        // Clear the frame so nothing stale shows, then hand the pan back to
+        // the CPU paint (PanadapterWidget's renderFailed handler).
+        cb->beginPass(renderTarget(), QColor(12, 16, 22), {1.0f, 0}, u);
+        cb->endPass();
+        if (!failed_) {
+            failed_ = true;
+            emit renderFailed();
+        }
+        return;
+    }
 
     // ---- the frame, bottom to top ----
     cb->beginPass(renderTarget(), QColor(12, 16, 22), {1.0f, 0}, u);
