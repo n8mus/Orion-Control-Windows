@@ -158,7 +158,12 @@ int main(int argc, char** argv) {
     // something" reports come with the actual output. Terminal launches
     // keep printing to the terminal (the README asks testers to run there).
     // Previous session is kept as console.log.1.
-    if (!isatty(2) && !std::getenv("TTC_SELFTEST")) {
+    // TTC_LOG=<file>: stderr to that file regardless (the Windows release
+    // job's smoke test — a GUI-subsystem exe hands the runner no stderr).
+    if (const char* forced = std::getenv("TTC_LOG")) {
+        if (freopen(forced, "w", stderr))
+            setvbuf(stderr, nullptr, _IOLBF, 0);
+    } else if (!isatty(2) && !std::getenv("TTC_SELFTEST")) {
         const QString dir =
             QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
         QDir().mkpath(dir);
