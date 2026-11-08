@@ -2210,8 +2210,15 @@ void PanadapterWidget::paintTop(QPainter& p, int hSpec, int n, bool withCursor) 
         // now — the contest logger's window covered them down here.)
     } else {
         p.setPen(QColor(120, 220, 140));
+        // What the operator can DO about it: a Windows tester with the API
+        // not installed read "build with -DBUILD_SDRPLAY=ON" (2026-11-08).
         p.drawText(QRect(0, 0, width(), hSpec), Qt::AlignCenter,
+#ifdef HAVE_SDRPLAY
+                   "panadapter — no IQ source: SDRplay API service or RSP not found\n"
+                   "(install the API from sdrplay.com/api, connect the RSP, restart)");
+#else
                    "panadapter — no IQ source (build with -DBUILD_SDRPLAY=ON)");
+#endif
     }
 
 }
