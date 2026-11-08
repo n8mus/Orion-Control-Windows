@@ -486,12 +486,18 @@ void MainWindow::toggleContestMode(bool on) {
             if (contestDeck_->so2vOn()) setSo2v(true);   // restored state
             // BOTH ears feed the deck; applyCwRxRouting keeps exactly
             // one enabled, following the operator's source choice.
-            if (cwDec_)
-                connect(cwDec_, &CwDecoder::textDecoded, contestDeck_,
+            for (CwDecoder* d : {cwDec_, audioDec_}) {
+                if (!d) continue;
+                connect(d, &CwDecoder::textDecoded, contestDeck_,
                         &ContestDeck::appendRead, Qt::QueuedConnection);
-            if (audioDec_)
-                connect(audioDec_, &CwDecoder::textDecoded, contestDeck_,
-                        &ContestDeck::appendRead, Qt::QueuedConnection);
+                connect(d, &CwDecoder::wpmEstimated, contestDeck_,
+                        &ContestDeck::setRxWpm, Qt::QueuedConnection);
+            }
+            if (audioSrc_)
+                connect(audioSrc_, &AudioCwSource::pitchMeasured,
+                        contestDeck_, &ContestDeck::setRxPitch);
+            connect(contestDeck_, &ContestDeck::zeroBeatRequested, this,
+                    [this] { zeroBeat(); });
             auto* feed = new QTimer(contestDeck_);
             feed->setInterval(1000);
             connect(feed, &QTimer::timeout, contestDeck_, [this] {

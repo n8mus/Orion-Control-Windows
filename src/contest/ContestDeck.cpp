@@ -192,6 +192,27 @@ void ContestDeck::buildUi() {
         t->setStyleSheet("color:#8798a8; font-size:10px;");
         trow->addWidget(t);
         trow->addStretch(1);
+        // The CW deck's reader readouts and its 0-BEAT, here too
+        // (operator, 2026-11-07). Fixed width: the Hz text changes
+        // length as the tone wanders and would bounce the row.
+        rxInfo_ = new QLabel(this);
+        rxInfo_->setTextFormat(Qt::RichText);
+        rxInfo_->setStyleSheet("color:#6aa5d8; font-size:11px;");
+        rxInfo_->setFixedWidth(
+            rxInfo_->fontMetrics().horizontalAdvance("88 WPM · 8888 Hz") + 12);
+        trow->addWidget(rxInfo_);
+        auto* zb = new QPushButton("0-BEAT", this);
+        zb->setFocusPolicy(Qt::NoFocus);
+        zb->setToolTip("Zero-beat: tune the strongest signal in the "
+                       "passband onto the CW pitch");
+        zb->setStyleSheet("QPushButton { color:#dde7f0; background:#24303e;"
+                          " border:1px solid #3a4a5e; border-radius:3px;"
+                          " padding:1px 8px; font-size:11px; font-weight:bold; }"
+                          "QPushButton:hover { border-color:#6aa5d8; }");
+        connect(zb, &QPushButton::clicked, this,
+                [this] { emit zeroBeatRequested(); });
+        trow->addWidget(zb);
+        setRxWpm(0);
         auto* clr = new QPushButton("clear", this);
         clr->setFlat(true);
         clr->setFocusPolicy(Qt::NoFocus);
@@ -1204,6 +1225,28 @@ void ContestDeck::requestQrz(const QString& call) {
     if (!qrz_ || !loggableCall(call) || qrzAsked_.contains(call)) return;
     qrzAsked_.insert(call);              // once per call, misses included
     qrz_->lookup(call);
+}
+
+void ContestDeck::setRxWpm(int wpm) {
+    rxWpm_ = wpm;
+    QString hz = QStringLiteral("— Hz");
+    if (rxPitch_ > 0) {
+        const int target = QSettings().value("cw/pitchHz", 550).toInt();
+        const bool on = std::abs(rxPitch_ - target) <= 10.0;
+        hz = QString("<span style='color:%1'>%2 Hz</span>")
+                 .arg(on ? "#8fd48f" : "#e0b060").arg(qRound(rxPitch_));
+    }
+    rxInfo_->setText((rxWpm_ > 0 ? QString("%1 WPM").arg(rxWpm_)
+                                 : QStringLiteral("— WPM"))
+                     + "&nbsp;·&nbsp;" + hz);
+}
+
+// Shown only when the tone moved > 1.5 Hz: a readout that flickers
+// between 549 and 550 reads as noise (the CW deck's rule).
+void ContestDeck::setRxPitch(double hz) {
+    if (hz < 0) rxPitch_ = -1.0;
+    else if (rxPitch_ < 0 || std::abs(hz - rxPitch_) > 1.5) rxPitch_ = hz;
+    setRxWpm(rxWpm_);
 }
 
 void ContestDeck::appendRead(const QString& text) {

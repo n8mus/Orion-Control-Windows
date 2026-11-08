@@ -103,12 +103,18 @@ public:
 
 public slots:
     void appendRead(const QString& text);   // decoded CW rides in here
+    // The CW deck's readouts, in the CW READ title row (2026-11-07):
+    // the reader's speed and the measured tone, green within 10 Hz of
+    // the CW pitch; the 0-BEAT button beside them.
+    void setRxWpm(int wpm);
+    void setRxPitch(double hz);             // < 0 = no tone
     void appendSubRead(const QString& text); // VFO B's reader (SO2V strip)
     // Spot click / arrow landing / Space grab. hz anchors the call at
     // the frequency it lives on (QSY-abandon detection); 0 = the dial.
     void prefillCall(const QString& call, qint64 hz = 0);
 
 signals:
+    void zeroBeatRequested();               // the 0-BEAT button
     void walkSpots(int dir);                // ←/→ on an empty call box
     void openManagerRequested();            // "Contest log…"
     // A TYPED, unworked call abandoned by turning the knob — parked as
@@ -254,6 +260,9 @@ private:
     QWidget* typeTop_ = nullptr;     // CW TYPE box (hidden on phone)
     QWidget* logPane_ = nullptr;     // LAST QSOs wrapper
     QPlainTextEdit* read_ = nullptr;
+    QLabel* rxInfo_ = nullptr;           // "nn WPM · nnn Hz"
+    int rxWpm_ = 0;
+    double rxPitch_ = -1.0;
     QWidget* scpRow_ = nullptr;
     QLabel* title_ = nullptr;
     QLabel* score_ = nullptr;
