@@ -66,11 +66,12 @@ The console is a native Windows app from the same code (MSVC build,
    anywhere, and run `tentec-console.exe`. The same Station setup dialog
    opens on first run; settings live per-user in the registry.
 
-The Windows zip is built on the station's own Windows box
-(`packaging/make-windows-release.ps1`) and attached to the tag's release
-after the Linux AppImage, so a brand-new release can show the AppImage
-alone for a while. The Linux build is the daily driver; the Windows build
-gets less testing.
+The Windows zip is built by the same release workflow as the AppImage
+(GitHub's Windows runner, MSVC + Qt 6.8; since v0.1.8) and attached to
+the tag's release beside it. `packaging/make-windows-release.ps1` still
+builds the identical zip by hand on a Windows box. The Linux build is the
+daily driver; the Windows build gets less testing, and WDSP receive
+audio, FreeDV RADE and Copy Assist are not in it yet.
 
 ## What you need
 

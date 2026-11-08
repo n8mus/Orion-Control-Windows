@@ -418,9 +418,20 @@ jobs:
           # down), the runner's own desktop as the display.
           $env:TTC_SELFTEST = "4"; $env:TTC_NOSDR = "1"; $env:TTC_RADIO = "orion"
           $env:TTC_RADIO_DEV = "COM99"; $env:TTC_RIGCTLD_PORT = "14599"
+          $env:TTC_SCREENSHOT = (Join-Path (Get-Location) "windows-smoke.png")
+          # The zip must stand on its own: hide the runner's Qt from it.
+          Remove-Item Env:QT_PLUGIN_PATH, Env:QML2_IMPORT_PATH -ErrorAction SilentlyContinue
           $p = Start-Process -FilePath $exe -PassThru -Wait -RedirectStandardError smoke.err -RedirectStandardOutput smoke.out
           Get-Content smoke.err, smoke.out -ErrorAction SilentlyContinue | Select-Object -Last 40
           if ($p.ExitCode -ne 0) { throw "self-test exit $($p.ExitCode)" }
+          if (-not (Test-Path windows-smoke.png)) { throw "no screenshot: the window never came up" }
+          Get-Item windows-smoke.png | Format-List Name, Length
+
+      - name: Keep the smoke screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke-screenshot
+          path: windows-smoke.png
 
       - name: Keep the zip as a run artifact (manual runs)
         uses: actions/upload-artifact@v4
