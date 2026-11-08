@@ -186,6 +186,13 @@ static void testMacros() {
     CHECK(expandMacro("cq wae {MYCALL} {MYCALL} wae", *wae, ctx, "", "", 1)
               == "cq wae N8EM N8EM wae",
           "macro: my call substitution");
+    // Sweepstakes keys the call INSIDE the exchange: nr prec call ck sec.
+    const ContestDef* ss = contestDef("ARRL-SS-CW");
+    CHECK(expandMacro(ss->fkeyRun.value(3).section('|', 1), *ss, ctx, "",
+                      "A 71 MI", 17) == "T17 A N8EM 71 MI",
+          "macro: SS exchange nr prec call ck sec");
+    CHECK(expandMacro("{EXCH3}", *ss, ctx, "", "A 71", 1).isEmpty(),
+          "macro: a missing exchange word keys nothing");
 }
 
 static void testDb(const QString& dir) {

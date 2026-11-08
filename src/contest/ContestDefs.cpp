@@ -314,7 +314,10 @@ ContestDef makeSs(bool cw) {
     d.cabExch = {"serial", "exch"};
     d.fkeyRun = cw ? withOverrides(kBaseRun, {
                          {1, "CQ|cq ss {MYCALL} {MYCALL}"},
-                         {3, "Exch|{SENTNR} {EXCH}"},
+                         // The exchange is sent in the rules' order with
+                         // YOUR CALL between precedence and check: "17 A
+                         // N8EM 71 MI" (sent exch = "A 71 MI").
+                         {3, "Exch|{SENTNR} {EXCH1} {MYCALL} {EXCH2} {EXCH3}"},
                      })
                    : withOverrides(kBaseRun, kVoiceRun);
     d.maxOpHours = 24;          // Sweepstakes: 24 of 30 h, off periods 30 min+

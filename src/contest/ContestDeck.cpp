@@ -1739,7 +1739,8 @@ void ContestDeck::editFkey(int idx0) {
     form->addRow("Label", label);
     form->addRow("Sends", text);
     form->addRow(new QLabel(
-        "Tokens: {MYCALL} {HISCALL} {SNT} {SENTNR} {EXCH}", &d));
+        "Tokens: {MYCALL} {HISCALL} {SNT} {SENTNR} {EXCH}\n"
+        "{EXCH1} {EXCH2} {EXCH3} = the sent exchange's words", &d));
     auto* bb = new QDialogButtonBox(
         QDialogButtonBox::Save | QDialogButtonBox::RestoreDefaults
             | QDialogButtonBox::Cancel,

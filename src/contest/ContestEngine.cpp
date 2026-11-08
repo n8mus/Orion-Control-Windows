@@ -251,6 +251,12 @@ QString expandMacro(QString text, const ContestDef& def,
                      ? formatSerial(sentSerial, def.cutNumbers, def.serialPad)
                      : QString());
     text.replace("{EXCH}", sentExch);
+    // The sent exchange word by word, for contests that key something
+    // in the MIDDLE of it: Sweepstakes is "nr prec CALL ck sec"
+    // (2026-11-07). A missing word keys nothing.
+    const QStringList words = sentExch.simplified().split(' ', Qt::SkipEmptyParts);
+    for (int i = 0; i < 3; ++i)
+        text.replace(QString("{EXCH%1}").arg(i + 1), words.value(i));
     // Collapse doubled spaces a blank token leaves behind — "5NN  MI"
     // keys an audible extra word gap.
     return text.simplified();
