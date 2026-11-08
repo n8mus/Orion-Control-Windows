@@ -31,6 +31,14 @@ bool loggableCall(const QString& call);
 // "001" -> "TT1" on the air (cut zeros/nines, zero-padded). Cabrillo
 // always receives plain digits — this is keying-side formatting only.
 QString formatSerial(int n, bool cut, int pad);
+// The operator's choice on top of the contest's (contest window,
+// "numbers:", setting contest/cutNumbers, 2026-11-07 — "T and N too
+// much"): Full = T for every 0 and N for every 9 (the old behaviour),
+// Leading = only the padding zeros become T (TT1, T17, 190), Off =
+// plain digits. A contest that sets cutNumbers=false stays plain.
+enum class CutMode { Full, Leading, Off };
+CutMode cutMode();                            // from settings
+QString formatSerial(int n, bool cut, int pad, CutMode mode);
 
 // One edit apart (substitution, insertion or deletion) — the busted-
 // spot test: the same station skimmed at nearly the same frequency

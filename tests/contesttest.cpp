@@ -77,6 +77,16 @@ static void testSerials() {
     CHECK(formatSerial(45, true, 3) == "T45", "serial: 45 -> T45");
     CHECK(formatSerial(9, false, 1) == "9", "serial: MST plain digits");
     CHECK(formatSerial(1024, true, 3) == "1T24", "serial: no truncation");
+    CHECK(formatSerial(1, true, 3, CutMode::Leading) == "TT1",
+          "serial: leading-only pads with T");
+    CHECK(formatSerial(190, true, 3, CutMode::Leading) == "190",
+          "serial: leading-only keeps inner 0 and 9");
+    CHECK(formatSerial(45, true, 3, CutMode::Leading) == "T45",
+          "serial: leading-only, one pad");
+    CHECK(formatSerial(1, true, 3, CutMode::Off) == "001",
+          "serial: plain digits on request");
+    CHECK(formatSerial(1, false, 3, CutMode::Full) == "001",
+          "serial: a plain-digit contest stays plain");
 }
 
 static void testDupes() {

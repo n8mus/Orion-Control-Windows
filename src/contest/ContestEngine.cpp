@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/ContestEngine.h"
 
+#include <QSettings>
+
 #include <algorithm>
 #include <cmath>
 
@@ -131,12 +133,27 @@ QString wpxPrefix(const QString& call) {
 }
 
 QString formatSerial(int n, bool cut, int pad) {
+    return formatSerial(n, cut, pad, CutMode::Full);
+}
+
+CutMode cutMode() {
+    const QString m = QSettings().value("contest/cutNumbers", "full").toString();
+    if (m == QLatin1String("leading")) return CutMode::Leading;
+    if (m == QLatin1String("off")) return CutMode::Off;
+    return CutMode::Full;
+}
+
+QString formatSerial(int n, bool cut, int pad, CutMode mode) {
     QString s = QString::number(n < 0 ? 0 : n);
     while (s.size() < pad) s.prepend('0');
-    if (cut) {
-        s.replace('0', 'T');
-        s.replace('9', 'N');
+    if (!cut || mode == CutMode::Off) return s;
+    if (mode == CutMode::Leading) {
+        int i = 0;
+        while (i < s.size() - 1 && s[i] == '0') s[i++] = 'T';
+        return s;
     }
+    s.replace('0', 'T');
+    s.replace('9', 'N');
     return s;
 }
 
@@ -248,7 +265,8 @@ QString expandMacro(QString text, const ContestDef& def,
     text.replace("{SNT}", def.hasRst ? QStringLiteral("5NN") : QString());
     text.replace("{SENTNR}",
                  def.sentSerial
-                     ? formatSerial(sentSerial, def.cutNumbers, def.serialPad)
+                     ? formatSerial(sentSerial, def.cutNumbers, def.serialPad,
+                                    cutMode())
                      : QString());
     text.replace("{EXCH}", sentExch);
     // The sent exchange word by word, for contests that key something

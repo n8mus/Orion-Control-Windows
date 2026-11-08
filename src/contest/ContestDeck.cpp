@@ -2145,7 +2145,7 @@ void ContestDeck::refreshAll() {
     sb_ = computeScore(*def_, values_, cty_, ctx_, qtcN);
     if (sentNr_)
         sentNr_->setText(formatSerial(row_.nextSerial, def_->cutNumbers,
-                                      def_->serialPad));
+                                      def_->serialPad, cutMode()));
     const QDateTime now = QDateTime::currentDateTimeUtc();
     int pts60 = 0;
     QList<QDateTime> ts;

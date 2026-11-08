@@ -86,6 +86,24 @@ void ContestWindow::buildUi() {
             "CQ WW your zone, Sweepstakes prec/check/section.\n"
             "REQUIRED for those; serial contests can leave it empty.");
         h->addWidget(sentExchEdit_);
+        // Cut numbers in the keyed serial: the operator's choice over
+        // the contest's default (2026-11-07, "sending T and N too much").
+        h->addWidget(new QLabel("numbers:", this));
+        auto* cut = new QComboBox(this);
+        cut->setObjectName("cutNumbers");
+        cut->addItem("T + N", "full");
+        cut->addItem("leading T", "leading");
+        cut->addItem("plain", "off");
+        cut->setToolTip("How the serial is keyed: T for every 0 and N for "
+                        "every 9 (TT1, 1NT),\nonly the leading zeros as T "
+                        "(TT1, T17, 190), or plain digits.\nCabrillo always "
+                        "gets digits.");
+        cut->setCurrentIndex(std::max(0, cut->findData(
+            QSettings().value("contest/cutNumbers", "full").toString())));
+        connect(cut, &QComboBox::currentIndexChanged, this, [cut] {
+            QSettings().setValue("contest/cutNumbers", cut->currentData());
+        });
+        h->addWidget(cut);
         h->addWidget(new QLabel("location:", this));
         locationEdit_ = new QLineEdit(
             QSettings().value("contest/location", "").toString(), this);
