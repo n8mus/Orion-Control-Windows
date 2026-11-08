@@ -2515,9 +2515,16 @@ void MainWindow::setupWsjtxUi() {
         if ((wsPid || gtPid) && closeNext) {
             closeNext = false;
             // Already up and raised once: this press closes them.
+            const auto terminate = [](qint64 pid) {
+#ifdef Q_OS_WIN
+                QProcess::startDetached("taskkill", {"/PID", QString::number(pid)});
+#else
+                ::kill(pid_t(pid), SIGTERM);
+#endif
+            };
             if (wsPid && !(wsjtx_ && wsjtx_->requestClose()))
-                ::kill(pid_t(wsPid), SIGTERM);      // never heard: plain TERM
-            if (gtPid) ::kill(pid_t(gtPid), SIGTERM);
+                terminate(wsPid);                   // never heard: plain TERM
+            if (gtPid) terminate(gtPid);
             statusBar()->showMessage("FT8: closing WSJT-X and GridTracker2", 6000);
             return;
         }
