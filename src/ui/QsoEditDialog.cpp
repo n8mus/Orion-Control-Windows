@@ -149,7 +149,7 @@ Qso QsoEditDialog::result() const {
     r.tsUtc = QDateTime::fromString(date_->text().trimmed() + " "
                                     + time_->text().trimmed(),
                                     "yyyy-MM-dd HH:mm:ss");
-    r.tsUtc.setTimeZone(QTimeZone::UTC);
+    r.tsUtc.setTimeZone(QTimeZone::utc());
     bool ok = false;
     const double mhz = freq_->text().trimmed().toDouble(&ok);
     r.freqHz = ok && mhz > 0 ? qint64(std::llround(mhz * 1e6)) : 0;
