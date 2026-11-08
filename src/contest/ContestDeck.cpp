@@ -1133,6 +1133,32 @@ void ContestDeck::rebuildEntryFields() {
         f.setBold(true);
         f.setPointSize(f.pointSize() + 3);
         sentNr_->setFont(f);
+        sentNr_->setToolTip("The serial as it will be keyed.\n"
+                            "Right-click: T + N / leading T / plain digits");
+        sentNr_->setCursor(Qt::PointingHandCursor);
+        // Right-click: how the serial is keyed, right where it shows
+        // (operator, 2026-11-07, mid-Sweepstakes: "can't find it").
+        sentNr_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(sentNr_, &QLabel::customContextMenuRequested, this,
+                [this](const QPoint& p) {
+                    QMenu m(sentNr_);
+                    const QString cur = QSettings()
+                        .value("contest/cutNumbers", "full").toString();
+                    const auto add = [&](const char* text, const char* key) {
+                        QAction* a = m.addAction(QLatin1String(text));
+                        a->setCheckable(true);
+                        a->setChecked(cur == QLatin1String(key));
+                        connect(a, &QAction::triggered, this, [this, key] {
+                            QSettings().setValue("contest/cutNumbers",
+                                                 QLatin1String(key));
+                            refreshAll();
+                        });
+                    };
+                    add("T + N  (TT1, 1NT)", "full");
+                    add("leading T only  (TT1, T17, 190)", "leading");
+                    add("plain digits  (001, 190)", "off");
+                    m.exec(sentNr_->mapToGlobal(p));
+                });
         box->addWidget(sentNr_);
         static_cast<QHBoxLayout*>(l)->addLayout(box);
     }
