@@ -2,6 +2,8 @@
 #pragma once
 #include <QDialog>
 
+#include "log/LogDb.h"
+
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
@@ -28,6 +30,9 @@ signals:
     // "→ cqrlog" button: ask the owner to compare this log against
     // cqrlog and offer to send whatever cqrlog is missing.
     void cqrlogSyncRequested();
+    // Edit… / double-click: the record was rewritten in the log; the
+    // owner re-sends it (before = what the services were sent originally).
+    void qsoEdited(qint64 id, const ttc::Qso& before);
 
 private:
     void applyFilter();
@@ -35,6 +40,7 @@ private:
     void importAdif();
     void exportAdif();
     void deleteSelected();
+    void editSelected();
 
     LogDb* db_;
     const CtyLookup* cty_;

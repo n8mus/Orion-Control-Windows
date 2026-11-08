@@ -126,6 +126,17 @@ void QslUploader::pushQso(qint64 id) {
     mirrorToLoggers(q);
 }
 
+void QslUploader::repushQso(qint64 id) {
+    if (!db_ || id < 0) return;
+    db_->resetUploadStates(id);
+    const Qso q = db_->qso(id);
+    if (q.id < 0) return;
+    for (const char* svc : {"eqsl", "qrz", "club", "hrdlog"})
+        if (on(QLatin1String(svc))) pushHttp(q, QLatin1String(svc), true);
+    if (on("lotw")) runTqslBatch();
+    mirrorToLoggers(q);
+}
+
 void QslUploader::sweepSoon(int delayMs) {
     QTimer::singleShot(delayMs, this, [this] { sweep(); });
 }
@@ -154,7 +165,7 @@ QString QslUploader::adifFor(const Qso& q, const QString& svc) const {
     return Adif::writeRecord(r).trimmed();
 }
 
-void QslUploader::pushHttp(const Qso& q, const QString& svc) {
+void QslUploader::pushHttp(const Qso& q, const QString& svc, bool replace) {
     const QString adif = adifFor(q, svc);
     const qint64 id = q.id;
     QNetworkReply* rep = nullptr;
@@ -176,8 +187,9 @@ void QslUploader::pushHttp(const Qso& q, const QString& svc) {
         QNetworkRequest req(QUrl("https://logbook.qrz.com/api"));
         req.setHeader(QNetworkRequest::ContentTypeHeader,
                       "application/x-www-form-urlencoded");
-        const QByteArray body =
+        QByteArray body =
             "KEY=" + enc(key) + "&ACTION=INSERT&ADIF=" + enc(adif);
+        if (replace) body += "&OPTION=REPLACE";
         rep = net_->post(req, body);
     } else if (svc == "club") {
         const QString mail = cfg("club/email"), pass = cfg("club/password");
@@ -210,7 +222,7 @@ void QslUploader::pushHttp(const Qso& q, const QString& svc) {
 
     const QString call = q.call;
     connect(rep, &QNetworkReply::finished, this,
-            [this, rep, svc, id, call] {
+            [this, rep, svc, id, call, replace] {
         rep->deleteLater();
         const QString body = QString::fromUtf8(rep->readAll());
         bool ok = rep->error() == QNetworkReply::NoError;
@@ -244,7 +256,7 @@ void QslUploader::pushHttp(const Qso& q, const QString& svc) {
         // GridTracker-style, so the operator sees each QSO land.
         emit serviceResult(svc, ok,
                            ok ? call + (dupe ? " — duplicate, already there"
-                                             : " accepted")
+                                      : replace ? " corrected" : " accepted")
                               : call + ": " + why);
     });
 }

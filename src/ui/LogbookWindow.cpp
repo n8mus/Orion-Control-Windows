@@ -22,6 +22,7 @@
 #include "log/LogDb.h"
 #include "log/QslUploader.h"
 #include "ui/OnlineLogsDialog.h"
+#include "ui/QsoEditDialog.h"
 
 namespace ttc {
 
@@ -80,6 +81,11 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     search_->setClearButtonEnabled(true);
     tools->addWidget(search_);
     tools->addStretch(1);
+    auto* editBtn = new QPushButton("Edit…", this);
+    editBtn->setToolTip("Edit the selected QSO (or double-click its row)\n"
+                        "and re-send the corrected record to the online\n"
+                        "logs and cqrlog");
+    tools->addWidget(editBtn);
     auto* delBtn = new QPushButton("Delete", this);
     delBtn->setToolTip("Delete the selected QSOs from the station log\n"
                        "(local only — nothing is retracted from online logs)");
@@ -110,7 +116,9 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
 
     model_ = new QSqlTableModel(this, db_->database());
     model_->setTable("qso");
-    model_->setEditStrategy(QSqlTableModel::OnFieldChange);
+    // Edits go through the Edit form (so they are re-sent), never a
+    // stray click in a cell.
+    model_->setEditStrategy(QSqlTableModel::OnManualSubmit);
     model_->setSort(ColTs, Qt::DescendingOrder);
     model_->select();
     const auto head = [this](int c, const char* t) {
@@ -154,6 +162,9 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     view_->setSelectionBehavior(QAbstractItemView::SelectRows);
     view_->setAlternatingRowColors(false);
     view_->setSortingEnabled(true);
+    view_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    connect(view_, &QTableView::doubleClicked, this,
+            [this](const QModelIndex&) { editSelected(); });
     view_->sortByColumn(ColTs, Qt::DescendingOrder);
     v->addWidget(view_, 1);
 
@@ -189,10 +200,8 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     connect(expBtn, &QPushButton::clicked, this, [this] { exportAdif(); });
     connect(delBtn, &QPushButton::clicked, this,
             [this] { deleteSelected(); });
-    // Inline edits go straight to the table (OnFieldChange); tell the rest
-    // of the console (worked-before index) that the log moved.
-    connect(model_, &QSqlTableModel::dataChanged, this,
-            [this] { if (db_) db_->notifyExternalChange(); });
+    connect(editBtn, &QPushButton::clicked, this,
+            [this] { editSelected(); });
 
     // External changes (LOG window, imports): re-select, debounced so a
     // burst of inserts doesn't thrash the view.
@@ -270,6 +279,22 @@ void LogbookWindow::exportAdif() {
         return;
     }
     db_->exportAdif(f);
+}
+
+void LogbookWindow::editSelected() {
+    const auto rows = view_->selectionModel()->selectedRows(ColId);
+    if (rows.isEmpty()) return;
+    const qint64 id = rows.first().data().toLongLong();
+    const Qso before = db_->qso(id);
+    if (before.id < 0) return;
+    QsoEditDialog dlg(before, cty_, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    const Qso after = dlg.result();
+    if (!db_->updateQso(after)) {
+        QMessageBox::warning(this, "Edit QSO", "The log could not be written.");
+        return;
+    }
+    emit qsoEdited(id, before);
 }
 
 void LogbookWindow::deleteSelected() {

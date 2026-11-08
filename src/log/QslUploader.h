@@ -44,6 +44,12 @@ public:
     explicit QslUploader(LogDb* db, QObject* parent = nullptr);
 
     void pushQso(qint64 id);           // called right after a QSO is logged
+    // A corrected QSO (Logbook Edit…): the same push, but QRZ is asked to
+    // REPLACE its copy (its API's OPTION=REPLACE on a duplicate) instead
+    // of answering "duplicate" and keeping the wrong one. The others
+    // dedupe on call/time/band/mode: an unchanged key updates nothing
+    // there, a changed key adds a record beside the old.
+    void repushQso(qint64 id);
     void sweepSoon(int delayMs = 3000);
     void retryFailedNow() { sweep(); } // the Online Logs window's button
 
@@ -73,7 +79,7 @@ signals:
 
 private:
     void sweep();                      // retry everything pending
-    void pushHttp(const Qso& q, const QString& svc);
+    void pushHttp(const Qso& q, const QString& svc, bool replace = false);
     void runTqslBatch();
     void mirrorToLoggers(const Qso& q);
     QString adifFor(const Qso& q, const QString& svc) const;

@@ -84,6 +84,9 @@ public:
     // "club", "hrdlog" (the up_* columns). State: ' ' pending, 'Y' sent,
     // 'E' last attempt failed (retried later).
     bool setUploadState(qint64 id, const QString& svc, QChar st);
+    // A corrected QSO: every service pending again, so the re-push and
+    // the catch-up sweep both pick it up.
+    bool resetUploadStates(qint64 id);
     QList<Qso> pendingUploads(const QString& svc, int limit = 50) const;
 
 signals:

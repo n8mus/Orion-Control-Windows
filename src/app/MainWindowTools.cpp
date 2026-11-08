@@ -291,6 +291,27 @@ void MainWindow::openLogbookWindow() {
         logbookWin_ = new LogbookWindow(logDb_, &cty_, uploader_,
                                         toolWinParent(this));
         adoptToolWindow(logbookWin_);
+        // Edit…: the corrected record goes back out the same doors the
+        // original went through — online logs (QRZ replacing its copy),
+        // cqrlog's bridge — and the worked-before colors follow.
+        connect(logbookWin_, &LogbookWindow::qsoEdited, this,
+                [this](qint64 id, const Qso& before) {
+                    const Qso now = logDb_ ? logDb_->qso(id) : Qso{};
+                    if (now.id < 0) return;
+                    if (uploader_) uploader_->repushQso(id);
+                    mirrorToCqrlog(now);
+                    const bool keyChanged = before.call != now.call
+                        || before.band != now.band || before.mode != now.mode
+                        || before.tsUtc != now.tsUtc;
+                    statusBar()->showMessage(
+                        keyChanged
+                            ? QString("%1 corrected and re-sent — the old %2 "
+                                      "record stays on eQSL / LoTW / cqrlog "
+                                      "until removed there")
+                                  .arg(now.call, before.call)
+                            : QString("%1 corrected and re-sent").arg(now.call),
+                        10000);
+                });
         // "→ cqrlog": compare, confirm with the count, then send —
         // cqrlog is the award log, nothing goes over without a yes.
         connect(logbookWin_, &LogbookWindow::cqrlogSyncRequested, this,

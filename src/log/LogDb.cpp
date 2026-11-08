@@ -440,6 +440,15 @@ bool LogDb::setUploadState(qint64 id, const QString& svc, QChar st) {
     return q.exec();     // deliberately no changed(): bookkeeping, not data
 }
 
+bool LogDb::resetUploadStates(qint64 id) {
+    if (!isOpen() || id < 0) return false;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("UPDATE qso SET up_lotw='', up_eqsl='', up_qrz='', up_club='',"
+              " up_hrdlog='' WHERE id=:id");
+    q.bindValue(":id", id);
+    return q.exec();
+}
+
 QList<Qso> LogDb::pendingUploads(const QString& svc, int limit) const {
     QList<Qso> out;
     const QString col = upColumn(svc);

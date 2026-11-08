@@ -167,6 +167,7 @@ add_executable(tentec-console
   src/ui/OnlineLogsDialog.cpp   src/ui/OnlineLogsDialog.h
   src/ui/LogWindow.cpp          src/ui/LogWindow.h
   src/ui/LogbookWindow.cpp      src/ui/LogbookWindow.h
+  src/ui/QsoEditDialog.cpp      src/ui/QsoEditDialog.h
   src/ui/SpotTableWindow.cpp    src/ui/SpotTableWindow.h
   src/util/BrowserGlobe.cpp     src/util/BrowserGlobe.h
                                 src/util/SpotMode.h

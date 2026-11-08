@@ -484,6 +484,13 @@ QRN spike gate, measured on a live lightning night's own capture.
   online log (LoTW / eQSL / QRZ / ClubLog / HRDLog, the HRD and N1MM
   mirrors, the cqrlog bridge) ever receives a field we invented, and
   the handle never stands in for NAME there either (`logtest`).
+  **Editing a logged QSO** (Logbook window Edit… / double-click,
+  `ui/QsoEditDialog`, 2026-11-07): the table itself is read-only now;
+  Save rewrites the record and `QslUploader::repushQso` resets its up_*
+  states and re-sends it everywhere (QRZ with `OPTION=REPLACE`, so its
+  copy is corrected; eQSL/LoTW/ClubLog/HRDLog and the cqrlog bridge
+  dedupe on call/time/band/mode, so a changed key leaves the OLD record
+  standing there — the status line says so). `logtest` covers the reset.
 - **Radios**: both are carrier-at-dial in CW (no pitch math anywhere).
   Orion = ASCII CAT, dual RX; Omni VII = binary CAT ("omni8"
   personality). Quirks are documented where they're handled — grep

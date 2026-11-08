@@ -140,6 +140,16 @@ static void testLogDb(const QString& dir) {
           "uploads: state update");
     CHECK(db.pendingUploads("eqsl").isEmpty(),
           "uploads: sent leaves the queue");
+    // A corrected QSO (Logbook Edit…) is pending everywhere again, and the
+    // edit itself is what the services get re-sent.
+    Qso fixed = db.qso(pend[0].id);
+    fixed.call = "K8QBX";
+    CHECK(db.updateQso(fixed), "edit: update runs");
+    CHECK(db.qso(pend[0].id).call == "K8QBX", "edit: the call changed");
+    CHECK(db.resetUploadStates(pend[0].id), "edit: reset runs");
+    const auto again = db.pendingUploads("eqsl");
+    CHECK(again.size() == 1 && again[0].call == "K8QBX",
+          "edit: the corrected QSO is pending again");
 }
 
 static void testIndex(const QString& dir) {
