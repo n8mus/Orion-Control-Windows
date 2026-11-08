@@ -217,17 +217,20 @@ jobs:
           make_latest: true
           files: tentec-console-*-x86_64.AppImage
           body: |
-            Alpha AppImage of Orion Control (Ten-Tec Orion / Omni VII console).
+            Orion Control (Ten-Tec Orion / Omni VII console) — alpha. Two downloads below under **Assets**:
 
+            ## Windows (64-bit)
+            1. Install the SDRplay API/HW driver from https://www.sdrplay.com/api/ first (needed for the panadapter; not bundled — it is proprietary).
+            2. Download **`tentec-console-<version>-win64.zip`**, unzip the whole folder, run `tentec-console.exe` inside it.
+            3. First launch opens Setup → Station. Radio on a COM port; settings live per-user in the registry.
+
+            Not in the Windows build yet: WDSP receive audio, FreeDV RADE, Copy Assist (Linux only so far).
+
+            ## Linux
             **Install (easiest):** run the one-liner from the README, or:
             `bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/Orion-Control/master/install.sh)`
 
-            The SDRplay API (proprietary, required for the panadapter) is NOT
-            bundled — install.sh sets it up, or get it from sdrplay.com/api.
-            The VOACAP propagation engine IS bundled (public-domain core):
-            the map-backdrop propagation overlay works out of the box.
-            Radio control needs your user in the dialout/uucp group (install.sh
-            does this). First launch opens the Setup screen.
+            Or download **`tentec-console-<version>-x86_64.AppImage`**, `chmod +x` it and run it. The SDRplay API is NOT bundled — install.sh sets it up, or get it from sdrplay.com/api. The VOACAP propagation engine IS bundled (public-domain core). Radio control needs your user in the dialout/uucp group (install.sh does this).
 
   # ---- Windows x64 zip --------------------------------------------------
   # The same console for Windows, built on GitHub instead of the station's
@@ -454,3 +457,21 @@ jobs:
           prerelease: false
           make_latest: true
           files: tentec-console-*-win64.zip
+          # Same notes as the AppImage job: whichever job publishes last
+          # writes the body, and the Windows download must be named in it
+          # (operator, 2026-11-08: "don't see anything for Windows").
+          body: |
+            Orion Control (Ten-Tec Orion / Omni VII console) — alpha. Two downloads below under **Assets**:
+
+            ## Windows (64-bit)
+            1. Install the SDRplay API/HW driver from https://www.sdrplay.com/api/ first (needed for the panadapter; not bundled — it is proprietary).
+            2. Download **`tentec-console-<version>-win64.zip`**, unzip the whole folder, run `tentec-console.exe` inside it.
+            3. First launch opens Setup → Station. Radio on a COM port; settings live per-user in the registry.
+
+            Not in the Windows build yet: WDSP receive audio, FreeDV RADE, Copy Assist (Linux only so far).
+
+            ## Linux
+            **Install (easiest):** run the one-liner from the README, or:
+            `bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/Orion-Control/master/install.sh)`
+
+            Or download **`tentec-console-<version>-x86_64.AppImage`**, `chmod +x` it and run it. The SDRplay API is NOT bundled — install.sh sets it up, or get it from sdrplay.com/api. The VOACAP propagation engine IS bundled (public-domain core). Radio control needs your user in the dialout/uucp group (install.sh does this).
