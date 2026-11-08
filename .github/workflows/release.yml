@@ -15,11 +15,16 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Run by hand (Actions → Release → Run workflow): the WINDOWS job alone,
+  # its zip kept as a run artifact instead of a release — the way to shake
+  # the Windows build out without cutting a tag (2026-11-08).
+  workflow_dispatch:
 permissions:
   contents: write
 
 jobs:
   appimage:
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -223,3 +228,210 @@ jobs:
             the map-backdrop propagation overlay works out of the box.
             Radio control needs your user in the dialout/uucp group (install.sh
             does this). First launch opens the Setup screen.
+
+  # ---- Windows x64 zip --------------------------------------------------
+  # The same console for Windows, built on GitHub instead of the station's
+  # Windows box (2026-11-08; packaging/make-windows-release.ps1 remains the
+  # by-hand route and this job mirrors its stage). MSVC + Qt 6.8 from the
+  # official installer (aqt), rnnoise 0.2 built as a static lib from the
+  # xiph release (its vcpkg port is !windows), voacapl via MSYS2 gfortran
+  # (docs/windows-build.md), SDRplay from the API HEADER alone: the Windows
+  # installer is not fetchable headlessly (403, never archived), so the
+  # header rides in from the Linux .run the AppImage job already uses and
+  # the import library is generated from the API's exported names with
+  # lib.exe — the exe delay-loads sdrplay_api.dll (CMakeLists), so nothing
+  # proprietary is linked in or shipped. Not yet built on Windows at all:
+  # WDSP receive audio, RADE, Copy Assist (CMake disables them there), so
+  # this zip is the Windows port as it stands, not a lesser Linux build.
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Qt 6.8 (MSVC 2022 x64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: 'qtserialport qtwebsockets qtshadertools qtmultimedia'
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build rnnoise 0.2 (static, MSVC)
+        run: |
+          curl.exe -fsSL -o rnnoise.tgz https://github.com/xiph/rnnoise/releases/download/v0.2/rnnoise-0.2.tar.gz
+          tar xzf rnnoise.tgz
+          # The ~25-line CMakeLists the station uses (docs/windows-build.md
+          # §5): the RNNOISE_SOURCES of Makefile.am, __SSE2__ defined by
+          # hand — MSVC never predefines it and vec.h then wants a header
+          # the release does not ship.
+          @"
+          cmake_minimum_required(VERSION 3.20)
+          project(rnnoise C)
+          add_library(rnnoise STATIC
+            src/denoise.c src/rnn.c src/pitch.c src/kiss_fft.c src/celt_lpc.c
+            src/nnet.c src/nnet_default.c src/parse_lpcnet_weights.c
+            src/rnnoise_data.c src/rnnoise_tables.c)
+          target_include_directories(rnnoise PUBLIC include PRIVATE src)
+          target_compile_definitions(rnnoise PRIVATE __SSE2__ RNNOISE_BUILD)
+          install(TARGETS rnnoise ARCHIVE DESTINATION lib)
+          install(FILES include/rnnoise.h DESTINATION include)
+          "@ | Set-Content rnnoise-0.2/CMakeLists.txt
+          cmake -S rnnoise-0.2 -B rnnoise-build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/rnnoise-install"
+          cmake --build rnnoise-build
+          cmake --install rnnoise-build
+          Get-ChildItem -Recurse rnnoise-install
+
+      - name: SDRplay API header + generated import library (build-time only)
+        run: |
+          $ver = "3.15.2"
+          # Same bytes the AppImage job uses (vendor first, Internet Archive
+          # fallback). A makeself .run is a shell header + tar.gz payload:
+          # Git Bash's sh and tar unpack it; only the headers are wanted.
+          $ok = $false
+          foreach ($u in @("https://www.sdrplay.com/software/SDRplay_RSP_API-Linux-$ver.run",
+                           "https://web.archive.org/web/20260805142854id_/https://www.sdrplay.com/software/SDRplay_RSP_API-Linux-$ver.run")) {
+            try { curl.exe -fSL $u -o sdr.run; if ($LASTEXITCODE -eq 0) { $ok = $true; break } } catch {}
+          }
+          if (-not $ok) { throw "SDRplay API archive not downloadable" }
+          $ws = $env:GITHUB_WORKSPACE -replace '\\','/'
+          & "C:\Program Files\Git\bin\bash.exe" -c "cd '$ws' && (sh sdr.run --noexec --target sdr_api || sh sdr.run --tar xf)"
+          New-Item -ItemType Directory -Force sdrplay/inc, sdrplay/x64 | Out-Null
+          Get-ChildItem -Recurse sdr_api -Filter *.h | Copy-Item -Destination sdrplay/inc
+          if (-not (Test-Path sdrplay/inc/sdrplay_api.h)) { throw "sdrplay_api.h not in the archive" }
+          # Every function the API exports (sdrplay_api.h), undecorated C
+          # names — the x64 DLL exports exactly these. lib.exe turns the list
+          # into the import library the linker wants; the DLL itself is the
+          # operator's own installed API at run time.
+          $names = Select-String -Path sdrplay/inc/*.h -Pattern 'sdrplay_api_[A-Za-z0-9_]+\s*\(' -AllMatches |
+            ForEach-Object { $_.Matches } | ForEach-Object { ($_.Value -replace '\s*\($','') } | Sort-Object -Unique
+          if ($names.Count -lt 10) { throw "only $($names.Count) API names found in the header" }
+          @("LIBRARY sdrplay_api", "EXPORTS") + $names | Set-Content sdrplay/x64/sdrplay_api.def
+          Get-Content sdrplay/x64/sdrplay_api.def
+          lib.exe /nologo /def:sdrplay/x64/sdrplay_api.def /machine:x64 /out:sdrplay/x64/sdrplay_api.lib
+          if ($LASTEXITCODE -ne 0) { throw "lib.exe failed" }
+
+      - name: Set up MSYS2 (gfortran for voacapl)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc-fortran mingw-w64-x86_64-gcc
+            autoconf automake libtool make git
+
+      - name: Build voacapl (bundled propagation engine)
+        shell: msys2 {0}
+        run: |
+          set -e
+          git clone --depth 1 https://github.com/jawatson/voacapl /tmp/voacapl
+          cd /tmp/voacapl && autoreconf -i
+          ./configure --prefix=/tmp/voa LDFLAGS="-static"
+          make -j"$(nproc)"
+          # docs/windows-build.md: upstream's install hooks write
+          # $(DESTDIR)/$(bindir) = "//tmp/voa/bin", a UNC host to MSYS.
+          sed -i 's|$(DESTDIR)/$(bindir)|$(DESTDIR)$(bindir)|g; s|$(DESTDIR)/$(datadir)|$(DESTDIR)$(datadir)|g' Makefile
+          make install
+          HOME=/tmp/voahome /tmp/voa/bin/makeitshfbc
+          DEST="$(cygpath -u "$GITHUB_WORKSPACE")/voacapl-win"
+          mkdir -p "$DEST"
+          cp /tmp/voa/bin/voacapl.exe "$DEST/"
+          cp -rL /tmp/voahome/itshfbc "$DEST/itshfbc"      # -L: never ship symlinks
+          N=$(ls "$DEST/itshfbc/coeffs" | wc -l)
+          echo "itshfbc coefficient files: $N"
+          test "$N" -ge 40 || { echo "expected 45 coefficient files"; exit 1; }
+          # Statically linked: no MinGW DLL may be needed beside it.
+          ldd "$DEST/voacapl.exe" || true
+
+      - name: Configure + build (RelWithDebInfo, SDRplay on)
+        run: |
+          cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$env:GITHUB_WORKSPACE/rnnoise-install" `
+            -DSDRPLAY_ROOT="$env:GITHUB_WORKSPACE/sdrplay" `
+            -DBUILD_SDRPLAY=ON 2>&1 | Tee-Object configure.log
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+          # The operator's rule: the published build is the console as it
+          # stands — fail loudly rather than ship a lesser one.
+          if (-not (Select-String -Quiet -Path configure.log -Pattern "SDRplay RSP source: ENABLED")) { throw "SDRplay source not enabled" }
+          if (-not (Select-String -Quiet -Path configure.log -Pattern "GPU panadapter: on")) { throw "GPU panadapter off" }
+          cmake --build build-win
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Stage zip (windeployqt, VOACAP, README; never sdrplay_api)
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $name = "tentec-console-$tag-win64"
+          $stage = Join-Path (Get-Location) $name
+          New-Item -ItemType Directory $stage | Out-Null
+          Copy-Item build-win/tentec-console.exe $stage
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release --no-translations --compiler-runtime (Join-Path $stage "tentec-console.exe")
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+          Copy-Item voacapl-win/voacapl.exe $stage
+          Copy-Item voacapl-win/itshfbc (Join-Path $stage "itshfbc") -Recurse
+          $coeffs = (Get-ChildItem (Join-Path $stage "itshfbc/coeffs") -File).Count
+          if ($coeffs -lt 40) { throw "itshfbc/coeffs has only $coeffs files - expected 45" }
+          $contraband = Get-ChildItem -Recurse $stage -Filter "sdrplay_api*"
+          if ($contraband) { throw "sdrplay_api files in the stage - never bundle them: $($contraband.Name)" }
+          @"
+          Orion Control $tag - Windows x64
+          ================================
+
+          GPL-3 open source: https://github.com/n8mus/Orion-Control
+          (this zip is the corresponding binary; source for this exact build is
+          the $tag tag)
+
+          SDRplay panadapter: this build uses the SDRplay API but does NOT bundle
+          it (not redistributable). Install the SDRplay API/HW driver from
+          https://www.sdrplay.com/api/ - the console finds the installed API by
+          itself. Without it the console runs radio-only (no panadapter).
+
+          VOACAP propagation overlay: voacapl.exe and the itshfbc data tree ARE
+          bundled (public-domain NTIA/ITS core, so redistribution is fine). Keep
+          them beside tentec-console.exe - unpack the whole zip, not just the exe.
+          The console copies the data tree into your AppData on first use, because
+          voacapl writes its working files into it. Turn the overlay on in
+          Setup > Display; it draws on the world-map backdrops.
+
+          Not in the Windows build yet: WDSP receive audio, FreeDV RADE and
+          Copy Assist (Linux only so far).
+
+          Run tentec-console.exe. Settings live per-user in the registry
+          (HKCU\Software\n8mus\tentec-console).
+          "@ | Set-Content (Join-Path $stage "README-WINDOWS.txt")
+          Compress-Archive -Path $stage -DestinationPath "$name.zip"
+          Get-Item "$name.zip" | Format-List Name, Length
+
+      - name: Smoke test (starts and exits under the self-test harness)
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $exe = "tentec-console-$tag-win64/tentec-console.exe"
+          # No SDR, a COM port that does not exist (the radio just stays
+          # down), the runner's own desktop as the display.
+          $env:TTC_SELFTEST = "4"; $env:TTC_NOSDR = "1"; $env:TTC_RADIO = "orion"
+          $env:TTC_RADIO_DEV = "COM99"; $env:TTC_RIGCTLD_PORT = "14599"
+          $p = Start-Process -FilePath $exe -PassThru -Wait -RedirectStandardError smoke.err -RedirectStandardOutput smoke.out
+          Get-Content smoke.err, smoke.out -ErrorAction SilentlyContinue | Select-Object -Last 40
+          if ($p.ExitCode -ne 0) { throw "self-test exit $($p.ExitCode)" }
+
+      - name: Keep the zip as a run artifact (manual runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tentec-console-win64
+          path: tentec-console-*-win64.zip
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: false
+          make_latest: true
+          files: tentec-console-*-win64.zip
