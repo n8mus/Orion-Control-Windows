@@ -41,12 +41,15 @@
 #include "ui/SkimViewWindow.h"
 #include "ui/VoiceEqDialog.h"
 #include "ui/WinKeyerPanel.h"
+// LIVE mic and the FreeDV window exist in every build (their slots are
+// wired unconditionally below); only the WDSP receive chain is optional.
+// Found by the Windows release job (no FFTW3 there), 2026-11-08.
+#include "audio/LiveVoice.h"
+#include "ui/FreeDvWindow.h"
 #ifdef HAVE_WDSP
 #include "sdr/SdrRx.h"
 #include "ui/SdrRxDialog.h"
 #include "audio/VoiceEq.h"
-#include "audio/LiveVoice.h"
-#include "ui/FreeDvWindow.h"
 #include <QDesktopServices>
 #ifdef HAVE_WHISPER
 #include "asr/AsrEngine.h"

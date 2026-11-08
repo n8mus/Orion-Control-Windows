@@ -57,9 +57,13 @@ option(BUILD_SDRPLAY "Build the SDRplay RSP IQ source (needs sdrplay_api)" OFF)
 # WDSP (Thetis's DSP library, via AetherSDR's vendored copy) for SDR receive
 # audio: on when FFTW3 is found (the double-precision libfftw3), else the
 # console builds without SDR RX. See third_party/wdsp/TTC-VENDOR.md.
+# -DBUILD_WDSP=OFF builds the no-FFTW3 console on purpose — the shape the
+# Windows release has today — so that configuration can be compiled and
+# checked on the desk too (2026-11-08).
+option(BUILD_WDSP "WDSP SDR receive audio (needs FFTW3; Linux only so far)" ON)
 find_path(FFTW3_INCLUDE_DIRS fftw3.h)
 find_library(FFTW3_LIBRARIES fftw3)
-if(FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES AND NOT WIN32)
+if(BUILD_WDSP AND FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES AND NOT WIN32)
   set(FFTW3_FOUND TRUE)
   set(FFTW3_LIBRARY_DIRS "")
   enable_language(C)
@@ -622,8 +626,9 @@ if(HAVE_WDSP)
   target_compile_definitions(tentec-console PRIVATE HAVE_WDSP)
   # Copy Assist: speech-to-text via the system whisper.cpp (Arch's
   # whisper-cpp; its ggml picks a CPU variant at runtime). Optional.
+  option(BUILD_WHISPER "Copy Assist via the system whisper.cpp" ON)
   find_package(PkgConfig QUIET)
-  if(PKG_CONFIG_FOUND)
+  if(PKG_CONFIG_FOUND AND BUILD_WHISPER)
     pkg_check_modules(WHISPER QUIET IMPORTED_TARGET whisper)
   endif()
   if(WHISPER_FOUND)

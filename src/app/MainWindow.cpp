@@ -1677,7 +1677,11 @@ MainWindow::MainWindow(QWidget* parent)
             return;
         }
         const bool got = sdrRxUserSetOn_(!(sdrRx_ && sdrRx_->running()));
-        if (sdrRxDlg_) sdrRxDlg_->setOn(got);
+#ifdef HAVE_WDSP
+        if (sdrRxDlg_) sdrRxDlg_->setOn(got);   // the dialog exists only with WDSP
+#else
+        (void)got;
+#endif
         refreshLights();
     });
     sdrMenu->setToolTipsVisible(true);   // hardware entries carry their limits
