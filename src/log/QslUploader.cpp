@@ -135,7 +135,10 @@ void QslUploader::repushQso(qint64 id) {
     for (const char* svc : {"eqsl", "qrz", "club", "hrdlog"})
         if (on(QLatin1String(svc))) pushHttp(q, QLatin1String(svc), true);
     if (on("lotw")) runTqslBatch();
-    mirrorToLoggers(q);
+    // Not to HRD: its command port can only add, so an edit there became
+    // a second entry. MainWindow corrects HRD's copy via
+    // HrdSync::updateEdited instead.
+    mirrorToLoggers(q, /*hrd=*/false);
 }
 
 void QslUploader::sweepSoon(int delayMs) {
@@ -332,7 +335,7 @@ void QslUploader::runTqslBatch() {
     });
 }
 
-void QslUploader::mirrorToLoggers(const Qso& q) {
+void QslUploader::mirrorToLoggers(const Qso& q, bool hrd) {
     // N1MM+: a raw ADIF record as one UDP datagram (WSJT-X convention).
     if (on("n1mm")) {
         const QString ip = cfg("n1mm/ip", "127.0.0.1");
@@ -342,7 +345,7 @@ void QslUploader::mirrorToLoggers(const Qso& q) {
         s.writeDatagram(adifFor(q, "n1mm").toUtf8(), QHostAddress(ip), port);
     }
     // HRD Logbook: its TCP command console ("db add {F=\"v\" ...}").
-    if (on("hrd")) {
+    if (hrd && on("hrd")) {
         const QString ip = cfg("hrd/ip", "127.0.0.1");
         const quint16 port =
             quint16(QSettings().value("up/hrd/port", 7826).toUInt());

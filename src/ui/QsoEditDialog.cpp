@@ -90,9 +90,9 @@ QsoEditDialog::QsoEditDialog(const Qso& q, const CtyLookup* cty,
     auto* note = new QLabel(
 #ifdef Q_OS_WIN
         "Saving re-sends the corrected QSO to every online log that is on,\n"
-        "and to HRD Logbook. QRZ replaces its copy; where the call, time,\n"
-        "band or mode changed, the old record stays on the other services\n"
-        "(and in HRD) until you remove it there.", this);
+        "and corrects HRD Logbook's entry in place. QRZ replaces its copy;\n"
+        "where the call, time, band or mode changed, the old record stays\n"
+        "on the other online services until you remove it there.", this);
 #else
         "Saving re-sends the corrected QSO to every online log that is on,\n"
         "and to cqrlog. QRZ replaces its copy; where the call, time, band\n"

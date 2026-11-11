@@ -24,7 +24,8 @@ struct Qso;
 //    QSettings log/hrdSyncKey); rows become ADIF and go through
 //    LogDb::importAdif, whose near-duplicate check makes our own echoes
 //    harmless and whose upload stamps keep HRD's history out of every
-//    online-log push. The file can be read while HRD is closed.
+//    online-log push. The file can be read while HRD is closed. (The one
+//    exception to read-only is updateEdited, below.)
 //
 //  console -> HRD: through HRD's own front door, its TCP command port
 //    (7826, "db add {COL=...}"), so HRD does its own lookups and award
@@ -51,6 +52,16 @@ public:
     static QByteArray dbAddCommand(const Qso& q);
     // Is HRD Logbook's command port answering? (short blocking probe)
     static bool hrdListening(int timeoutMs = 800);
+
+    // A contact edited in the console: correct HRD's copy instead of
+    // adding a second one. HRD's command port can only ADD (its whole db
+    // vocabulary is add/get/import/list/refresh), so this is the ONE place
+    // the console writes HRD's file (operator's request, 2026-11-11): find
+    // the original by call+band within 10 minutes of the BEFORE version,
+    // and only if exactly one row matches, rewrite that row; then ask HRD
+    // to refresh its view. No match: add it the normal way (if HRD is
+    // open). Several matches: touch nothing. Returns a status line.
+    static QString updateEdited(const Qso& before, const Qso& now);
 
 signals:
     void pulled(int added);

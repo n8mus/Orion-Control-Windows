@@ -27,15 +27,18 @@ namespace ttc {
 
 namespace {
 
-// Open HRD's Access file read-only on a private connection. The caller
-// owns the name and must removeDatabase() it after the handle is gone.
-bool openMdb(const QString& conn, QString* err) {
+// Open HRD's Access file on a private connection — read-only unless the
+// caller is updateEdited. The caller owns the name and must
+// removeDatabase() it after the handle is gone.
+bool openMdb(const QString& conn, QString* err, bool writable = false) {
     QSqlDatabase db = QSqlDatabase::addDatabase("QODBC", conn);
     db.setDatabaseName(
         QString("DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};"
-                "DBQ=%1;ReadOnly=1;")
-            .arg(QDir::toNativeSeparators(HrdSync::mdbPath())));
-    db.setConnectOptions("SQL_ATTR_ACCESS_MODE=SQL_MODE_READ_ONLY");
+                "DBQ=%1;%2")
+            .arg(QDir::toNativeSeparators(HrdSync::mdbPath()),
+                 writable ? QString() : QStringLiteral("ReadOnly=1;")));
+    if (!writable)
+        db.setConnectOptions("SQL_ATTR_ACCESS_MODE=SQL_MODE_READ_ONLY");
     if (db.open()) return true;
     if (err) *err = db.lastError().text();
     return false;
@@ -298,6 +301,105 @@ bool HrdSync::hrdListening(int timeoutMs) {
         s.disconnectFromHost();
     }
     return ok;
+}
+
+namespace {
+// Send one or more lines to HRD's command port and hang up (blocking,
+// short — the edit path is one contact at a time).
+bool sendHrdLines(const QByteArray& lines) {
+    QTcpSocket s;
+    s.connectToHost(hrdHost(), hrdPort());
+    if (!s.waitForConnected(800)) return false;
+    s.write(lines);
+    s.waitForBytesWritten(800);
+    s.waitForReadyRead(400);         // let HRD act before we hang up
+    s.disconnectFromHost();
+    return true;
+}
+} // namespace
+
+QString HrdSync::updateEdited(const Qso& before, const Qso& now) {
+    if (!QFileInfo::exists(mdbPath()))
+        return QStringLiteral("HRD: its log file isn't here — not updated");
+    QString msg;
+    const QString conn = "hrd-edit-" + QUuid::createUuid().toString();
+    {
+        QString err;
+        if (!openMdb(conn, &err, /*writable=*/true)) {
+            QSqlDatabase::removeDatabase(conn);
+            return "HRD: can't open its log to correct it — " + err;
+        }
+        QSqlDatabase db = QSqlDatabase::database(conn);
+        QSqlQuery q(db);
+        q.prepare("SELECT COL_PRIMARY_KEY, COL_TIME_ON FROM"
+                  " TABLE_HRD_CONTACTS_V01 WHERE UCASE(COL_CALL)=?"
+                  " AND UCASE(COL_BAND)=?");
+        q.addBindValue(before.call.trimmed().toUpper());
+        q.addBindValue(before.band.trimmed().toUpper());
+        QList<qint64> keys;
+        const qint64 was = before.tsUtc.toUTC().toSecsSinceEpoch();
+        if (q.exec())
+            while (q.next())
+                if (std::llabs(utcOf(q.value(1)).toSecsSinceEpoch() - was) <= 600)
+                    keys << q.value(0).toLongLong();
+        q.finish();
+        if (keys.size() > 1) {
+            msg = QString("HRD: %1 entries match %2 — left alone, correct it "
+                          "there").arg(keys.size()).arg(before.call);
+        } else if (keys.isEmpty()) {
+            msg = sendHrdLines(dbAddCommand(now))
+                ? QString("HRD: %1 wasn't there — added").arg(now.call)
+                : QString("HRD: %1 isn't there and HRD is closed").arg(now.call);
+        } else {
+            // Literals, not bound parameters: the Access ODBC driver
+            // refuses to bind a timestamp ("Optional feature not
+            // implemented", test-found). Strings are quote-doubled.
+            const auto lit = [](const QString& s) {
+                return "'" + QString(s).replace('\'', "''") + "'";
+            };
+            // HRD keeps UTC digits in a zone-less DATETIME.
+            const QDateTime ts = now.tsUtc.toUTC();
+            QString mode = now.mode.trimmed().toUpper(), sub;
+            if (mode == "FT4") { mode = "MFSK"; sub = "FT4"; }
+            // Key fields always; the rest only when the console has a
+            // value, so HRD's own lookups (name, QTH...) aren't blanked.
+            QStringList sets = {
+                "COL_CALL=" + lit(now.call.trimmed().toUpper()),
+                "COL_BAND=" + lit(now.band.trimmed().toUpper()),
+                "COL_MODE=" + lit(mode),
+                "COL_SUBMODE=" + lit(sub),
+                "COL_TIME_ON=#" + ts.toString("yyyy-MM-dd HH:mm:ss") + "#"};
+            const auto opt = [&](const char* col, const QString& v) {
+                if (v.trimmed().isEmpty()) return;
+                sets << QString("%1=%2").arg(QLatin1String(col), lit(v.trimmed()));
+            };
+            if (now.freqHz > 0)                   // Access INTEGER: Hz
+                sets << QString("COL_FREQ=%1").arg(now.freqHz);
+            opt("COL_RST_SENT", now.rstS);
+            opt("COL_RST_RCVD", now.rstR);
+            opt("COL_NAME", now.name);
+            opt("COL_QTH", now.qth);
+            opt("COL_GRIDSQUARE", now.grid.toUpper());
+            opt("COL_COMMENT", now.comment);
+            if (!now.pota.trimmed().isEmpty()) {
+                opt("COL_SIG", QStringLiteral("POTA"));
+                opt("COL_SIG_INFO", now.pota.toUpper());
+            }
+            QSqlQuery u(db);
+            if (u.exec(QString("UPDATE TABLE_HRD_CONTACTS_V01 SET %1"
+                               " WHERE COL_PRIMARY_KEY=%2")
+                           .arg(sets.join(", ")).arg(keys.first()))
+                && u.numRowsAffected() == 1) {
+                msg = QString("HRD: %1 corrected in place").arg(now.call);
+                sendHrdLines("ver\rdb refresh\rexit\r");   // HRD redraws
+            } else {
+                msg = "HRD: correction failed — " + u.lastError().text();
+            }
+        }
+    }
+    QSqlDatabase::removeDatabase(conn);
+    std::fprintf(stderr, "[hrd] %s\n", qPrintable(msg));
+    return msg;
 }
 
 void HrdSync::sendMissing(const QList<qint64>& ids) {

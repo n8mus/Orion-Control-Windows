@@ -109,6 +109,33 @@ Then:
   passband edge to cut the filter, drag the passband body to slide PBT,
   right-click to park VFO B, `Z` zero-beats, `X` flips CW sideband.
 
+## Ham Radio Deluxe Logbook
+
+If HRD Logbook is installed, the console keeps its own logbook and HRD's in
+step:
+
+- **Into HRD:** every contact you log in the console (LOG window, CW deck,
+  FT8/FT4 through WSJT-X, contest pushes) is sent to HRD Logbook as you log
+  it. Turn this on in **Logbook → Online logs… → HRD Logbook** (address
+  `127.0.0.1`, port `7826`). **HRD Logbook must be open to receive.** A
+  contact logged while HRD is closed doesn't reach it; nothing is queued.
+- **Catching HRD up:** the Logbook window's **→ HRD** button compares the
+  two logs, shows how many contacts HRD is missing, and asks before sending.
+  HRD takes these one at a time (about ten a minute). For hundreds, use
+  **Export ADIF** in the console and HRD's own **File → Import → ADIF**.
+- **From HRD:** contacts that land in HRD first (typed there, or from
+  another program) are read into the console's logbook automatically every
+  couple of minutes, whether HRD is open or not. The console reads HRD's
+  log file and does not write to it, except as in the next point.
+- **Edits:** correcting a contact in the console's Logbook corrects HRD's
+  entry in place, rather than adding a second one. The entry is found by
+  call, band and time. If HRD holds more than one match, it's left for you to
+  fix in HRD.
+
+HRD's log file is found at its default place,
+`%APPDATA%\HRDLLC\HRD Logbook\HRD My Logbook.mdb`. The Microsoft Access
+database driver HRD installs is what reads it.
+
 ## Reporting problems
 
 When the console is started from its icon it writes a session log to
@@ -123,8 +150,8 @@ SDR, or both were connected. Screenshots welcome.
   band-plan shading).
 - Orion-only until the Omni VII path is tested again.
 - One console instance at a time (exclusive serial port, single-tuner SDR).
-- Features that talk to Linux-only programs (cqrlog, Not1MM) are present in
-  the menus but have nothing to talk to on Windows.
+- The Linux build's cqrlog and Not1MM links don't apply on Windows; HRD
+  Logbook takes cqrlog's place (above).
 - **Winlink through Pat + ARDOP** needs `ardopcf.exe` installed separately
   and has not been flown on Windows yet.
 - Copy Assist wants a CPU with AVX2 to keep up in real time.

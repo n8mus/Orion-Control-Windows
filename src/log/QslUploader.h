@@ -81,7 +81,7 @@ private:
     void sweep();                      // retry everything pending
     void pushHttp(const Qso& q, const QString& svc, bool replace = false);
     void runTqslBatch();
-    void mirrorToLoggers(const Qso& q);
+    void mirrorToLoggers(const Qso& q, bool hrd = true);
     QString adifFor(const Qso& q, const QString& svc) const;
 
     LogDb* db_;

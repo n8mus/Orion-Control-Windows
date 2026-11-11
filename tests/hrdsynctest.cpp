@@ -7,7 +7,11 @@
 #include <QEventLoop>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QDir>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTimeZone>
+#include <QUuid>
 #include <QTimer>
 
 #include <cstdio>
@@ -120,6 +124,66 @@ int main(int argc, char** argv) {
         loop3.exec();
         CHECK(err.isEmpty(), "compare ran (%s)", qPrintable(err.isEmpty() ? "ok" : err));
         CHECK(missing.size() == 3, "HRD lacks only the 3 test contacts (got %d)", int(missing.size()));
+
+        // ---- an edit corrects HRD's copy in place (on the COPY) ------
+        // The command port is pointed at nothing, so neither the
+        // not-found add nor the refresh can reach a real HRD.
+        QSettings().setValue("up/hrd/port", 9);
+        Qso orig;
+        for (const Qso& x : db.allQsos())
+            if (x.call == "Z335MK") orig = x;
+        CHECK(orig.id >= 0, "found Z335MK (the newest HRD contact) in the pulled log");
+        Qso now = orig;
+        now.rstR = "579";
+        now.comment = "edited by hrdsynctest";
+        const auto hrdRows = [&](const QString& call) {
+            QList<QStringList> rows;
+            const QString c = "t-" + QUuid::createUuid().toString();
+            {
+                QSqlDatabase d = QSqlDatabase::addDatabase("QODBC", c);
+                d.setDatabaseName("DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ="
+                                  + QDir::toNativeSeparators(mdb) + ";ReadOnly=1;");
+                if (d.open()) {
+                    QSqlQuery q(d);
+                    q.exec("SELECT COL_RST_RCVD, COL_COMMENT, COL_NAME FROM"
+                           " TABLE_HRD_CONTACTS_V01 WHERE COL_CALL='" + call + "'");
+                    while (q.next())
+                        rows << QStringList{q.value(0).toString(), q.value(1).toString(),
+                                            q.value(2).toString()};
+                }
+            }
+            QSqlDatabase::removeDatabase(c);
+            return rows;
+        };
+        const auto rowsBefore = hrdRows("Z335MK");
+        const QString msg = HrdSync::updateEdited(orig, now);
+        const auto rowsAfter = hrdRows("Z335MK");
+        CHECK(msg.contains("corrected in place"), "edit reported: %s", qPrintable(msg));
+        CHECK(rowsAfter.size() == rowsBefore.size() && rowsAfter.size() == 1,
+              "still exactly one Z335MK in HRD (%d -> %d)",
+              int(rowsBefore.size()), int(rowsAfter.size()));
+        CHECK(!rowsAfter.isEmpty() && rowsAfter[0][0] == "579"
+                  && rowsAfter[0][1] == "edited by hrdsynctest",
+              "HRD's row now carries the edit");
+        CHECK(!rowsAfter.isEmpty() && rowsAfter[0][2] == rowsBefore.value(0).value(2),
+              "fields the console left alone keep HRD's value (name)");
+        {   // Time didn't move: the compare still finds Z335MK in HRD.
+            QList<qint64> again; QString e2 = "timeout";
+            QEventLoop l4;
+            QObject::connect(&sync2, &HrdSync::missingReady, &l4,
+                             [&](const QList<qint64>& ids, const QString& e) {
+                again = ids; e2 = e; l4.quit();
+            });
+            QTimer::singleShot(120000, &l4, &QEventLoop::quit);
+            sync2.checkMissing();
+            l4.exec();
+            CHECK(e2.isEmpty() && !again.contains(orig.id),
+                  "edited row kept its UTC time (compare still matches it)");
+        }
+        Qso ghost = orig;
+        ghost.call = "N0NE";
+        const QString m2 = HrdSync::updateEdited(ghost, ghost);
+        CHECK(m2.contains("HRD is closed"), "no match + no HRD: nothing written (%s)", qPrintable(m2));
     }
 
     QSettings().clear();

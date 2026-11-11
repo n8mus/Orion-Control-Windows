@@ -317,18 +317,27 @@ void MainWindow::openLogbookWindow() {
                     if (now.id < 0) return;
                     if (uploader_) uploader_->repushQso(id);
                     mirrorToCqrlog(now);
+                    QString hrdNote;
+#ifdef Q_OS_WIN
+                    // HRD: correct its copy in place (repush skips HRD).
+                    if (QSettings().value("up/hrd/enabled", false).toBool())
+                        hrdNote = "  ·  " + HrdSync::updateEdited(before, now);
+#endif
                     const bool keyChanged = before.call != now.call
                         || before.band != now.band || before.mode != now.mode
                         || before.tsUtc != now.tsUtc;
                     statusBar()->showMessage(
-                        keyChanged
+                        (keyChanged
                             ? QString("%1 corrected and re-sent — the old %2 "
-                                      "record stays on eQSL / LoTW / "
-                                      TTC_STATION_LOG_SHORT " "
-                                      "until removed there")
+                                      "record stays on eQSL / LoTW"
+#ifndef Q_OS_WIN
+                                      " / " TTC_STATION_LOG_SHORT
+#endif
+                                      " until removed there")
                                   .arg(now.call, before.call)
-                            : QString("%1 corrected and re-sent").arg(now.call),
-                        10000);
+                            : QString("%1 corrected and re-sent").arg(now.call))
+                            + hrdNote,
+                        12000);
                 });
         // "→ cqrlog": compare, confirm with the count, then send —
         // cqrlog is the award log, nothing goes over without a yes.
