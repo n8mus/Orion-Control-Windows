@@ -52,6 +52,17 @@ int main(int argc, char** argv) {
     for (const Qso& q : db.allQsos())
         if (q.call == "K2CD") ssb = q.mode == "SSB";
     CHECK(ssb, "USB contact stored as SSB");
+    {   // LoTW reports HRD-uploaded phone as USB: must confirm the SSB row.
+        AdifRecord r;
+        r.insert("CALL", "K2CD"); r.insert("BAND", "20m"); r.insert("MODE", "USB");
+        r.insert("QSO_DATE", "20261101"); r.insert("QSL_RCVD", "Y");
+        CHECK(db.applyLotwConfirmations({r}) == 1, "LoTW USB confirmation lands on the SSB contact");
+    }
+    QSettings().setValue("up/lotw/qslSince", "2026-11-10");
+    importText(db, "<CALL:4>K3EF <QSO_DATE:8>20260601 <TIME_ON:4>1200 "
+                   "<BAND:3>40M <MODE:2>CW <EOR>");
+    CHECK(!QSettings().contains("up/lotw/qslSince"),
+          "an import that adds contacts makes the next LoTW download fetch everything");
 
     // ---- db add command text -----------------------------------------
     Qso q;
@@ -108,7 +119,7 @@ int main(int argc, char** argv) {
         sync2.checkMissing();
         loop3.exec();
         CHECK(err.isEmpty(), "compare ran (%s)", qPrintable(err.isEmpty() ? "ok" : err));
-        CHECK(missing.size() == 2, "HRD lacks only the 2 test contacts (got %d)", int(missing.size()));
+        CHECK(missing.size() == 3, "HRD lacks only the 3 test contacts (got %d)", int(missing.size()));
     }
 
     QSettings().clear();

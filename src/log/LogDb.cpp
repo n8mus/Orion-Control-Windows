@@ -331,6 +331,9 @@ int LogDb::applyLotwConfirmations(const QList<AdifRecord>& recs) {
         QString mode = r.value("MODE").toUpper();
         if (mode == "MFSK" && !r.value("SUBMODE").isEmpty())
             mode = r.value("SUBMODE").toUpper();
+        // Phone uploaded by HRD comes back from LoTW as USB/LSB; this log
+        // keeps SSB (see fromAdif).
+        if (mode == "USB" || mode == "LSB") mode = QStringLiteral("SSB");
         const QString band = r.value("BAND").toUpper();
         const QDate day =
             QDate::fromString(r.value("QSO_DATE"), "yyyyMMdd");
@@ -407,7 +410,15 @@ int LogDb::importAdif(QIODevice& in, const CtyLookup* cty, QString* err) {
         if (ins.exec()) ++added;
     }
     db.commit();
-    if (added > 0) emit changed();
+    if (added > 0) {
+        // The LoTW QSL download only asks for confirmations received since
+        // its last run. Contacts that just arrived by import were mostly
+        // confirmed long before that, so they'd never get their CFMD
+        // (live-found 2026-11-11: June-November all blank after a QRZ
+        // import). Make the next download fetch the whole history.
+        QSettings().remove("up/lotw/qslSince");
+        emit changed();
+    }
     return added;
 }
 
