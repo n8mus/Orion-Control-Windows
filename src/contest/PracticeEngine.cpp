@@ -7,6 +7,11 @@
 #include "contest/ContestEngine.h"   // nearMissCall (pure functions only)
 #include "util/CtyLookup.h"
 
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+#include "audio/AudioIo.h"
+#define TTC_PRACTICE_QTMM 1
+#endif
+
 namespace ttc {
 
 namespace {
@@ -145,6 +150,9 @@ void PracticeEngine::start(const ContestDef* def, const CtyLookup* cty,
 void PracticeEngine::stop() {
     active_ = false;
     tick_.stop();
+#ifdef TTC_PRACTICE_QTMM
+    if (sink_) { sink_->stop(); sink_->deleteLater(); sink_ = nullptr; }
+#endif
     if (player_) {
         player_->closeWriteChannel();
         player_->waitForFinished(300);
@@ -520,7 +528,7 @@ void PracticeEngine::pump(int ms) {
     if (!active_ || ms <= 0) return;
     const qint64 target = pos_ + qint64(ms) * (kRate / 1000);
 
-    if (audioEnabled_ && player_) {
+    if (audioEnabled_ && (player_ || sink_)) {
         const int n = int(target - pos_);
         QByteArray buf(n * 2, 0);
         auto* out = reinterpret_cast<qint16*>(buf.data());
@@ -598,6 +606,16 @@ QVector<qint16> PracticeEngine::synth(const QString& text, int wpm,
 }
 
 void PracticeEngine::openAudio() {
+#ifdef TTC_PRACTICE_QTMM
+    // Windows: the PC's default output through Qt Multimedia.
+    sink_ = new PcmSink(this);
+    if (!sink_->start(QString(), kRate, 120)) {
+        sink_->deleteLater();
+        sink_ = nullptr;
+        emit status("no audio output device — silent run");
+    }
+    return;
+#endif
     // Same stack as RipAudio: pulse layer first (pacat -> pipewire-pulse;
     // the native pw-play path can wedge silently after a pipewire
     // restart), pw-play fallback. Raw headerless s16 mono.
@@ -618,6 +636,9 @@ void PracticeEngine::openAudio() {
 }
 
 void PracticeEngine::writeAudio(const char* data, qint64 len) {
+#ifdef TTC_PRACTICE_QTMM
+    if (sink_) sink_->write(data, len);
+#endif
     if (player_) player_->write(data, len);
 }
 

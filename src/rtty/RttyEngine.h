@@ -12,6 +12,8 @@ class QTimer;
 
 namespace ttc {
 
+class PcmSink;
+
 // The console's RTTY modem, one object the main window owns (2026-11-07):
 //
 //   receive  — RttyDemod on the RADIO's audio (the SignaLink capture the
@@ -108,6 +110,7 @@ private:
     qint64 lastHeardSecs_ = 0;
 
     QProcess* play_ = nullptr;
+    PcmSink* sink_ = nullptr;                 // Windows: in place of pacat
     QTimer* pacer_ = nullptr;
     QElapsedTimer clock_;
     qint64 written_ = 0;                      // samples handed to pacat

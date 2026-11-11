@@ -1078,9 +1078,14 @@ static void testBackup(const QString& dir) {
     c.title = "backup test";
     const qint64 id = db.createContest(c);
     CHECK(db.backupTo(dir + "/copy.sqlite"), "backup: VACUUM INTO writes a copy");
-    ContestDb copy;
-    CHECK(copy.open(dir + "/copy.sqlite") && copy.contest(id).title == "backup test",
-          "backup: the copy opens with the contest in it");
+    {
+        // Scoped: Windows will not replace a file something still holds
+        // open (Linux unlinks it regardless), and the console itself never
+        // keeps its backup open.
+        ContestDb copy;
+        CHECK(copy.open(dir + "/copy.sqlite") && copy.contest(id).title == "backup test",
+              "backup: the copy opens with the contest in it");
+    }
     CHECK(db.backupTo(dir + "/copy.sqlite"), "backup: overwrites its own old copy");
 }
 

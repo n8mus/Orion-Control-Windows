@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "asr/AsrEngine.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -60,8 +61,18 @@ AsrEngine::AsrEngine(QObject* parent) : QObject(parent) {
 AsrEngine::~AsrEngine() { stop(); }
 
 QString AsrEngine::defaultModelPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
-         + "/n8mus/tentec-console/models/ggml-base.en.bin";
+    const QString own = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+                      + "/n8mus/tentec-console/models/ggml-base.en.bin";
+#ifdef Q_OS_WIN
+    // The Windows zip carries the model beside the exe (models/), so Copy
+    // Assist works unpacked; the operator's own copy above still wins.
+    if (!QFileInfo::exists(own)) {
+        const QString bundled = QCoreApplication::applicationDirPath()
+                              + "/models/ggml-base.en.bin";
+        if (QFileInfo::exists(bundled)) return bundled;
+    }
+#endif
+    return own;
 }
 
 bool AsrEngine::start(const QString& modelPath, int threads, QString* err) {

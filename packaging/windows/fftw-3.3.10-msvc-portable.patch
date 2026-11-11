@@ -1,0 +1,48 @@
+--- CMakeLists.txt.orig	2026-11-11 09:18:05.869453700 -0500
++++ CMakeLists.txt	2026-11-11 09:26:55.313131100 -0500
+@@ -279,7 +279,9 @@
+   list (APPEND SOURCEFILES ${fftw_dft_simd_avx2_SOURCE} ${fftw_rdft_simd_avx2_SOURCE})
+ endif ()
+ 
+-set (FFTW_VERSION 3.3.9)
++# LOCAL PATCH: the 3.3.10 tarball's CMakeLists still said 3.3.9 (upstream slip;
++# configure.ac says 3.3.10), which mislabels fftw_version and the wisdom header.
++set (FFTW_VERSION 3.3.10)
+ 
+ set (PREC_SUFFIX)
+ if (ENABLE_FLOAT)
+@@ -313,6 +315,12 @@
+ if (MSVC AND NOT (CMAKE_C_COMPILER_ID STREQUAL "Intel"))
+   target_compile_definitions (${fftw3_lib} PRIVATE /bigobj)
+ endif ()
++# LOCAL PATCH (portable binary): upstream applied the SIMD flags to the WHOLE
++# target, so with MSVC /arch:AVX2 the planner, API and scalar codelets were
++# emitted VEX-encoded and the DLL died with an illegal instruction on any CPU
++# without AVX/AVX2. Mirror the autotools build instead (AM_CFLAGS per codelet
++# directory): each instruction-set flag goes only on that set's codelets, which
++# FFTW selects at run time by CPUID (simd-support/*.c, compiled baseline).
+ if (HAVE_SSE)
+   target_compile_options (${fftw3_lib} PRIVATE ${SSE_FLAG})
+ endif ()
+@@ -320,13 +328,16 @@
+   target_compile_options (${fftw3_lib} PRIVATE ${SSE2_FLAG})
+ endif ()
+ if (HAVE_AVX)
+-  target_compile_options (${fftw3_lib} PRIVATE ${AVX_FLAG})
++  set_source_files_properties (${fftw_dft_simd_avx_SOURCE} ${fftw_rdft_simd_avx_SOURCE}
++                               PROPERTIES COMPILE_OPTIONS "${AVX_FLAG}")
+ endif ()
+ if (HAVE_AVX2)
+-  target_compile_options (${fftw3_lib} PRIVATE ${AVX2_FLAG})
+-endif ()
+-if (HAVE_FMA)
+-  target_compile_options (${fftw3_lib} PRIVATE ${FMA_FLAG})
++  set (FFTW_AVX2_SOURCE_FLAGS ${AVX2_FLAG})
++  if (HAVE_FMA)
++    list (APPEND FFTW_AVX2_SOURCE_FLAGS ${FMA_FLAG})
++  endif ()
++  set_source_files_properties (${fftw_dft_simd_avx2_SOURCE} ${fftw_rdft_simd_avx2_SOURCE}
++                               PROPERTIES COMPILE_OPTIONS "${FFTW_AVX2_SOURCE_FLAGS}")
+ endif ()
+ if (HAVE_LIBM)
+   target_link_libraries (${fftw3_lib} m)

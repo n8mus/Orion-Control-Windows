@@ -100,6 +100,7 @@ class SpotTableWindow;
 class TuneEntryDialog;
 class VoiceEqDialog;
 class LiveVoice;
+class PcmSink;
 class SdrRx;
 class SdrRxDialog;
 class AsrEngine;
@@ -468,6 +469,7 @@ private:
     int  vkPreviewAfter_ = -1;                 // Listen waiting on the render
     // SignaLink pickup finder (EQ window): a rising tone into the SignaLink.
     QPointer<QProcess> calProc_;
+    QPointer<PcmSink> calSink_;        // Windows: the same tone, no pacat
     QElapsedTimer calClock_;
     void stopPickupCal(const QString& text);
     void setLoOff(int off);                   // pan + CW decoder follow

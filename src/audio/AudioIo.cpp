@@ -8,6 +8,8 @@
 #include <QAudioSource>
 #include <QIODevice>
 #include <QMediaDevices>
+#include <QThread>
+#include <QTimer>
 
 #include <algorithm>
 #include <cstring>
@@ -240,7 +242,8 @@ QStringList AudioPlayback::outputDescriptions() {
     return out;
 }
 
-bool AudioPlayback::start(const QString& deviceMatch, int rateHz) {
+bool AudioPlayback::start(const QString& deviceMatch, int rateHz, int bufferMs,
+                          bool nativeFormat) {
     stop();
     const QAudioDevice dev = matchOutput(deviceMatch);
     if (dev.isNull()) {
@@ -248,7 +251,19 @@ bool AudioPlayback::start(const QString& deviceMatch, int rateHz) {
         return false;
     }
     QAudioFormat fmt;
-    if (!pickFormat(dev, rateHz, fmt)) {
+    bool haveFmt = false;
+    if (nativeFormat) {
+        // The device's own format, when it is one write() can fill (Int16
+        // or Float, any channel count, any rate).
+        const QAudioFormat own = dev.preferredFormat();
+        if (own.isValid()
+            && (own.sampleFormat() == QAudioFormat::Int16
+                || own.sampleFormat() == QAudioFormat::Float)) {
+            fmt = own;
+            haveFmt = true;
+        }
+    }
+    if (!haveFmt && !pickFormat(dev, rateHz, fmt)) {
         emit errorText(QStringLiteral("%1: no usable playback format")
                            .arg(dev.description()));
         return false;
@@ -261,10 +276,11 @@ bool AudioPlayback::start(const QString& deviceMatch, int rateHz) {
     carry_.clear();
 
     sink_ = new QAudioSink(dev, fmt, this);
-    // Generous buffer: playback rides network/capture jitter (RIP packets,
-    // DVR reads); ~300 ms absorbs it, and latency here is not operator-
-    // facing the way the decode path is.
-    sink_->setBufferSize(fmt.bytesForDuration(300000));
+    // Generous buffer by default: playback rides network/capture jitter
+    // (RIP packets, DVR reads); ~300 ms absorbs it, and latency there is
+    // not operator-facing. Live streams pass their own, smaller figure.
+    sink_->setBufferSize(
+        fmt.bytesForDuration(qint64(std::clamp(bufferMs, 10, 2000)) * 1000));
     io_ = sink_->start();
     if (!io_) {
         emit errorText(QStringLiteral("%1: playback failed to start")
@@ -291,6 +307,17 @@ qint64 AudioPlayback::bytesFree() const {
     const double devToSrc = double(srcRate_) / double(dstRate_);
     const qint64 devFrames =
         sink_->bytesFree() / (devBytesPerSample * dstChannels_);
+    return qint64(double(devFrames) * devToSrc) * 2;
+}
+
+qint64 AudioPlayback::bytesQueued() const {
+    if (!sink_) return 0;
+    const int devBytesPerSample =
+        dstSampleFmt_ == int(QAudioFormat::Float) ? 4 : 2;
+    const double devToSrc = double(srcRate_) / double(dstRate_);
+    const qint64 queued =
+        std::max<qint64>(0, sink_->bufferSize() - sink_->bytesFree());
+    const qint64 devFrames = queued / (devBytesPerSample * dstChannels_);
     return qint64(double(devFrames) * devToSrc) * 2;
 }
 
@@ -337,6 +364,120 @@ void AudioPlayback::write(const QByteArray& s16leMono) {
         return;                            // exotic sink format: stay silent
     }
     io_->write(out);
+}
+
+// ------------------------------------------------------------------ PcmSink
+
+PcmSink::PcmSink(QObject* parent) : QObject(parent), ctx_(new QObject) {}
+
+PcmSink::~PcmSink() {
+    stop();
+    if (thread_) {
+        ctx_->deleteLater();               // runs as the thread winds down
+        thread_->quit();
+        thread_->wait();
+        delete thread_;
+    } else {
+        delete ctx_;
+    }
+}
+
+void PcmSink::useOwnThread() {
+    if (thread_ || running_.load()) return;
+    thread_ = new QThread;
+    thread_->setObjectName(QStringLiteral("ttc-pcm-sink"));
+    ctx_->moveToThread(thread_);
+    // No COM set-up here: Qt Multimedia's Windows backend initializes COM
+    // itself on whichever thread makes the sink, and doing it first in a
+    // different mode only earns "Cannot change thread mode after it is set".
+    thread_->start(QThread::TimeCriticalPriority);
+}
+
+template <typename F> void PcmSink::onDeviceThread(F&& f) {
+    if (thread_ && QThread::currentThread() != thread_)
+        QMetaObject::invokeMethod(ctx_, std::forward<F>(f),
+                                  Qt::BlockingQueuedConnection);
+    else
+        f();
+}
+
+bool PcmSink::start(const QString& deviceMatch, int rateHz, int deviceBufferMs,
+                    int queueCapMs) {
+    stop();
+    {
+        QMutexLocker lk(&mux_);
+        fifo_.clear();
+        capBytes_ = qint64(rateHz) * 2 * std::max(queueCapMs, 100) / 1000;
+    }
+    minChunk_ = (qint64(rateHz) * 2 * 5 / 1000) & ~qint64(1);   // 5 ms
+    fifoBytes_.store(0);
+    devBytes_.store(0);
+    bool ok = false;
+    onDeviceThread([&] {
+        pb_ = new AudioPlayback(ctx_);
+        connect(pb_, &AudioPlayback::errorText, this, &PcmSink::errorText);
+        ok = pb_->start(deviceMatch, rateHz, deviceBufferMs, true);
+        if (!ok) {
+            delete pb_;
+            pb_ = nullptr;
+            return;
+        }
+        timer_ = new QTimer(ctx_);
+        timer_->setTimerType(Qt::PreciseTimer);
+        timer_->setInterval(5);
+        connect(timer_, &QTimer::timeout, ctx_, [this] { pump(); });
+        timer_->start();
+    });
+    running_.store(ok);
+    return ok;
+}
+
+void PcmSink::stop() {
+    const bool was = running_.exchange(false);
+    if (!was && !pb_) return;
+    onDeviceThread([this] {
+        delete timer_;
+        timer_ = nullptr;
+        if (pb_) {
+            pb_->stop();
+            delete pb_;
+            pb_ = nullptr;
+        }
+    });
+    QMutexLocker lk(&mux_);
+    fifo_.clear();
+    fifoBytes_.store(0);
+    devBytes_.store(0);
+}
+
+void PcmSink::write(const char* s16leMono, qint64 bytes) {
+    if (bytes <= 0 || !running_.load()) return;
+    QMutexLocker lk(&mux_);
+    if (fifo_.size() + bytes > capBytes_) return;      // device stalled: drop
+    fifo_.append(s16leMono, qsizetype(bytes));
+    fifoBytes_.store(fifo_.size());
+}
+
+qint64 PcmSink::backlogBytes() const {
+    return fifoBytes_.load() + devBytes_.load();
+}
+
+void PcmSink::pump() {
+    if (!pb_) return;
+    const qint64 room = pb_->bytesFree() & ~qint64(1);
+    QByteArray chunk;
+    if (room >= minChunk_) {                           // never slivers
+        QMutexLocker lk(&mux_);
+        const qsizetype take =
+            qsizetype(std::min<qint64>(room, fifo_.size())) & ~qsizetype(1);
+        if (take > 0) {
+            chunk = fifo_.left(take);
+            fifo_.remove(0, take);
+            fifoBytes_.store(fifo_.size());
+        }
+    }
+    if (!chunk.isEmpty()) pb_->write(chunk);
+    devBytes_.store(pb_->bytesQueued());
 }
 
 } // namespace ttc

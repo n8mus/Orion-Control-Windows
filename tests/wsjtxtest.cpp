@@ -52,6 +52,11 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setOrganizationName("n8mus");
     QCoreApplication::setApplicationName("wsjtxtest");
+#ifdef Q_OS_WIN
+    // QSettings is the registry on Windows: XDG_CONFIG_HOME does not move
+    // it, so the last run's state is still there. Start empty.
+    QSettings().clear();
+#endif
     const quint16 port = 14237;
     QSettings().setValue("log/wsjtxAddr", "127.0.0.1");
     QSettings().setValue("log/wsjtxPort", port);

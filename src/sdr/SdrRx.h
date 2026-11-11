@@ -18,7 +18,7 @@
 #include "radio/RadioController.h"   // Mode
 
 struct DenoiseState;
-namespace ttc { class RadeRx; }
+namespace ttc { class RadeRx; class PcmSink; }
 
 namespace ttc {
 
@@ -108,6 +108,12 @@ public:
     SdrRx& operator=(const SdrRx&) = delete;
 
     void setInputRate(double rate);                // before start (replays)
+    // WDSP plans its FFTs with FFTW_PATIENT, and from scratch that is many
+    // seconds of silence every time the receiver is switched on (14 s on
+    // the Windows station, 2026-11-11). FFTW can remember what it learned:
+    // with a file here the plans are read back at start and saved once the
+    // channel is open and again at stop. Set before start(); "" = off.
+    void setWisdomFile(const std::string& path) { wisdomFile_ = path; }
     bool start(const std::string& sinkNode);       // "" = default output
     // Tests: every output block also goes here; startTapOnly() runs the
     // chain with no player at all (nothing reaches the speakers).
@@ -162,6 +168,8 @@ private:
     void closePlayer();
     void writeAudio(const float* x, int n);
 
+    std::string wisdomFile_;                       // FFTW plan cache
+
     // ---- IQ side (IQ worker thread) ----
     double inputRate_ = 1e6;
     int decim_ = 8;
@@ -205,6 +213,9 @@ private:
     // ---- output pipe (pacat) ----
     int pipeW_ = -1, pipeProbe_ = -1;
     int playerPid_ = -1;
+    // Windows: the same stream into a Qt Multimedia sink on its own
+    // thread (audio/AudioIo PcmSink) - no pacat there.
+    PcmSink* sink_ = nullptr;
     std::atomic<float> outPeakDb_{-120.f}, inPeakDb_{-120.f}, modemPeakDb_{-120.f};
     std::atomic<int> dropped_{0};
     std::function<void(const float*, int)> tap_;

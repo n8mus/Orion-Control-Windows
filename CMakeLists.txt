@@ -12,6 +12,11 @@ if(MSVC)
   # NOMINMAX: windows.h's min/max macros collide with std::min/std::max.
   add_compile_options(/utf-8)
   add_compile_definitions(_USE_MATH_DEFINES NOMINMAX)
+  # Linux gives every thread an 8 MB stack; MSVC's default is 1 MB, and code
+  # written against the former can overrun the latter (dsstest's renderer
+  # objects on the stack did, 2026-11-11). Same reserve here, for the main
+  # thread and every thread created without an explicit size.
+  add_link_options(/STACK:8388608)
 endif()
 if(NOT CMAKE_BUILD_TYPE)
   # RelWithDebInfo, NOT Debug: the DSP chain (16k FFT, 24-channel skimmer
@@ -60,10 +65,16 @@ option(BUILD_SDRPLAY "Build the SDRplay RSP IQ source (needs sdrplay_api)" OFF)
 # -DBUILD_WDSP=OFF builds the no-FFTW3 console on purpose — the shape the
 # Windows release has today — so that configuration can be compiled and
 # checked on the desk too (2026-11-08).
-option(BUILD_WDSP "WDSP SDR receive audio (needs FFTW3; Linux only so far)" ON)
+#
+# Windows (2026-11-11): all three build there too. FFTW3 is a double-
+# precision fftw3.dll built with MSVC, on CMAKE_PREFIX_PATH; RADE comes
+# prebuilt (-DRADE_WIN_ROOT=..., docs/windows-build.md) because Opus's
+# autotools build and rade_c's C99 do not go through cl.exe; whisper.cpp is
+# found by its CMake package instead of pkg-config.
+option(BUILD_WDSP "WDSP SDR receive audio (needs FFTW3)" ON)
 find_path(FFTW3_INCLUDE_DIRS fftw3.h)
 find_library(FFTW3_LIBRARIES fftw3)
-if(BUILD_WDSP AND FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES AND NOT WIN32)
+if(BUILD_WDSP AND FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES)
   set(FFTW3_FOUND TRUE)
   set(FFTW3_LIBRARY_DIRS "")
   enable_language(C)
@@ -72,7 +83,17 @@ if(BUILD_WDSP AND FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES AND NOT WIN32)
   # FreeDV RADE digital voice (SDR receive): fetches rade_c + Opus (see
   # third_party/rade/TTC-VENDOR.md); needs autotools for Opus's build.
   option(BUILD_RADE "FreeDV RADE digital voice on the SDR receiver" ON)
-  if(BUILD_RADE)
+  if(BUILD_RADE AND WIN32)
+    set(RADE_WIN_ROOT "" CACHE PATH
+        "Prebuilt RADE for Windows (include/ lib/ bin/ + the rade_c source root)")
+    if(RADE_WIN_ROOT AND EXISTS "${RADE_WIN_ROOT}/include/rade/rade_api.h")
+      include(third_party/rade/windows-prebuilt.cmake)
+      set(HAVE_RADE TRUE)
+      message(STATUS "RADE: prebuilt from ${RADE_WIN_ROOT}")
+    else()
+      message(STATUS "RADE: off (pass -DRADE_WIN_ROOT=<prebuilt>, docs/windows-build.md)")
+    endif()
+  elseif(BUILD_RADE)
     add_subdirectory(third_party/rade)
     set(HAVE_RADE TRUE)
   endif()
@@ -332,6 +353,8 @@ if(WIN32)
   # still comes from resources.qrc via setWindowIcon).
   enable_language(RC)
   target_sources(tentec-console PRIVATE packaging/tentec-console.rc)
+  # waveIn/waveOut device numbers for the ARDOP modem's command line.
+  target_link_libraries(tentec-console PRIVATE winmm)
 endif()
 if(TARGET Qt6::Multimedia)
   target_sources(tentec-console PRIVATE
@@ -592,6 +615,28 @@ add_executable(vkeqtest EXCLUDE_FROM_ALL
   src/dsp/ClientFinalLimiter.cpp)
 target_include_directories(vkeqtest PRIVATE src)
 target_link_libraries(vkeqtest PRIVATE Qt6::Core)
+if(WIN32)   # ClipDeck's Windows half is audio/AudioIo (Qt Multimedia)
+  target_sources(vkeqtest PRIVATE src/audio/AudioIo.cpp src/audio/AudioIo.h)
+  target_compile_definitions(vkeqtest PRIVATE HAVE_QTMULTIMEDIA)
+  target_link_libraries(vkeqtest PRIVATE Qt6::Multimedia)
+endif()
+
+# Windows audio endpoints behind the Linux pacat / parec seams: PcmSink on
+# the GUI thread and on its own, and LiveVoice end to end. Default PC
+# devices only, a -60 dBFS tone, never the radio's sound device.
+if(WIN32 AND TARGET Qt6::Multimedia)
+  add_executable(winaudiotest EXCLUDE_FROM_ALL
+    tests/winaudiotest.cpp
+    src/audio/AudioIo.cpp src/audio/AudioIo.h
+    src/audio/LiveVoice.cpp src/audio/LiveVoice.h
+    src/audio/VoiceEq.cpp src/audio/ClipDeck.cpp src/audio/ClipDeck.h
+    src/dsp/ClientEq.cpp src/dsp/ClientGate.cpp src/dsp/ClientDeEss.cpp
+    src/dsp/ClientComp.cpp src/dsp/ClientPhaseRotator.cpp
+    src/dsp/ClientFinalLimiter.cpp)
+  target_include_directories(winaudiotest PRIVATE src)
+  target_compile_definitions(winaudiotest PRIVATE HAVE_QTMULTIMEDIA)
+  target_link_libraries(winaudiotest PRIVATE Qt6::Core Qt6::Multimedia)
+endif()
 
 # Panel-layout boxes (ported from AetherSDR): float/dock/hide/pin and the
 # saved state, offscreen.
@@ -624,23 +669,49 @@ if(HAVE_WDSP)
   target_sources(tentec-console PRIVATE src/sdr/SdrRx.cpp src/sdr/SdrRx.h
     src/ui/SdrRxDialog.cpp src/ui/SdrRxDialog.h)
   target_compile_definitions(tentec-console PRIVATE HAVE_WDSP)
+  # SdrRx keeps FFTW's plans between runs (wisdom), so it sees fftw3.h too.
+  target_include_directories(tentec-console PRIVATE ${FFTW3_INCLUDE_DIRS})
+  if(WIN32)
+    target_compile_definitions(tentec-console PRIVATE FFTW_DLL)
+  endif()
   # Copy Assist: speech-to-text via the system whisper.cpp (Arch's
   # whisper-cpp; its ggml picks a CPU variant at runtime). Optional.
   option(BUILD_WHISPER "Copy Assist via the system whisper.cpp" ON)
-  find_package(PkgConfig QUIET)
-  if(PKG_CONFIG_FOUND AND BUILD_WHISPER)
-    pkg_check_modules(WHISPER QUIET IMPORTED_TARGET whisper)
+  set(TTC_WHISPER_LIBS "")
+  if(BUILD_WHISPER AND WIN32)
+    # No pkg-config on Windows: whisper.cpp's own CMake package (its
+    # install prefix on CMAKE_PREFIX_PATH). ggml is named too - AsrEngine
+    # calls ggml_backend_load_all() itself.
+    find_package(whisper CONFIG QUIET)
+    if(TARGET whisper)
+      set(TTC_WHISPER_LIBS whisper)
+      if(TARGET ggml::ggml)
+        list(APPEND TTC_WHISPER_LIBS ggml::ggml)
+      elseif(TARGET ggml)
+        list(APPEND TTC_WHISPER_LIBS ggml)
+      endif()
+      set(WHISPER_FOUND TRUE)
+      set(WHISPER_VERSION "${whisper_VERSION}")
+    endif()
+  elseif(BUILD_WHISPER)
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+      pkg_check_modules(WHISPER QUIET IMPORTED_TARGET whisper)
+    endif()
+    if(WHISPER_FOUND)
+      set(TTC_WHISPER_LIBS PkgConfig::WHISPER)
+    endif()
   endif()
   if(WHISPER_FOUND)
     target_sources(tentec-console PRIVATE src/asr/AsrEngine.cpp src/asr/AsrEngine.h
       src/asr/CallExtract.h src/ui/CopyAssistWindow.cpp src/ui/CopyAssistWindow.h)
     target_compile_definitions(tentec-console PRIVATE HAVE_WHISPER)
-    target_link_libraries(tentec-console PRIVATE PkgConfig::WHISPER)
+    target_link_libraries(tentec-console PRIVATE ${TTC_WHISPER_LIBS})
     message(STATUS "Copy Assist: whisper ${WHISPER_VERSION} found")
     add_executable(asrtest EXCLUDE_FROM_ALL tests/asrtest.cpp
       src/asr/AsrEngine.cpp src/asr/AsrEngine.h src/asr/CallExtract.h)
     target_include_directories(asrtest PRIVATE src)
-    target_link_libraries(asrtest PRIVATE Qt6::Core PkgConfig::WHISPER)
+    target_link_libraries(asrtest PRIVATE Qt6::Core ${TTC_WHISPER_LIBS})
     if(HAVE_RADE)
       target_compile_definitions(asrtest PRIVATE RADE_WAV_DIR="${RADE_WAV_DIR}")
     endif()
@@ -678,8 +749,13 @@ if(HAVE_WDSP)
     tests/sdrrxtest.cpp src/sdr/SdrRx.cpp src/sdr/SdrRx.h
     src/dsp/ClientEq.cpp src/dsp/ClientGate.cpp src/dsp/ClientComp.cpp
     src/dsp/ClientPhaseRotator.cpp src/dsp/ClientFinalLimiter.cpp)
-  target_include_directories(sdrrxtest PRIVATE src)
+  target_include_directories(sdrrxtest PRIVATE src ${FFTW3_INCLUDE_DIRS})
   target_link_libraries(sdrrxtest PRIVATE Qt6::Core aether::wdsp rnnoise)
+  if(WIN32)   # SdrRx's Windows player is audio/AudioIo's PcmSink
+    target_sources(sdrrxtest PRIVATE src/audio/AudioIo.cpp src/audio/AudioIo.h)
+    target_compile_definitions(sdrrxtest PRIVATE HAVE_QTMULTIMEDIA FFTW_DLL)
+    target_link_libraries(sdrrxtest PRIVATE Qt6::Multimedia)
+  endif()
   if(HAVE_RADE)
     target_sources(sdrrxtest PRIVATE src/sdr/RadeRx.cpp)
     target_compile_definitions(sdrrxtest PRIVATE HAVE_RADE RADE_WAV_DIR="${RADE_WAV_DIR}")

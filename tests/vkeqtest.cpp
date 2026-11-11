@@ -7,6 +7,7 @@
 //   readable WAV, and passes audio through untouched (bar level) when off
 // - settings survive JSON
 #include <QCoreApplication>
+#include <QSettings>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <cmath>
@@ -65,6 +66,11 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setOrganizationName("vkeqtest");
     QCoreApplication::setApplicationName("vkeqtest");
+#ifdef Q_OS_WIN
+    // QSettings is the registry on Windows: XDG_CONFIG_HOME does not move
+    // it, so the last run's profiles are still there. Start empty.
+    QSettings().clear();
+#endif
 
     // 1. Measured gain == analytic magnitude, for each filter type.
     struct Case { ClientEq::FilterType t; float f0, gain, q; int slope; float probe; };

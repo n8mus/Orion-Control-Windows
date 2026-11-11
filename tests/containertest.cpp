@@ -35,6 +35,11 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("ttc-test");
     QCoreApplication::setApplicationName("containertest");
+#ifdef Q_OS_WIN
+    // QSettings is the registry on Windows: XDG_CONFIG_HOME does not move
+    // it, so the last run's state is still there. Start empty.
+    QSettings().clear();
+#endif
 
     QWidget win;
     auto* outer = new QVBoxLayout(&win);

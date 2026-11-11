@@ -124,6 +124,13 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setOrganizationName("n8mus");     // QSettings (band memories etc.)
     QApplication::setApplicationName("tentec-console");
+    // TTC_PROFILE=<name>: a separate settings + data set ("tentec-console-
+    // <name>"). On Windows QSettings is the registry, so XDG_CONFIG_HOME
+    // cannot give a test a clean config the way it does on Linux; this
+    // can, and it keeps a trial run away from the operator's own settings
+    // and logbook.
+    if (const QByteArray prof = qgetenv("TTC_PROFILE").trimmed(); !prof.isEmpty())
+        QApplication::setApplicationName("tentec-console-" + QString::fromLatin1(prof));
     QApplication::setWindowIcon(QIcon(":/icon.png"));
 
     // One instance per station: the CAT serial port (TIOCEXCL) and the

@@ -2,6 +2,7 @@
 #include "sdr/SdrRx.h"
 
 #include <aether_wdsp.h>
+#include <fftw3.h>                                 // wisdom (the plan cache) only
 #include <rnnoise.h>
 #ifdef HAVE_RADE
 #include "sdr/RadeRx.h"
@@ -10,6 +11,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#ifdef _WIN32
+#include "audio/AudioIo.h"                         // PcmSink: the Windows player
+#else
 #include <fcntl.h>
 #include <spawn.h>
 #include <signal.h>
@@ -18,6 +22,7 @@
 #include <unistd.h>
 
 extern char** environ;
+#endif
 
 // WDSP 2.10 exports these (upstream/*.c, PORT) but AetherSDR's facade
 // header does not declare them — it drives NR through its own path.
@@ -267,6 +272,9 @@ void SdrRx::applySettingsDsp() {
 }
 
 void SdrRx::dspLoop() {
+    // Yesterday's FFT plans first (setWisdomFile): with them the channel
+    // opens in a moment instead of planning everything again.
+    if (!wisdomFile_.empty()) fftw_import_wisdom_from_filename(wisdomFile_.c_str());
     // Thetis-style RX channel: 96 kHz in, 48 kHz DSP and out, blocking
     // exchange on this thread (the channel runs its own DSP thread).
     OpenChannel(kCh, kInSize, kDspSize, kWdspInRate, kOutRate, kOutRate,
@@ -287,6 +295,7 @@ void SdrRx::dspLoop() {
     limit_.setCeilingDb(kCeilingDb);
     limit_.setDcBlockEnabled(false);               // WDSP's output has none
     ready_.store(true);
+    if (!wisdomFile_.empty()) fftw_export_wisdom_to_filename(wisdomFile_.c_str());
     SetRXAEMNRgainMethod(kCh, 2);                  // Thetis NR2 defaults
     SetRXAEMNRnpeMethod(kCh, 0);
     SetRXAEMNRaeRun(kCh, 1);
@@ -354,6 +363,8 @@ void SdrRx::dspLoop() {
         }
     }
     ready_.store(false);
+    // Again on the way out: the noise tools plan more when first switched on.
+    if (!wisdomFile_.empty()) fftw_export_wisdom_to_filename(wisdomFile_.c_str());
     destroy_resample(rs);
     destroy_nobEXT(kCh);
     destroy_anbEXT(kCh);
@@ -366,6 +377,30 @@ void SdrRx::dspLoop() {
     radePrimed_ = false;
 }
 
+#ifdef _WIN32
+// Windows: a Qt Multimedia sink on its own thread. sinkNode is a substring
+// of the output's description ("" = the default output); the queue it
+// reports is what the pipe's FIONREAD is to the pacat path below.
+bool SdrRx::openPlayer(const std::string& sinkNode) {
+    sink_ = new PcmSink;
+    sink_->useOwnThread();
+    if (!sink_->start(QString::fromStdString(sinkNode), kOutRate, 40)) {
+        delete sink_;
+        sink_ = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void SdrRx::closePlayer() {
+    delete sink_;
+    sink_ = nullptr;
+}
+
+double SdrRx::backlogMs() const {
+    return sink_ ? double(sink_->queuedBytes()) / kBytesPerMs : 0.0;
+}
+#else
 // pacat fed through our own pipe: one page of pipe (~43 ms) plus what we
 // choose to queue, measured with FIONREAD on a kept read handle — the LIVE
 // mic's backlog control, without QProcess (this runs on the DSP thread).
@@ -411,6 +446,7 @@ double SdrRx::backlogMs() const {
     if (pipeProbe_ >= 0) ::ioctl(pipeProbe_, FIONREAD, &n);
     return double(n) / kBytesPerMs;
 }
+#endif
 
 void SdrRx::emitAudio(float* x, int n) {
     const Settings& s = appliedSettings_;
@@ -504,13 +540,21 @@ SdrRx::Levels SdrRx::levels() const {
 
 void SdrRx::writeAudio(const float* x, int n) {
     if (tap_ && n > 0) tap_(x, n);
+#ifdef _WIN32
+    if (!sink_ || n <= 0) return;
+#else
     if (pipeW_ < 0 || n <= 0) return;
+#endif
     float pk = 0.f;
     for (int i = 0; i < n; ++i) pk = std::max(pk, std::fabs(x[i]));
     const bool muted = muted_.load();
     outPeakDb_.store(muted ? -120.f : 20.f * std::log10(std::max(pk, 1e-6f)));
     int queued = 0;
+#ifdef _WIN32
+    queued = int(sink_->queuedBytes());
+#else
     if (pipeProbe_ >= 0) ::ioctl(pipeProbe_, FIONREAD, &queued);
+#endif
     if (queued > kHardBytes || (queued > kTargetBytes && pk < kQuiet)) {
         dropped_.fetch_add(1);                     // clock drift: drop a quiet block
         return;
@@ -519,8 +563,12 @@ void SdrRx::writeAudio(const float* x, int n) {
     for (int i = 0; i < n; ++i)
         pcm[size_t(i)] = muted ? int16_t(0)
             : int16_t(std::clamp(int(std::lround(x[i] * 32767.f)), -32768, 32767));
+#ifdef _WIN32
+    sink_->write(reinterpret_cast<const char*>(pcm.data()), qint64(pcm.size() * 2));
+#else
     const ssize_t w = ::write(pipeW_, pcm.data(), pcm.size() * 2);
     if (w < 0) dropped_.fetch_add(1);              // pipe full: drop
+#endif
 }
 
 } // namespace ttc

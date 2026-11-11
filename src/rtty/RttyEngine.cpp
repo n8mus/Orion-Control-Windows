@@ -9,6 +9,11 @@
 #include <algorithm>
 #include <cmath>
 
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+#include "audio/AudioIo.h"
+#define TTC_RTTY_QTMM 1
+#endif
+
 namespace ttc {
 
 namespace {
@@ -149,7 +154,11 @@ void RttyEngine::scanLine() {
 // ---- transmit --------------------------------------------------------------
 
 bool RttyEngine::running() const {
+#ifdef TTC_RTTY_QTMM
+    return sink_ && sink_->running();
+#else
     return play_ && play_->state() != QProcess::NotRunning;
+#endif
 }
 
 bool RttyEngine::start(const QString& sinkNode) {
@@ -168,6 +177,15 @@ bool RttyEngine::start(const QString& sinkNode) {
     }
     ending_ = tailDone_ = false;
     tailSamples_ = 0;
+#ifdef TTC_RTTY_QTMM
+    // Windows: the radio's sound device by description, no pacat.
+    sink_ = new PcmSink(this);
+    if (!sink_->start(sinkNode, kRate, 60)) {
+        stopProcess();
+        emit txFailed("the radio's sound device would not open");
+        return false;
+    }
+#else
     play_ = new QProcess(this);
     play_->start("pacat", {"--playback", "--raw", "--format=s16le",
                            "--rate=48000", "--channels=1",
@@ -180,6 +198,7 @@ bool RttyEngine::start(const QString& sinkNode) {
     connect(play_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
         if (play_ && !ending_) emit txFailed(QString("SignaLink playback ended (%1)").arg(code));
     });
+#endif
     written_ = 0;
     clock_.start();
     if (!pacer_) {
@@ -219,6 +238,9 @@ void RttyEngine::abort() {
 
 void RttyEngine::stopProcess() {
     if (pacer_) pacer_->stop();
+#ifdef TTC_RTTY_QTMM
+    if (sink_) { sink_->stop(); sink_->deleteLater(); sink_ = nullptr; }
+#endif
     if (!play_) return;
     play_->disconnect(this);
     play_->closeWriteChannel();
@@ -254,7 +276,11 @@ void RttyEngine::pace() {
         sbuf_.resize(kChunk);
         for (int i = 0; i < kChunk; ++i)
             sbuf_[i] = int16_t(std::lround(std::clamp(fbuf_[i], -1.0f, 1.0f) * 32000.0f));
+#ifdef TTC_RTTY_QTMM
+        sink_->write(reinterpret_cast<const char*>(sbuf_.data()), kChunk * 2);
+#else
         play_->write(reinterpret_cast<const char*>(sbuf_.data()), kChunk * 2);
+#endif
         written_ += kChunk;
     }
     if (ending_ && !mod_.busy()) {

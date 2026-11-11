@@ -72,6 +72,15 @@
 #include <QSlider>
 #include <QWidgetAction>
 
+#ifdef Q_OS_WIN
+#include <QHash>
+#include <windows.h>
+#include <mmsystem.h>
+#include <tlhelp32.h>
+#undef near                         // windows.h macros; both are
+#undef far                          // ordinary names in this file
+#endif
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -130,7 +139,12 @@ static QSet<QString> loadMasterScp() {
     QSet<QString> out;
     for (const QString& p :
          {QDir::homePath() + "/.config/cqrlog/MASTER.SCP",
-          QStringLiteral("/usr/share/cqrlog/ctyfiles/MASTER.SCP")}) {
+          QStringLiteral("/usr/share/cqrlog/ctyfiles/MASTER.SCP"),
+          // No cqrlog on Windows: our own data folder, then the copy
+          // N1MM Logger+ keeps current.
+          QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/MASTER.SCP",
+          QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+              + "/N1MM Logger+/SupportFiles/MASTER.SCP"}) {
         QFile f(p);
         if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) continue;
         while (!f.atEnd()) {
@@ -1892,6 +1906,13 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
 #else
     sdrRx_ = new SdrRx;
     connect(this, &QObject::destroyed, this, [rx = sdrRx_] { delete rx; });
+    {
+        // FFTW's plan cache, beside the console's other data.
+        const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QDir().mkpath(dir);
+        sdrRx_->setWisdomFile(QDir::toNativeSeparators(dir + "/fftw-wisdom")
+                                  .toLocal8Bit().toStdString());
+    }
     sdrRx_->retune(-double(loOffHz_));
     updateSdrRxDemod();
     applySdrRxSettings();
@@ -1911,7 +1932,11 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
         if (v) {
             if (!sdrRx_->start(std::string())) {
                 if (persist) QSettings().setValue("sdrrx/on", false);
+#ifdef Q_OS_WIN
+                statusBar()->showMessage("SDR RX: could not open the PC's audio output", 8000);
+#else
                 statusBar()->showMessage("SDR RX: could not start pacat", 8000);
+#endif
                 return false;
             }
             statusBar()->showMessage("SDR receive audio on (WDSP) — PC speakers/headset", 5000);
@@ -1975,10 +2000,12 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
             lastDbg = now;
             const SdrRx::RadeStatus r = sdrRx_->radeStatus();
             std::fprintf(stderr, "[rxdbg] run %d rade %d muted %d (radioTx %d dvr %d txCtx %lld ms ago) | "
-                                 "WDSP %.0f dBFS  in %.0f  out %.0f | sync %d snr %.1f off %.0f Hz\n",
+                                 "WDSP %.0f dBFS  in %.0f  out %.0f | queue %.0f ms  dropped %d | "
+                                 "sync %d snr %.1f off %.0f Hz\n",
                          int(sdrRx_->running()), int(sdrRx_->radeDecoding()), int(tx), int(radioTx_),
                          int(dvrTxPlayback_), (long long)(now - txCtxMs_.load()),
                          sdrRx_->modemPeakDb(), sdrRx_->inputPeakDb(), sdrRx_->outputPeakDb(),
+                         sdrRx_->backlogMs(), sdrRx_->droppedBlocks(),
                          int(r.sync), r.snrDb, r.freqOffsetHz);
         }
     });
@@ -2092,12 +2119,44 @@ void MainWindow::setupCopyAssistUi(QMenu* sdrMenu) {
 // "pipewire:NODE=<node>", tested: 12 kHz capture alongside the console)
 // rather than grabbing it with plughw; and while Pat's session is up the
 // console hands it the SignaLink (DIG on, LIVE/RADE/VK off and refused).
+#ifdef Q_OS_WIN
+namespace {
+// ardopcf on Windows takes WinMM device NUMBERS ("ardopcf 8515 1 1"), not
+// names. A WinMM name is the endpoint's description cut to 31 characters,
+// so the number is the device whose name the description starts with.
+int waveIndexFor(const QString& description, bool capture) {
+    const UINT n = capture ? waveInGetNumDevs() : waveOutGetNumDevs();
+    for (UINT i = 0; i < n; ++i) {
+        QString name;
+        if (capture) {
+            WAVEINCAPSW c;
+            if (waveInGetDevCapsW(i, &c, sizeof c) != MMSYSERR_NOERROR) continue;
+            name = QString::fromWCharArray(c.szPname);
+        } else {
+            WAVEOUTCAPSW c;
+            if (waveOutGetDevCapsW(i, &c, sizeof c) != MMSYSERR_NOERROR) continue;
+            name = QString::fromWCharArray(c.szPname);
+        }
+        if (!name.isEmpty() && description.startsWith(name, Qt::CaseInsensitive))
+            return int(i);
+    }
+    return -1;
+}
+} // namespace
+#endif
+
 void MainWindow::setupWinlinkUi(QMenu* menu) {
     QMenu* wl = menu->addMenu("Winlink (Pat + ARDOP)");
     QAction* ardopAct = wl->addAction("Start the ARDOP modem (ardopcf) on the SignaLink");
     ardopAct->setCheckable(true);
+#ifdef Q_OS_WIN
+    ardopAct->setToolTip("ardopcf on port 8515 on the SignaLink, no PTT of its own (Pat keys\n"
+                         "through the console). Needs ardopcf.exe (github.com/pflarue/ardop):\n"
+                         "on PATH, beside the console, or its path in winlink/ardopPath.");
+#else
     ardopAct->setToolTip("ardopcf on port 8515, SignaLink shared through PipeWire, no PTT of\n"
                          "its own (Pat keys through the console). Install: yay -S ardopcf-bin");
+#endif
     connect(ardopAct, &QAction::toggled, this, [this, ardopAct](bool on) {
         const auto refuse = [this, ardopAct](const QString& why) {
             const QSignalBlocker b(ardopAct);
@@ -2115,10 +2174,27 @@ void MainWindow::setupWinlinkUi(QMenu* menu) {
             statusBar()->showMessage("ARDOP modem stopped", 4000);
             return;
         }
+#ifdef Q_OS_WIN
+        QString exe = QSettings().value("winlink/ardopPath").toString();
+        if (exe.isEmpty() || !QFileInfo::exists(exe))
+            exe = QStandardPaths::findExecutable("ardopcf");
+        if (exe.isEmpty())
+            exe = QStandardPaths::findExecutable("ardopcf",
+                                                 {QCoreApplication::applicationDirPath()});
+        if (exe.isEmpty())
+            return refuse("ardopcf.exe not found (put it on PATH or beside the console)");
+        if (radioSink_.isEmpty() || radioSource_.isEmpty())
+            return refuse("SignaLink not found (Setup, radio audio)");
+        const int capIdx = waveIndexFor(radioSource_, true);
+        const int playIdx = waveIndexFor(radioSink_, false);
+        if (capIdx < 0 || playIdx < 0)
+            return refuse("could not match the SignaLink to a Windows device number");
+#else
         const QString exe = QStandardPaths::findExecutable("ardopcf");
         if (exe.isEmpty()) return refuse("ardopcf not installed (yay -S ardopcf-bin)");
         if (radioSink_.isEmpty() || radioSource_.isEmpty())
             return refuse("SignaLink not found in PipeWire");
+#endif
         const QString logDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/ardop";
         QDir().mkpath(logDir);
         const QString call = QSettings().value("station/callsign", "").toString().toUpper();
@@ -2126,15 +2202,21 @@ void MainWindow::setupWinlinkUi(QMenu* menu) {
         ardop_ = new QProcess(this);
         ardop_->setProcessChannelMode(QProcess::MergedChannels);
         ardop_->setStandardOutputFile(logDir + "/ardopcf-console.log");
-        connect(ardop_, &QProcess::finished, this, [this, ardopAct](int code, QProcess::ExitStatus) {
+        connect(ardop_, &QProcess::finished, this, [this, ardopAct, logDir](int code, QProcess::ExitStatus) {
             if (ardop_) { ardop_->deleteLater(); ardop_ = nullptr; }
             const QSignalBlocker b(ardopAct);
             ardopAct->setChecked(false);
-            statusBar()->showMessage(QString("ARDOP modem exited (%1) — see its log in "
-                                             "~/.local/share/n8mus/tentec-console/ardop").arg(code), 10000);
+            statusBar()->showMessage(QString("ARDOP modem exited (%1) — see its log in %2")
+                                         .arg(code).arg(QDir::toNativeSeparators(logDir)), 10000);
         });
+#ifdef Q_OS_WIN
+        ardop_->start(exe, {"--logdir", QDir::toNativeSeparators(logDir), "-G", "8514",
+                            "-H", "MYCALL " + call, "8515",
+                            QString::number(capIdx), QString::number(playIdx)});
+#else
         ardop_->start(exe, {"--logdir", logDir, "-G", "8514", "-H", "MYCALL " + call, "8515",
                             "pipewire:NODE=" + radioSource_, "pipewire:NODE=" + radioSink_});
+#endif
         if (!ardop_->waitForStarted(3000)) {
             ardop_->deleteLater();
             ardop_ = nullptr;
@@ -2464,6 +2546,88 @@ void MainWindow::openFreeDvWindow() {
 }
 
 namespace {
+#ifdef Q_OS_WIN
+// Windows: the MAIN process running `exe`, or 0. GridTracker (NW.js /
+// Electron) runs several processes from the one image; the main one is the
+// one whose parent is not that image too.
+qint64 findRunning(const QString& exe) {
+    const QString want = QDir::toNativeSeparators(QFileInfo(exe).canonicalFilePath());
+    if (want.isEmpty()) return 0;
+    const QString base = QFileInfo(exe).fileName();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    QHash<DWORD, DWORD> parentOf;
+    QList<DWORD> hits;
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof pe;
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+        if (QString::fromWCharArray(pe.szExeFile).compare(base, Qt::CaseInsensitive) != 0)
+            continue;
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+        if (!h) continue;
+        wchar_t path[1024];
+        DWORD len = DWORD(sizeof path / sizeof path[0]);
+        const bool same = QueryFullProcessImageNameW(h, 0, path, &len)
+            && QString::fromWCharArray(path, int(len)).compare(want, Qt::CaseInsensitive) == 0;
+        CloseHandle(h);
+        if (!same) continue;
+        parentOf.insert(pe.th32ProcessID, pe.th32ParentProcessID);
+        hits << pe.th32ProcessID;
+    }
+    CloseHandle(snap);
+    for (const DWORD pid : hits)
+        if (!parentOf.contains(parentOf.value(pid))) return qint64(pid);
+    return hits.isEmpty() ? 0 : qint64(hits.first());
+}
+
+// Bring that process's top-level windows to the front (restoring a
+// minimized one). The operator has just clicked our button, so Windows
+// lets this process hand the foreground on.
+void raisePid(qint64 pid) {
+    if (pid <= 0) return;
+    EnumWindows([](HWND w, LPARAM lp) -> BOOL {
+        DWORD owner = 0;
+        GetWindowThreadProcessId(w, &owner);
+        if (owner != DWORD(lp) || !IsWindowVisible(w) || GetWindow(w, GW_OWNER))
+            return TRUE;
+        if (IsIconic(w)) ShowWindow(w, SW_RESTORE);
+        SetForegroundWindow(w);
+        return TRUE;
+    }, LPARAM(pid));
+}
+
+QString firstExisting(const QStringList& candidates) {
+    for (const QString& c : candidates)
+        if (!c.isEmpty() && QFileInfo::exists(c)) return QFileInfo(c).absoluteFilePath();
+    return {};
+}
+
+// Neither program puts itself on PATH on Windows: the operator's own path
+// (ft8/wsjtxPath, ft8/gridTrackerPath) wins, then PATH, then where their
+// installers put them.
+QString wsjtxExe() {
+    const QString pf = qEnvironmentVariable("ProgramFiles");
+    const QString pf86 = qEnvironmentVariable("ProgramFiles(x86)");
+    return firstExisting({QSettings().value("ft8/wsjtxPath").toString(),
+                          QStandardPaths::findExecutable("wsjtx"),
+                          QStringLiteral("C:/WSJT/wsjtx/bin/wsjtx.exe"),
+                          pf + "/wsjtx/bin/wsjtx.exe",
+                          pf86 + "/wsjtx/bin/wsjtx.exe"});
+}
+QString gridTrackerLauncher() {
+    const QString pf = qEnvironmentVariable("ProgramFiles");
+    const QString pf86 = qEnvironmentVariable("ProgramFiles(x86)");
+    const QString local = qEnvironmentVariable("LOCALAPPDATA");
+    return firstExisting({QSettings().value("ft8/gridTrackerPath").toString(),
+                          QStandardPaths::findExecutable("GridTracker2"),
+                          local + "/Programs/GridTracker2/GridTracker2.exe",
+                          pf + "/GridTracker2/GridTracker2.exe",
+                          pf86 + "/GridTracker2/GridTracker2.exe",
+                          pf + "/GridTracker/GridTracker.exe",
+                          pf86 + "/GridTracker/GridTracker.exe"});
+}
+QString gridTrackerExe() { return gridTrackerLauncher(); }
+#else
 // The MAIN process running `exe` (by /proc/*/exe), or 0. Electron's helper
 // processes (zygote, GPU, renderers) share the binary but carry --type=.
 qint64 findRunning(const QString& exe) {
@@ -2497,6 +2661,7 @@ QString gridTrackerExe() {
     if (l.isEmpty()) return {};
     return QFileInfo(QFileInfo(l).canonicalFilePath()).absolutePath() + "/gridtracker2.bin";
 }
+#endif  // Q_OS_WIN
 } // namespace
 
 // FT8 (MODE panel, under DIG): one press starts WSJT-X and GridTracker2,
@@ -2532,7 +2697,9 @@ void MainWindow::setupWsjtxUi() {
         QStringList started, missing;
         const auto launch = [&](const QString& exe, const QString& name, qint64 pid) {
             if (pid) { raisePid(pid); return; }
-            if (exe.isEmpty() || !QProcess::startDetached(exe, {})) {
+            // Started in its own folder (Windows programs expect that).
+            if (exe.isEmpty()
+                || !QProcess::startDetached(exe, {}, QFileInfo(exe).absolutePath())) {
                 missing << name;
                 return;
             }

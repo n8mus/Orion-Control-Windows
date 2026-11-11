@@ -17,6 +17,7 @@ class QProcess;
 namespace ttc {
 
 class CtyLookup;
+class PcmSink;
 
 // PRACTICE mode: a Morse-Runner-style simulated station that answers the
 // operator's CQ with a real callsign and a contest-correct exchange, all
@@ -157,6 +158,7 @@ private:
     QList<Ev> evs_;
 
     QProcess* player_ = nullptr;
+    PcmSink* sink_ = nullptr;        // Windows: in place of pacat
     QTimer tick_;
     QElapsedTimer wall_;
     qint64 pumped_ = 0;              // wall ms already pumped

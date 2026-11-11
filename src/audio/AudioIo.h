@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <QByteArray>
+#include <QMutex>
 #include <QObject>
 #include <QString>
 #include <QStringList>
 
+#include <atomic>
 #include <memory>
 #include <vector>
 
 class QAudioSource;
 class QAudioSink;
 class QIODevice;
+class QThread;
+class QTimer;
 
 namespace ttc {
 
@@ -90,7 +94,17 @@ public:
     ~AudioPlayback() override;
 
     // deviceMatch: substring of the output's description; empty = default.
-    bool start(const QString& deviceMatch, int rateHz);
+    // bufferMs: the device queue. 300 rides network/file jitter; live
+    // streams whose delay the operator hears (the LIVE mic, SDR receive)
+    // ask for a few tens of ms through PcmSink.
+    // nativeFormat: open the device in its OWN format (the shared-mode mix
+    // format) and convert here, instead of asking Qt for s16 mono at our
+    // rate. Qt then runs no converter of its own. PcmSink uses this: fed
+    // small irregular chunks from a worker thread, Qt's Media Foundation
+    // resampler stopped taking input for good ("Resampling failed
+    // -1072875851", MF_E_NOTACCEPTING; live-found 2026-11-11).
+    bool start(const QString& deviceMatch, int rateHz, int bufferMs = 300,
+               bool nativeFormat = false);
     void stop();                           // drains what fits, then closes
     bool running() const { return sink_ != nullptr; }
 
@@ -101,6 +115,8 @@ public:
     // and whether the sink has drained everything written so far.
     qint64 bytesFree() const;
     bool drained() const;
+    // CALLER-rate s16 mono bytes sitting in the device queue, not yet played.
+    qint64 bytesQueued() const;
 
     static QStringList outputDescriptions();
 
@@ -117,6 +133,58 @@ private:
     QByteArray carry_;
     LinearResampler resamp_;
     std::vector<int16_t> outBuf_;
+};
+
+// Queue-fed playback with a measurable backlog: what pacat on a pipe is to
+// the Linux paths. write() never blocks and may come from any thread; a
+// short timer moves what fits into the device. The producer paces itself
+// against backlogBytes() (queue + device, caller-rate bytes), which is how
+// the LIVE mic and SDR receive hold their delay when the two sound clocks
+// drift apart.
+//
+// useOwnThread() runs the device on a private thread: for SDR receive,
+// whose audio must not stutter when the GUI thread is busy painting.
+class PcmSink : public QObject {
+    Q_OBJECT
+public:
+    explicit PcmSink(QObject* parent = nullptr);
+    ~PcmSink() override;
+
+    void useOwnThread();                   // before start()
+    // queueCapMs: the most write() will hold ahead of the device (a stalled
+    // device must not grow it forever). Raise it for a whole clip handed
+    // over in one write.
+    bool start(const QString& deviceMatch, int rateHz, int deviceBufferMs = 40,
+               int queueCapMs = 2000);
+    void stop();
+    bool running() const { return running_.load(); }
+
+    void write(const char* s16leMono, qint64 bytes);      // any thread
+    void write(const QByteArray& b) { write(b.constData(), b.size()); }
+    qint64 backlogBytes() const;                          // any thread
+    // Only what is still waiting to enter the device. This is the figure a
+    // producer steers by: it is what the pipe in front of pacat holds on
+    // Linux (the device's own buffer is the player's business there too),
+    // so the same targets mean the same thing on both.
+    qint64 queuedBytes() const { return fifoBytes_.load(); }
+
+signals:
+    void errorText(const QString& what);
+
+private:
+    void pump();                           // device thread
+    template <typename F> void onDeviceThread(F&& f);
+
+    QObject* ctx_ = nullptr;               // lives on the device thread
+    QThread* thread_ = nullptr;
+    AudioPlayback* pb_ = nullptr;          // device thread only
+    QTimer* timer_ = nullptr;              // device thread only
+    mutable QMutex mux_;
+    QByteArray fifo_;                      // under mux_
+    qint64 capBytes_ = 0;
+    qint64 minChunk_ = 0;                  // device takes pieces this big or more
+    std::atomic<qint64> fifoBytes_{0}, devBytes_{0};
+    std::atomic<bool> running_{false};
 };
 
 } // namespace ttc

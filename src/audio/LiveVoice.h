@@ -12,6 +12,8 @@ class QProcess;
 namespace ttc {
 
 class RadeTx;
+class AudioCapture;
+class PcmSink;
 
 // LIVE MIC (PC voice chain phase 2): the operator's mic, through the same
 // gate -> EQ -> de-esser -> compressor -> limiter chain as the VK
@@ -73,6 +75,11 @@ private:
 
     QProcess* rec_ = nullptr;
     QProcess* play_ = nullptr;
+    // Windows: Qt Multimedia endpoints in place of parec / pacat.
+    AudioCapture* cap_ = nullptr;
+    PcmSink* sink_ = nullptr;
+    bool haveOut() const;                          // a player is up
+    void writeOut(const QByteArray& pcm);
     VoiceChain chain_;
     QByteArray carry_;                             // partial sample bytes
     std::vector<float> buf_;

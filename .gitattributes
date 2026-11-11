@@ -1,0 +1,10 @@
+# Line endings that must not follow the checkout's platform default.
+# Shell scripts run under Git Bash: CRLF breaks them.
+*.sh    text eol=lf
+# Windows scripts.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+# Patches apply byte for byte: never convert them.
+*.diff  -text
+*.patch -text

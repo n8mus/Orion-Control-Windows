@@ -1,0 +1,21 @@
+--- a/src/rade_api.h	2026-11-11 09:17:55.800650700 -0500
++++ b/src/rade_api.h	2026-11-11 09:17:55.983041000 -0500
+@@ -39,6 +39,10 @@
+ 
+ #include <sys/types.h>
+ 
++/* TTC/Windows: a static MSVC build passes -DRADE_EXPORT= (empty). MSVC cannot
++   parse "__declspec(...) __stdcall" in front of a return type, and a static
++   library wants neither dllexport nor dllimport. */
++#ifndef RADE_EXPORT
+ #if IS_BUILDING_RADE_API
+ #if _WIN32
+ #define RADE_EXPORT __declspec(dllexport) __stdcall
+@@ -52,6 +56,7 @@
+ #define RADE_EXPORT 
+ #endif // _WIN32
+ #endif // IS_BUILDING_RADE_API
++#endif /* RADE_EXPORT */
+ 
+ // This declares a single-precision (float) complex number
+ 

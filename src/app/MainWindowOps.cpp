@@ -12,6 +12,10 @@
 #include "ui/VoiceEqDialog.h"
 #include "audio/VoiceEq.h"
 #include "audio/LiveVoice.h"
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+#include "audio/AudioIo.h"
+#define TTC_CAL_QTMM 1
+#endif
 #include <QSignalBlocker>
 
 #include <QVBoxLayout>
@@ -367,7 +371,7 @@ void MainWindow::showVoiceEq() {
                 l.delayMs = live_->backlogMs();
             }
             vkEqDlg_->setLiveLevels(l);
-            if (calProc_) {                        // pickup finder's tone level
+            if (calProc_ || calSink_) {            // pickup finder's tone level
                 const double db = kCalStartDb + kCalDbPerSec * calClock_.elapsed() / 1000.0;
                 if (db > kCalEndDb)
                     stopPickupCal("No light by -6 dBFS — check the SignaLink's TX "
@@ -405,6 +409,16 @@ void MainWindow::showVoiceEq() {
                                           * std::sin(2 * M_PI * 1000.0 * t)));
             }
             if (live_) live_->setMuted(true);       // only the tone meanwhile
+#ifdef TTC_CAL_QTMM
+            auto* p = new PcmSink(this);
+            calSink_ = p;
+            // The whole sweep is handed over at once: let the queue hold it.
+            if (!p->start(radioSink_, 48000, 30, secs * 1000 + 1000)) {
+                stopPickupCal("could not start the tone");
+                return;
+            }
+            p->write(pcm);
+#else
             auto* p = new QProcess(this);
             calProc_ = p;
             p->start("pacat", {"--playback", "--raw", "--format=s16le",
@@ -415,11 +429,12 @@ void MainWindow::showVoiceEq() {
                 return;
             }
             p->write(pcm);
+#endif
             calClock_.start();
             vkEqDlg_->setCalibration(true, "Tone starting…");
         });
         connect(dlg, &VoiceEqDialog::calibrateMarkRequested, this, [this] {
-            if (!calProc_) return;
+            if (!calProc_ && !calSink_) return;
             // Back off ~0.3 s for the reaction time; 2 dB/s makes that 0.6 dB.
             const double db = kCalStartDb
                 + kCalDbPerSec * std::max(0.0, calClock_.elapsed() / 1000.0 - 0.3);
@@ -1890,6 +1905,13 @@ void MainWindow::stopPickupCal(const QString& text) {
         calProc_->deleteLater();
         calProc_ = nullptr;
     }
+#ifdef TTC_CAL_QTMM
+    if (calSink_) {
+        calSink_->stop();
+        calSink_->deleteLater();
+        calSink_ = nullptr;
+    }
+#endif
     if (live_) live_->setMuted(false);
     if (vkEqDlg_) vkEqDlg_->setCalibration(false, text);
 }

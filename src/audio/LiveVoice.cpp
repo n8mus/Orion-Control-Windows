@@ -14,6 +14,10 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #endif
+#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
+#include "audio/AudioIo.h"
+#define TTC_LIVE_QTMM 1
+#endif
 
 namespace ttc {
 
@@ -74,7 +78,7 @@ void LiveVoice::setRadeLevelDb(float db) {
 
 void LiveVoice::endOverRade() {
 #ifdef HAVE_RADE
-    if (!radeTx_ || !play_ || radeEnding_) { emit radeOverSent(); return; }
+    if (!radeTx_ || !haveOut() || radeEnding_) { emit radeOverSent(); return; }
     std::vector<float> m;
     radeTx_->endOver(m);
     QByteArray out;
@@ -83,7 +87,7 @@ void LiveVoice::endOverRade() {
         const qint16 q = qint16(std::clamp(int(std::lround((muted_ ? 0.f : v) * 32767.f)), -32768, 32767));
         out.append(reinterpret_cast<const char*>(&q), 2);
     }
-    play_->write(out);
+    writeOut(out);
     radeEnding_ = true;
     radeDrainArmed_ = false;
 #else
@@ -92,8 +96,28 @@ void LiveVoice::endOverRade() {
 }
 
 bool LiveVoice::running() const {
+#ifdef TTC_LIVE_QTMM
+    return cap_ && cap_->running() && sink_ && sink_->running();
+#else
     return rec_ && rec_->state() != QProcess::NotRunning
         && play_ && play_->state() != QProcess::NotRunning;
+#endif
+}
+
+bool LiveVoice::haveOut() const {
+#ifdef TTC_LIVE_QTMM
+    return sink_ != nullptr;
+#else
+    return play_ != nullptr;
+#endif
+}
+
+void LiveVoice::writeOut(const QByteArray& pcm) {
+#ifdef TTC_LIVE_QTMM
+    if (sink_) sink_->write(pcm);
+#else
+    if (play_) play_->write(pcm);
+#endif
 }
 
 bool LiveVoice::start(const QString& sourceNode, const QString& sinkNode,
@@ -102,6 +126,33 @@ bool LiveVoice::start(const QString& sourceNode, const QString& sinkNode,
     stopping_ = false;
     carry_.clear();
     chain_.prepare(kRate, s, s.comp.makeupDb);
+#ifdef TTC_LIVE_QTMM
+    // The same two streams as below, on the Windows endpoints: the nodes
+    // are device descriptions here (ClipDeck::findSink / findSource).
+    QString why;
+    sink_ = new PcmSink(this);
+    const auto note = connect(sink_, &PcmSink::errorText, this,
+                              [&why](const QString& w) { why = w; });
+    const bool outOk = sink_->start(sinkNode, kRate, 30);
+    disconnect(note);
+    cap_ = new AudioCapture(this);
+    connect(cap_, &AudioCapture::chunk, this, [this](const QByteArray& pcm) {
+        carry_ += pcm;
+        onCaptured();
+    });
+    const auto note2 = connect(cap_, &AudioCapture::errorText, this,
+                               [&why](const QString& w) { why = w; });
+    const bool inOk = outOk && cap_->start(sourceNode, kRate);
+    disconnect(note2);
+    if (!outOk || !inOk) {
+        stop();
+        emit failed(why.isEmpty() ? QStringLiteral("the mic or the radio's sound device would not open")
+                                  : why);
+        return false;
+    }
+    dropped_ = 0;
+    return true;
+#else
     play_ = new QProcess(this);
     play_->start("pacat", {"--playback", "--raw", "--format=s16le",
                            "--rate=48000", "--channels=1",
@@ -134,6 +185,7 @@ bool LiveVoice::start(const QString& sourceNode, const QString& sinkNode,
     if (probeFd_ >= 0) ::fcntl(probeFd_, F_SETPIPE_SZ, 4096);
 #endif
     return true;
+#endif  // TTC_LIVE_QTMM
 }
 
 void LiveVoice::stop() {
@@ -142,6 +194,10 @@ void LiveVoice::stop() {
     if (probeFd_ >= 0) ::close(probeFd_);
 #endif
     probeFd_ = -1;
+#ifdef TTC_LIVE_QTMM
+    if (cap_) { cap_->disconnect(this); cap_->stop(); cap_->deleteLater(); cap_ = nullptr; }
+    if (sink_) { sink_->disconnect(this); sink_->stop(); sink_->deleteLater(); sink_ = nullptr; }
+#endif
     for (QProcess** p : {&rec_, &play_}) {
         if (!*p) continue;
         (*p)->disconnect(this);
@@ -154,6 +210,9 @@ void LiveVoice::stop() {
 }
 
 qint64 LiveVoice::backlogBytes() const {
+#ifdef TTC_LIVE_QTMM
+    return sink_ ? sink_->queuedBytes() : 0;
+#endif
     qint64 n = play_ ? play_->bytesToWrite() : 0;
 #ifdef Q_OS_LINUX
     int inPipe = 0;
@@ -171,8 +230,12 @@ void LiveVoice::setSettings(const VoiceEqSettings& s) {
 }
 
 void LiveVoice::onCaptured() {
+#ifdef TTC_LIVE_QTMM
+    if (!cap_ || !sink_) return;               // the chunk is already in carry_
+#else
     if (!rec_ || !play_) return;
     carry_ += rec_->readAllStandardOutput();
+#endif
     const int frames = int(carry_.size() / 2);
     if (frames < kBlock) return;
     const int take = frames / kBlock * kBlock;     // whole blocks only
@@ -212,7 +275,7 @@ void LiveVoice::onCaptured() {
         }
         queued += kBlock * 2;
     }
-    if (!out.isEmpty()) play_->write(out);
+    if (!out.isEmpty()) writeOut(out);
 }
 
 void LiveVoice::onCapturedRade(int take) {
@@ -250,7 +313,7 @@ void LiveVoice::onCapturedRade(int take) {
         const qint16 q = qint16(std::clamp(int(std::lround((muted_ ? 0.f : v) * 32767.f)), -32768, 32767));
         out.append(reinterpret_cast<const char*>(&q), 2);
     }
-    if (!out.isEmpty()) play_->write(out);
+    if (!out.isEmpty()) writeOut(out);
 #else
     (void)take;
 #endif
