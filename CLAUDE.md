@@ -75,8 +75,9 @@ x64 Native Tools prompt:
   `sdrrxtest`, `raderxtest`, `radetxtest`, `asrtest`, `rttytest`, `skimtest`,
   `winaudiotest` and the pure-logic tests all pass. `wktest` is POSIX-only.
   `contestuitest`: 52 pass, 7 phone-deck checks predate Space = MOX on phone
-  (docs/windows-build.md); do not "fix" them without asking which behaviour
-  is wanted.
+  (docs/windows-build.md). The operator's ruling (2026-11-11): the phone
+  deck stays as it is, Space keys and he speaks, Enter only logs. Rewrite
+  those seven checks to that; never change the deck to suit them.
 - Stack: MSVC links with `/STACK:8388608` to match Linux's 8 MB threads.
 
 ## Windows audio

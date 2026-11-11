@@ -221,8 +221,10 @@ Windows notes on the suite:
   still expects Enter to play voice-keyer clips and Space to move between
   fields. The deck has since made Space the MOX key on phone and Enter never
   transmits there (see the comment at `ContestDeck::enterPressed`), so those seven
-  describe the older behaviour, on any platform. They are left as they are
-  until the operator says which way the phone deck should work.
+  describe the older behaviour, on any platform. The operator confirmed the
+  deck as it is on 2026-11-11 (on phone, Space keys and he speaks; Enter
+  only logs), so those seven checks are simply out of date and are to be
+  rewritten to that.
 - `QSettings` is the registry here, so `XDG_CONFIG_HOME` cannot give a test a
   clean configuration. **`TTC_PROFILE=<name>`** does: the console then uses
   `HKCU\Software\n8mus\tentec-console-<name>` and a matching data folder, and
