@@ -284,6 +284,11 @@ Qso LogDb::fromAdif(const AdifRecord& r) {
     o.mode = r.value("MODE").toUpper();
     if (o.mode == "MFSK" && !r.value("SUBMODE").isEmpty())
         o.mode = r.value("SUBMODE").toUpper();    // FT4 travels as MFSK/FT4
+    // Phone is SSB in this log. QRZ and HRD hand it back as USB or LSB
+    // (the sideband the radio was on), and the near-duplicate check
+    // compares modes, so an unmapped re-import of the operator's own QRZ
+    // export added 221 contacts he already had (2026-11-11).
+    if (o.mode == "USB" || o.mode == "LSB") o.mode = QStringLiteral("SSB");
     o.rstS = r.value("RST_SENT");
     o.rstR = r.value("RST_RCVD");
     o.name = r.value("NAME");
