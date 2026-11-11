@@ -2664,6 +2664,25 @@ QString gridTrackerExe() {
 #endif  // Q_OS_WIN
 } // namespace
 
+namespace {
+// Ask a program to close the way its own X button would.
+void politeClose(qint64 pid) {
+#ifdef Q_OS_WIN
+    QProcess::startDetached("taskkill", {"/PID", QString::number(pid)});
+#else
+    ::kill(pid_t(pid), SIGTERM);
+#endif
+}
+// ...and when asking has not worked: the program and everything it started.
+void forceClose(qint64 pid) {
+#ifdef Q_OS_WIN
+    QProcess::startDetached("taskkill", {"/PID", QString::number(pid), "/T", "/F"});
+#else
+    ::kill(pid_t(pid), SIGKILL);
+#endif
+}
+} // namespace
+
 // FT8 (MODE panel, under DIG): one press starts WSJT-X and GridTracker2,
 // or brings them to the front when they were already running; the NEXT
 // press closes them — WSJT-X through its own UDP Close (a clean exit:
@@ -2687,16 +2706,28 @@ void MainWindow::setupWsjtxUi() {
             ft8Latched_ = false;
             ft8HeardSinceLatch_ = false;
             ft8Closing_.start();
-            const auto terminate = [](qint64 pid) {
-#ifdef Q_OS_WIN
-                QProcess::startDetached("taskkill", {"/PID", QString::number(pid)});
-#else
-                ::kill(pid_t(pid), SIGTERM);
-#endif
-            };
             if (wsPid && !(wsjtx_ && wsjtx_->requestClose()))
-                terminate(wsPid);                   // never heard: plain TERM
-            if (gtPid) terminate(gtPid);
+                politeClose(wsPid);                 // never heard: plain TERM
+            if (gtPid) politeClose(gtPid);
+            // Off means off (operator, 2026-11-11: WSJT-X closed, GridTracker
+            // stayed up - it had just logged a contact and let the request
+            // go by). So look again: ask twice more, two seconds apart, and
+            // then stop asking. A press back ON in the meantime calls it off.
+            for (const QString& exe : {wsjtxExe(), gridTrackerExe()}) {
+                if (exe.isEmpty()) continue;
+                auto* again = new QTimer(this);
+                again->setInterval(2000);
+                connect(again, &QTimer::timeout, this, [this, again, exe, tries = 0]() mutable {
+                    const qint64 pid = ft8Latched_ ? 0 : findRunning(exe);
+                    if (!pid) { again->deleteLater(); return; }
+                    if (++tries < 3) { politeClose(pid); return; }
+                    std::fprintf(stderr, "[ft8] %s would not close when asked - closed it\n",
+                                 qPrintable(QFileInfo(exe).fileName()));
+                    forceClose(pid);
+                    again->deleteLater();
+                });
+                again->start();
+            }
             panel_->showFt8(false);
             if (wsjtxOwnsDig_) {                    // only the DIG FT8 turned on
                 wsjtxOwnsDig_ = false;
