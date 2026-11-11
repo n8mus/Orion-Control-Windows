@@ -74,6 +74,9 @@ x64 Native Tools prompt:
   standard library's normal distribution, see docs/windows-build.md);
   `sdrrxtest`, `raderxtest`, `radetxtest`, `asrtest`, `rttytest`, `skimtest`,
   `winaudiotest` and the pure-logic tests all pass. `wktest` is POSIX-only.
+  `contestuitest`: 52 pass, 7 phone-deck checks predate Space = MOX on phone
+  (docs/windows-build.md); do not "fix" them without asking which behaviour
+  is wanted.
 - Stack: MSVC links with `/STACK:8388608` to match Linux's 8 MB threads.
 
 ## Windows audio
@@ -89,6 +92,10 @@ Multimedia behind the same seams (`src/audio/AudioIo`):
   `useOwnThread()` for SDR receive. It opens the device in its native format
   and converts itself: Qt's own Media Foundation resampler stops accepting
   input when fed small chunks from a worker thread.
+- `PcmResampler` does that conversion (cubic, exact phase, chunk-independent).
+  It replaced a linear one whose chunk-boundary bug buzzed the 8 kHz practice
+  audio on the first Windows run; `winaudiotest --offline` is its test and
+  needs no sound device.
 - Users: SDR receive (`SdrRx`), LIVE mic (`LiveVoice`), RTTY transmit
   (`RttyEngine`), contest practice callers (`PracticeEngine`), the voice EQ's
   pickup tone, plus the older RIP/TRIP, DVR and CW-reader paths.

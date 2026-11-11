@@ -11,6 +11,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSettings>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -46,6 +47,14 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QTemporaryDir tmp;
     qputenv("XDG_CONFIG_HOME", (tmp.path() + "/cfg").toUtf8());
+#ifdef Q_OS_WIN
+    // QSettings is the registry on Windows and XDG_CONFIG_HOME does not
+    // move it: give the harness its own key, emptied, so it never reads the
+    // operator's station (rotor, keyer, online scoreboard) or the last run.
+    QCoreApplication::setOrganizationName("ttc-test");
+    QCoreApplication::setApplicationName("contestuitest");
+    QSettings().clear();
+#endif
 
     CtyLookup cty;
     bool ctyOk = false;
@@ -157,7 +166,7 @@ int main(int argc, char** argv) {
         wp.openContestId(cid);
         int swept = 0;
         QObject::connect(&wp, &ContestWindow::pushedToLogbook,
-                         [&swept](int n) { swept = n; });
+                         [&swept](const QList<qint64>& ids) { swept = int(ids.size()); });
         QPushButton* push = buttonWithText(&wp, "→ Logbook");
         CHECK(push, "push: button exists");
         push->click();

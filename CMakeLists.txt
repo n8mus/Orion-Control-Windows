@@ -491,6 +491,11 @@ add_executable(contestuitest EXCLUDE_FROM_ALL
   src/contest/Cabrillo.cpp src/contest/CallHistory.cpp
   src/contest/ContestDeck.cpp src/contest/QtcDialog.cpp
   src/contest/PracticeEngine.cpp
+  # What the deck has grown to use since this harness was written: the
+  # multiplier window, the online scoreboard, the clock check, CW macros.
+  src/contest/MultWindow.cpp src/contest/OnlineScore.cpp
+  src/net/SntpCheck.cpp
+  src/cw/CwMacros.cpp src/log/QsoContext.h
   src/net/RotorLink.cpp src/net/RotorClient.cpp src/net/RotorServer.cpp
   src/radio/DcuRotor.cpp src/radio/SerialPort.cpp
   src/cw/CwWindow.cpp src/cw/WinKeyer.cpp src/cw/OrionKeyer.cpp
@@ -499,6 +504,8 @@ add_executable(contestuitest EXCLUDE_FROM_ALL
   src/log/LogDb.cpp src/log/Adif.cpp src/log/QrzLookup.cpp
   src/ui/SpotTableWindow.cpp src/ui/SpotTableWindow.h)
 target_include_directories(contestuitest PRIVATE src)
+# The deck reports the console's version to the online scoreboard.
+target_compile_definitions(contestuitest PRIVATE TTC_VERSION="${TTC_GIT_VERSION}")
 target_link_libraries(contestuitest PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets
   Qt6::Network Qt6::SerialPort Qt6::Sql)
 

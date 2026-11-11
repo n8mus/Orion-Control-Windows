@@ -19,6 +19,8 @@
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QTcpSocket>
 
 #include <cstdio>
@@ -101,11 +103,26 @@ int main(int argc, char** argv) {
 
         // Both ends live in this one thread, so the server only sees the
         // connection and the command while events are being processed.
+        // Wait on the CLOCK for the answer, not on a count of event-loop
+        // turns: processEvents returns at once when nothing is pending, so
+        // a hundred turns can be over before the reply has crossed the
+        // loopback (Windows: the test failed about one run in two).
         const auto ask = [&c](const char* cmd) {
             c.write(cmd);
             c.waitForBytesWritten(1000);
-            for (int i = 0; i < 100 && c.bytesAvailable() == 0; ++i)
+            QElapsedTimer waited;
+            waited.start();
+            while (c.bytesAvailable() == 0 && waited.elapsed() < 2000) {
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                QThread::msleep(1);
+            }
+            // The whole reply, not its first packet (dump_state is long).
+            for (int quiet = 0; quiet < 5; ++quiet) {
+                const qint64 had = c.bytesAvailable();
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+                QThread::msleep(2);
+                if (c.bytesAvailable() != had) quiet = -1;
+            }
             return QString::fromLatin1(c.readAll());
         };
         check(ask("p\n").startsWith("RPRT -"), "unknown position is an error");

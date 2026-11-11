@@ -216,6 +216,13 @@ Windows notes on the suite:
   32 on Arch and 36 on Ubuntu from the same seed). The engine, which is the
   default decoder everywhere, reads 37 and passes.
 - **`wktest`** drives a POSIX pty and does not build on Windows.
+- **`contestuitest`** drives the contest manager and deck offscreen. 52 of
+  its checks pass; the 7 that do not are all in its phone section, which
+  still expects Enter to play voice-keyer clips and Space to move between
+  fields. The deck has since made Space the MOX key on phone and Enter never
+  transmits there (see the comment at `ContestDeck::enterPressed`), so those seven
+  describe the older behaviour, on any platform. They are left as they are
+  until the operator says which way the phone deck should work.
 - `QSettings` is the registry here, so `XDG_CONFIG_HOME` cannot give a test a
   clean configuration. **`TTC_PROFILE=<name>`** does: the console then uses
   `HKCU\Software\n8mus\tentec-console-<name>` and a matching data folder, and
