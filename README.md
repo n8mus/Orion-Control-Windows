@@ -1,198 +1,108 @@
-# Orion Control
+# Orion Control for Windows
 
-*(An independent project, not affiliated with or endorsed by Ten-Tec — Ten-Tec model numbers:
+*(An independent project, not affiliated with or endorsed by Ten-Tec. Ten-Tec model numbers:
 Orion = 565, Orion II = 566, Omni VII = 588.)*
 
-A Flex/SmartSDR-style console for the **Ten-Tec Orion (565/566)**: full
-computer control, a live wideband **panadapter/waterfall** fed by an SDRplay
-RSP, drag-the-filter-edges tuning, a draggable notch, CW decode and a
-multi-channel **CW skimmer**, DX-cluster/RBN/POTA spots painted on the
-spectrum, whole-band overview landings on the band buttons, an **SWR
-sweep** plotted right on the pan, a **real-VOACAP propagation overlay**
-on the world-map backdrop (the genuine engine is bundled in the
-AppImage — no setup), WinKeyer keying, rotor control, and `rigctld`
-emulation so **WSJT-X, fldigi, cqrlog and GridTracker keep working
-unchanged** — one serial port, no flrig.
+> **This is the standalone Windows edition.** It has its own repository, its
+> own releases and its own version numbers, and it is developed independently
+> of the Linux console. Nothing here tracks or depends on that project.
 
-> **Status: ALPHA, Orion-only.** Daily-driven at one station for months;
-> you are among the first others to run it. Expect rough edges, report
-> everything. The Omni VII personality exists in the code but is currently
-> untested — stay on the Orion for now.
+A Flex/SmartSDR-style console for the **Ten-Tec Orion (565/566)** on Windows
+10/11: full computer control, a live wideband **panadapter/waterfall** fed by
+an SDRplay RSP, drag-the-filter-edges tuning, a draggable notch, CW decode
+and a multi-channel **CW skimmer**, DX-cluster/RBN/POTA spots painted on the
+spectrum, whole-band overview landings on the band buttons, an **SWR sweep**
+plotted right on the pan, a **real-VOACAP propagation overlay**, a built-in
+logbook with online log uploads, a contest deck, an RTTY modem, WinKeyer
+keying, rotor control, and `rigctld` emulation so **WSJT-X, fldigi, N1MM and
+GridTracker keep working unchanged**: one serial port, no flrig.
 
-## Install on Linux (easiest — one line)
+> **Status: ALPHA, Orion-only.** Daily-driven at one station; you are among
+> the first others to run it. Expect rough edges, report everything. The
+> Omni VII personality exists in the code but is currently untested.
 
-New to Linux? This script does everything for you: installs the libraries,
-sets up the SDRplay API and serial-port access, downloads the latest
-console, and adds it to your applications menu.
+## Downloads
 
-```
-bash <(curl -fsSL https://raw.githubusercontent.com/n8mus/Orion-Control/master/install.sh)
-```
+Two builds are published on the
+[Releases page](https://github.com/n8mus/Orion-Control-Windows/releases).
+**Neither is "the default".** Each is listed with the date it was built;
+pick the one you want. Older builds are never removed when a newer one
+appears.
 
-Log out and back in once after the first run (for serial access), then
-launch **Orion Control** from your menu. Re-run any time to update.
+| Build | Version | Built | What it is |
+|---|---|---|---|
+| **September 2026** | `v0.1.8-alpha` | 2026-09-04 | The first complete Windows console. Smaller, simpler, and the longest-flown build on Windows. |
+| **November 2026** | `v0.2.0-2026.11.11` | 2026-11-11 | Everything added since: SDR receive audio (WDSP noise blankers and noise reduction), FreeDV RADE digital voice, Copy Assist (speech to text), the contest deck with practice mode, the RTTY modem, the CW deck, logbook editing, the tuner box, the GPU panadapter, keyboard PTT. |
 
-What the script needs and does, so nothing surprises you:
-- A 64-bit Linux with **glibc 2.38 or newer**: Ubuntu 24.04+, Linux Mint 22+,
-  Debian 13+, Fedora 39+, openSUSE Tumbleweed, Arch. Older releases must
-  [build from source](#build-from-source).
-- The AppImage bundles Qt, rnnoise, FFTW and the VOACAP engine. Nothing
-  else to hunt for.
-- The **SDRplay API** (proprietary, from SDRplay) is installed **last** and
-  is **optional**: its installer asks you to accept a license, so it only
-  runs when you are at a terminal. Skip it with `--no-sdrplay`; without it
-  the console runs radio-only with a dark panadapter, and re-running the
-  script later adds it.
-- No step other than "download the release" is fatal. A failing optional
-  step prints what to do and the script continues.
+From `v0.2.0` on, the version number carries the build date
+(`v<version>-<yyyy>.<mm>.<dd>`).
 
-Manual alternative: download the `.AppImage` from
-[Releases](https://github.com/n8mus/Orion-Control/releases), `chmod +x` it,
-run it. Install the SDRplay API from [sdrplay.com/api](https://www.sdrplay.com/api/)
-yourself if you want the panadapter.
+Both builds use the same settings and the same logbook, so you can go back
+and forth between them on one PC.
 
-## Install on Windows
+## Install
 
-The console is a native Windows app from the same code (MSVC build,
-`docs/windows-build.md`).
-
-1. **Install the SDRplay API first** — download the Windows API/HW driver
-   from [sdrplay.com/api](https://www.sdrplay.com/api/) and run its
-   installer. It's proprietary, so it is never bundled here; the console
+1. **Install the SDRplay API first.** Download the Windows API/hardware
+   driver from [sdrplay.com/api](https://www.sdrplay.com/api/) and run its
+   installer. It is proprietary, so it is never bundled here; the console
    finds your install by itself. Skip this step and the console runs
    radio-only with a dark panadapter.
-2. Download the latest `tentec-console-…-win64.zip` from
-   [Releases](https://github.com/n8mus/Orion-Control/releases), unzip it
-   anywhere, and run `tentec-console.exe`. The same Station setup dialog
-   opens on first run; settings live per-user in the registry.
-
-The Windows zip is built by the same release workflow as the AppImage
-(GitHub's Windows runner, MSVC + Qt 6.8; since v0.1.8) and attached to
-the tag's release beside it. `packaging/make-windows-release.ps1` still
-builds the identical zip by hand on a Windows box. The Linux build is the
-daily driver; the Windows build gets less testing, and WDSP receive
-audio, FreeDV RADE and Copy Assist are not in it yet.
+2. Download the `tentec-console-...-win64.zip` you want from
+   [Releases](https://github.com/n8mus/Orion-Control-Windows/releases).
+3. Unzip **the whole folder** anywhere and run `tentec-console.exe` inside
+   it. The files beside the exe are needed. If Windows reports a missing
+   runtime DLL, run `vc_redist.x64.exe` from the same folder once.
+4. The **Station setup** dialog opens on first run. Settings live per-user
+   in the registry (`HKCU\Software\n8mus\tentec-console`).
 
 ## What you need
 
 **Hardware**
 - **Ten-Tec Orion 565 or Orion II 566** (developed against V3 firmware) with
-  a serial CAT connection — native RS-232 or a *quality* USB-serial adapter
-  (a cheap one cost this station weeks of RFI hunting; FTDI on a direct
-  motherboard port, or a real COM port, strongly advised).
+  a serial CAT connection: native RS-232 or a *quality* USB-serial adapter
+  (FTDI advised).
 - **SDRplay RSP** (developed on an RSP2; nearby models likely work) fed from
-  the Orion's spare RX antenna jack or an antenna tap. ⚠️ **The SDR feed
-  MUST be TX-protected.** If your tap does not isolate the SDR when you
-  transmit, 100 W will destroy it. Know your isolation before you key up.
-- A monitor **at least 1920 px wide** (the layout needs ~1630 px plus window borders).
+  the Orion's spare RX antenna jack or an antenna tap. **The SDR feed MUST
+  be TX-protected.** If your tap does not isolate the SDR when you transmit,
+  100 W will destroy it. Know your isolation before you key up.
+- A monitor **at least 1920 px wide**.
 - Optional, each unlocking a feature: **WinKeyer USB** (CW keying, memories,
   type-ahead), a **USB audio codec / SignaLink** carrying the radio's RX
-  audio (CW decode through the radio's own filters + the pitch meter),
-  a **rotctld-compatible rotor**, and **cqrlog** (one-click QSO logging via
-  the console's UDP bridge).
+  audio (CW decode through the radio's own filters, RTTY, the voice keyer,
+  FreeDV), a **Hy-Gain DCU-3** rotor or any `rotctld` rotor, and a
+  **TelePost LP-100A** or **Array Solutions PowerMaster** wattmeter.
 
-**Software (Linux; developed on Arch)**
-- For the AppImage: nothing beyond glibc 2.38+ and FUSE 2 (the installer
-  handles it). For a source build see [Build from source](#build-from-source).
-- The **SDRplay API v3.x service** from
-  [sdrplay.com/downloads](https://www.sdrplay.com/downloads/) — proprietary,
-  installed by you, never bundled here. The `sdrplay_apiService` must be
-  running (their installer sets that up).
-- Optional: `hamlib` (rotctld for the rotor); PipeWire/PulseAudio utilities
-  (`pactl`, `pw-record` — present on any modern desktop) for the audio
-  features.
-- The VOACAP propagation overlay: **bundled in the AppImage** (VOACAP's
-  core is public-domain US-government code, so unlike the SDRplay API it
-  ships inside). Building from source instead? Build
-  [voacapl](https://github.com/jawatson/voacapl) (`./configure
-  --prefix=$HOME/.local && make && make install && makeitshfbc`) — or
-  skip it and the overlay simply stays off with a hint.
+**Software**
+- Windows 10 or 11, 64-bit.
+- The **SDRplay API v3.x** (above). Its `sdrplay_apiService` must be running;
+  the installer sets that up.
+- Everything else is in the zip: Qt, the VOACAP engine and, in the November
+  build, FFTW (receive audio) and whisper.cpp with its English speech model
+  (Copy Assist).
 
 ## Build from source
 
-The installer can put the whole toolchain in place for you:
-
-```sh
-bash install.sh --build-deps
-```
-
-Or by hand. Hard requirements are Qt 6 (Core, Gui, Widgets, Network,
-SerialPort, Sql, WebSockets), CMake 3.16+, a C++20 compiler and
-**rnnoise**. Everything else is optional and auto-detected: FFTW3 turns
-on the WDSP receive-audio chain (and with it FreeDV RADE, which needs
-autotools to build Opus), Qt ShaderTools + private headers turn on the GPU
-panadapter, whisper.cpp turns on Copy Assist, and the SDRplay API turns on
-the panadapter itself.
-
-| distro | packages |
-|---|---|
-| Ubuntu 24.04+ / Debian 13+ / Mint 22+ | `git cmake g++ make pkg-config qt6-base-dev qt6-serialport-dev qt6-websockets-dev libqt6sql6-sqlite libgl1-mesa-dev libfftw3-dev autoconf automake libtool curl patch` plus optional `qt6-shadertools-dev qt6-base-private-dev`. **rnnoise is not packaged** there: `git clone https://gitlab.xiph.org/xiph/rnnoise && cd rnnoise && ./autogen.sh && ./configure && make && sudo make install && sudo ldconfig` |
-| Arch | `git cmake gcc make pkgconf qt6-base qt6-serialport qt6-websockets qt6-shadertools rnnoise fftw autoconf automake libtool curl patch` |
-| Fedora 39+ | `git cmake gcc-c++ make pkgconf qt6-qtbase-devel qt6-qtserialport-devel qt6-qtwebsockets-devel qt6-qtshadertools-devel qt6-qtbase-private-devel rnnoise-devel fftw-devel autoconf automake libtool curl patch` |
-
-Then:
-
-```sh
-git clone https://github.com/n8mus/Orion-Control.git
-cd Orion-Control
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
-./build/tentec-console
-```
-
-Add `-DBUILD_SDRPLAY=ON` to the configure line once the SDRplay API is
-installed (headers in `/usr/local/include`, library in `/usr/local/lib`,
-where SDRplay's installer puts them). Without it the build is radio-only.
-`-DBUILD_RADE=OFF` skips the FreeDV RADE fetch (no network or autotools
-needed), `-DBUILD_GPU_PAN=OFF` forces the CPU panadapter. Use `Release` or
-`RelWithDebInfo`: a Debug build cannot keep up with the 1 MHz IQ stream.
-
-## Troubleshooting an install
-
-- **"GLIBC_2.38 not found"** when the AppImage starts: the distro is too old
-  for the prebuilt binary. Build from source as above.
-- **AppImage says it cannot mount / FUSE error**: install `libfuse2`
-  (Ubuntu 24.04: `libfuse2t64`), or run it as
-  `./tentec-console.AppImage --appimage-extract-and-run`. The installer
-  writes the launcher that way by itself when FUSE 2 is missing.
-- **SDRplay installer stalls or fails**: it is interactive and needs a real
-  terminal. Run `bash install.sh` again from a terminal window, or download
-  the Linux API from [sdrplay.com/api](https://www.sdrplay.com/api/) and run
-  it yourself. Then `systemctl status sdrplay` should show the service
-  running. The console works without it, radio-only.
-- **"No AppImage found" from the installer**: GitHub's API rate limit was hit
-  (it falls back to the releases web page by itself); failing that, download
-  the AppImage from the Releases page by hand.
-- **Serial port "permission denied"**: you have not logged out and back in
-  since the installer added you to `dialout` (or `uucp`).
+[`docs/windows-build.md`](docs/windows-build.md) is the from-scratch recipe
+for a Windows build box: Visual Studio 2022 Build Tools, Qt 6.8, and the
+libraries the optional features need. Release zips are cut on the station's
+own Windows PC with `packaging/make-windows-release.ps1`, never by CI.
 
 ## First run
 
 The **Station setup** dialog opens by itself: your callsign and grid, the
-radio model and CAT serial port, WinKeyer port, radio-audio capture device,
-DX-cluster login, rotor. The **Test** buttons probe the real hardware — the
+radio model and its COM port, WinKeyer port, radio-audio devices, DX-cluster
+login, rotor, wattmeter. The **Test** buttons probe the real hardware: the
 radio test shows the Orion's firmware string, the keyer test runs the
-WinKeyer handshake. It lives in **SDR ▾ → Station setup…** afterwards.
-Radio model/port changes take effect on the next launch.
-
-Every port field lists the serial devices this machine actually has, so
-you pick rather than type, and each is offered under a **stable** name
-where one exists: the kernel's `/dev/serial/by-id/…` for USB adapters,
-plus any symlink your own udev rules put in `/dev`. Prefer those — plain
-`/dev/ttyUSB0` and `/dev/ttyS4` names get reassigned when you add or move
-hardware, which silently points a setting at the wrong device (adding one
-PCIe serial card here renumbered four ports and aimed a rotor daemon at a
-transceiver). Native PCIe/COM ports get no stable name from the kernel, so
-a udev rule is the only way to pin one; write it and the console will
-offer it. Nothing is preconfigured — an empty field means that feature is
-off. The **rotor is the exception**: the console never opens that port
-itself, it talks to `rotctld` (default `127.0.0.1:4533`), so the rotor's
-device is configured in `rotctld`, not here.
+WinKeyer handshake. It lives in **SDR ▾ → Station setup…** afterwards. Radio
+model/port changes take effect on the next launch. Nothing is preconfigured:
+an empty field means that feature is off.
 
 Then:
-- **rigctld emulation is on TCP 4532.** Point WSJT-X / cqrlog / GridTracker
-  there (any rigctld-compatible client works). Stop any real `rigctld` or
-  flrig instance first — one master per radio.
+- **rigctld emulation is on TCP 4532.** Point WSJT-X / N1MM / GridTracker
+  there (any rigctld-compatible client works). One master per radio: close
+  any other program holding the radio's COM port first.
+- **The console's own spot feed is a DX-cluster telnet server on port 7300**
+  (`127.0.0.1:7300`) for a logger's band map.
 - The panadapter's gain is managed by **Auto LNA** (SDR ▾ menu). A loud
   evening band stepping the attenuation up is normal operation, not a fault.
 - Click to tune (CW zap snaps to the carrier), wheel to step, drag a
@@ -201,19 +111,23 @@ Then:
 
 ## Reporting problems
 
-Run from a terminal and include everything it printed. If it crashed,
-`coredumpctl list` should show it — `coredumpctl info` output is gold.
-Say what band, what mode, what you clicked, and whether the radio, the
+When the console is started from its icon it writes a session log to
+`%LOCALAPPDATA%\n8mus\tentec-console\console.log` (the previous session is
+kept as `console.log.1`). Attach it. Say which build (the version and build
+date), what band, what mode, what you clicked, and whether the radio, the
 SDR, or both were connected. Screenshots welcome.
 
 ## Known alpha limitations
 
 - **US band plan** assumptions (60 m channels, CW skimmer windows,
   band-plan shading).
-- Orion-only until an Omni VII CAT path is re-established and tested.
-- The native Windows build is new (v0.1.7-alpha): Linux has months of
-  daily driving behind it, Windows days — expect the rougher edges there.
-- One console instance at a time (exclusive serial + single-tuner SDR).
+- Orion-only until the Omni VII path is tested again.
+- One console instance at a time (exclusive serial port, single-tuner SDR).
+- Features that talk to Linux-only programs (cqrlog, Not1MM) are present in
+  the menus but have nothing to talk to on Windows.
+- **Winlink through Pat + ARDOP** needs `ardopcf.exe` installed separately
+  and has not been flown on Windows yet.
+- Copy Assist wants a CPU with AVX2 to keep up in real time.
 
 ## License
 
@@ -221,9 +135,9 @@ SDR, or both were connected. Screenshots welcome.
 fldigi's (© W1HKJ & contributors, GPL-3), which lifts the rest of this
 GPL-2.0-or-later codebase to GPL-3 in combination. You received this
 software with its complete source; if you pass binaries along, the source
-goes with them. Which files sit under which license, and why the base is
-GPLv2-or-later, is in [`NOTICE`](NOTICE). The SDRplay API is proprietary
-and is **not** part of this distribution — every user installs it
-themselves from SDRplay.
+goes with them. Which files sit under which license is in
+[`NOTICE`](NOTICE), and the licenses of everything bundled in the zip are in
+its `licenses` folder. The SDRplay API is proprietary and is **not** part of
+this distribution: every user installs it themselves from SDRplay.
 
-73 — and all signals depart at exactly Warp 1.
+73, and all signals depart at exactly Warp 1.

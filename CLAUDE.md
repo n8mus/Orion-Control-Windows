@@ -1,3 +1,111 @@
+# Orion Control for Windows  (github.com/n8mus/Orion-Control-Windows)
+
+**This repository is the standalone Windows console.** It was split off on
+2026-11-11 and is developed, versioned and released on its own. Read this
+section first; it overrides anything below that disagrees with it. The rest
+of this file is the architecture and station notes the code grew up with on
+Linux: still the map of the source, but its build commands, `/dev/...` paths
+and service names describe the Linux station, not this one.
+
+## Rules that are not negotiable
+
+- **Never delete, hide, move or replace anything published.** No release, no
+  tag, no branch, no release asset: not to tidy, not because it is "out of
+  date", not to re-cut a build. A newer build is a NEW tag published BESIDE
+  the older downloads. The September 2026 build (`v0.1.8-alpha`) must stay
+  downloadable forever. (It vanished once, when a Linux-side session decided
+  the Windows download was stale; a viewer of the operator's videos found the
+  link dead before the operator did.) GitHub rulesets on this repository
+  block tag deletion/moves and force-pushes to `master` and
+  `september-2026`; do not remove or bypass them.
+- **This repository and `n8mus/Orion-Control` (Linux) never touch each
+  other.** Do not add it as a remote here, push to it, or open issues/PRs
+  against it from Windows work. Code crossed over once, by the operator's
+  decision, as a one-time copy.
+- **Never key the transmitter in a test, and never open the WinKeyer's COM
+  port raw.** Stray bytes to a keyer outside host mode are sent as CW.
+  Streaming audio into the radio's sound device (LIVE mic, RTTY, the voice
+  keyer, the pickup tone) can key a SignaLink by itself: tests use the PC's
+  default output only. `TTC_TRACE=1` logs every CAT command; a receive-only
+  run shows nothing but `?` queries.
+- **Push and publish only after the operator's own on-air test.** Build,
+  test, commit, then wait.
+- The callsign rule under "Hard rules" below applies here unchanged, with the
+  same three checks before every push.
+- Never renumber stored enums; settings are shared between builds.
+
+## Versions and releases
+
+- The version is the git tag, and from `v0.2.0` on the tag carries the build
+  date: `v<major>.<minor>.<patch>-<yyyy>.<mm>.<dd>`.
+- Releases are cut on the station's Windows PC with
+  `packaging/make-windows-release.ps1` (never by CI; GitHub Actions are
+  disabled on this repository on purpose). The script refuses to upload to a
+  tag that already has a release.
+- Every release title says when it was built. No build is "the default": the
+  README lists them all with their dates and the user picks.
+- Branches: `master` is the current line. `september-2026` is the September
+  build's source, kept for reference and for fixes to that build.
+
+## Build, run, test on Windows
+
+`docs/windows-build.md` is the whole recipe (toolchain, the five libraries,
+configure line, runtime staging, tests, release). The short version, from the
+x64 Native Tools prompt:
+
+    cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo ^
+      -DCMAKE_PREFIX_PATH="<qt>;<rnnoise>;<fftw>;<whisper>" ^
+      -DRADE_WIN_ROOT=<rade-win>/install -DBUILD_SDRPLAY=ON
+    cmake --build build-win -j 8
+
+- RelWithDebInfo must be explicit (VS's CMake defaults to Debug, and Debug
+  cannot keep up with the IQ stream).
+- The configure output must show RADE, WDSP, GPU panadapter, Copy Assist and
+  SDRplay all on. A missing line is a missing feature.
+- `TTC_PROFILE=<name>` gives a run its own registry key and data folder
+  (`tentec-console-<name>`). Use it for every test run: `QSettings` is the
+  registry on Windows, so `XDG_CONFIG_HOME` does nothing here, and without a
+  profile a test writes into the operator's real settings and logbook.
+- Both published builds share `HKCU\Software\n8mus\tentec-console` and
+  `%APPDATA%\n8mus\tentec-console` (the logbook). Schema changes must stay
+  readable by the older build.
+- Test baselines on MSVC (2026-11-11): `cwtest` full matrix engine 96%,
+  legacy 97%; legacy dead-channel 46 characters against the bar of 45 (the
+  standard library's normal distribution, see docs/windows-build.md);
+  `sdrrxtest`, `raderxtest`, `radetxtest`, `asrtest`, `rttytest`, `skimtest`,
+  `winaudiotest` and the pure-logic tests all pass. `wktest` is POSIX-only.
+- Stack: MSVC links with `/STACK:8388608` to match Linux's 8 MB threads.
+
+## Windows audio
+
+Linux pipes audio through `pacat`/`parec` processes. Windows uses Qt
+Multimedia behind the same seams (`src/audio/AudioIo`):
+
+- `AudioCapture` / `AudioPlayback`: s16 mono at the caller's rate, whatever
+  the device runs. Devices are matched by a substring of their description.
+- `PcmSink`: queue-fed playback with a measurable backlog, what a pipe into
+  pacat is on Linux. `queuedBytes()` (what still waits to enter the device)
+  is the figure producers steer by, so the Linux targets keep their meaning.
+  `useOwnThread()` for SDR receive. It opens the device in its native format
+  and converts itself: Qt's own Media Foundation resampler stops accepting
+  input when fed small chunks from a worker thread.
+- Users: SDR receive (`SdrRx`), LIVE mic (`LiveVoice`), RTTY transmit
+  (`RttyEngine`), contest practice callers (`PracticeEngine`), the voice EQ's
+  pickup tone, plus the older RIP/TRIP, DVR and CW-reader paths.
+- WDSP plans FFTs with FFTW_PATIENT; `SdrRx::setWisdomFile` keeps the plans
+  in `%APPDATA%\n8mus\tentec-console\fftw-wisdom`, which takes receive-audio
+  start-up from about 14 s to about 2 s after the first run.
+
+## Not applicable on Windows
+
+cqrlog and Not1MM integrations (Linux programs; the menu entries find
+nothing to talk to), `install.sh`, the AppImage, udev names. Winlink's ARDOP
+launcher is ported (`ardopcf.exe`, WinMM device numbers) but unflown.
+
+---
+
+*Everything below is the original project file, kept as the map of the code.*
+
 # Orion NCC-565 Warp 1  (Omni personality: Omni NCC-588 Warp 1)
 
 Qt6/C++20 Flex-style console for Ten-Tec Orion (565/566) and Omni VII

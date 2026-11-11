@@ -1,0 +1,43 @@
+Third-party software in the Orion Control Windows zip
+======================================================
+
+Orion Control itself is GPL-3 (Orion-Control-GPL-3.txt, Orion-Control-NOTICE.txt).
+The pieces bundled beside it, and built into it, keep their own licenses:
+
+Built into tentec-console.exe
+  WDSP 2.10 (Warren Pratt NR0V and contributors; via AetherSDR's vendored
+      copy)                                   GPL-2.0-or-later   WDSP-GPL-2.txt
+  fldigi CW modem port (W1HKJ and contributors) GPL-3.0-or-later
+  AetherSDR meter faces, panel containers, 3D trace renderer, client EQ /
+      dynamics (KK7GWY and contributors)      GPL-3.0
+  rade_c - FreeDV RADE (Peter B Marks, David Rowe)  BSD-2-Clause  rade_c-LICENSE.txt
+  Opus with LPCNet / FARGAN (Xiph.Org)        BSD-3-Clause       opus-COPYING.txt
+  rade_text, LDPC and interleaver from FreeDV-GUI / codec2
+      (Mooneer Salem, David Rowe et al.)      BSD-2-Clause / LGPL-2.1
+  RNNoise 0.2 (Xiph.Org, Mozilla)             BSD-3-Clause
+
+Shipped as separate files
+  Qt 6.8 (The Qt Company)                     LGPL-3.0
+      Qt6*.dll and the plugin folders. You may replace these DLLs with your
+      own build of Qt; source at https://download.qt.io/
+  FFmpeg libraries used by Qt Multimedia (avcodec, avformat, avutil,
+      swresample, swscale)                    LGPL-2.1-or-later
+  FFTW 3.3.10 (Matteo Frigo, MIT)             GPL-2.0-or-later   fftw3.dll
+      Built with MSVC from https://www.fftw.org/fftw-3.3.10.tar.gz
+  whisper.cpp 1.9.5 and ggml (Georgi Gerganov and contributors)   MIT
+      whisper.dll, ggml*.dll
+  Whisper base.en speech model (OpenAI)       MIT   models\ggml-base.en.bin
+  voacapl (J. Watson) with the NTIA/ITS VOACAP core and ITSHFBC data
+      voacapl.exe, itshfbc\                   US Government public-domain
+                                              core; see github.com/jawatson/voacapl
+  Microsoft Visual C++ Redistributable        Microsoft's redistribution terms
+      vc_redist.x64.exe
+
+Not included, on purpose
+  The SDRplay API (sdrplay_api.dll) is proprietary and not redistributable.
+  Install it from https://www.sdrplay.com/api/
+
+Source for everything GPL or LGPL above is available from the upstream
+locations named, at the versions named. The exact recipes used to build them
+for this zip are in docs/windows-build.md of the Orion Control repository:
+https://github.com/n8mus/Orion-Control-Windows
