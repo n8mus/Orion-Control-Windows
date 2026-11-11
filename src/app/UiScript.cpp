@@ -83,6 +83,18 @@ void UiScript::step() {
         } else {
             std::fprintf(stderr, "[uiscript] MISSING button '%s' #%d\n", qPrintable(t), n);
         }
+    } else if (a[0] == "state" && a.size() > 1) {
+        // state <text> [n]: is that button lit? For checking that a light
+        // follows what it should (FT8 with DIG, say) without a screenshot.
+        const QString t = text(a[1]);
+        const int n = a.size() > 2 ? a[2].toInt() : 0;
+        int seen = 0;
+        QAbstractButton* hit = nullptr;
+        for (QAbstractButton* b : visible<QAbstractButton>(root_))
+            if (b->text() == t && seen++ == n) { hit = b; break; }
+        if (hit) std::fprintf(stderr, "[uiscript] '%s' is %s\n", qPrintable(t),
+                              hit->isChecked() ? "LIT" : "dark");
+        else std::fprintf(stderr, "[uiscript] MISSING button '%s' #%d\n", qPrintable(t), n);
     } else if (a[0] == "tip" && a.size() > 1) {
         const QString t = line.mid(4).trimmed();      // the rest: the exact tooltip
         QAbstractButton* hit = nullptr;

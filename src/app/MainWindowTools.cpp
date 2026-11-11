@@ -2672,14 +2672,21 @@ QString gridTrackerExe() {
 // is heard on the multicast feed (224.0.0.1:2237). It replaces cqrlog's
 // remote-mode launch; the QSOs log here over the same feed.
 void MainWindow::setupWsjtxUi() {
+    // The button is a SWITCH (operator's call, 2026-11-11, replacing
+    // "start, then raise, then close on the third press" and a light that
+    // only came on once WSJT-X was heard over UDP):
+    //   off -> on   lit at once, DIG on (mic 0, line-in 100), WSJT-X and
+    //               GridTracker started or brought to the front
+    //   on  -> off  both closed, light out, DIG off (mic and line-in back)
+    // "On" is the press OR hearing WSJT-X, so one started by hand still
+    // lights the button and one press still turns it all off.
     connect(panel_, &ControlPanel::ft8Clicked, this, [this] {
-        static bool closeNext = false;
         const qint64 wsPid = findRunning(wsjtxExe());
         const qint64 gtPid = findRunning(gridTrackerExe());
-        if (!wsPid && !gtPid) closeNext = false;
-        if ((wsPid || gtPid) && closeNext) {
-            closeNext = false;
-            // Already up and raised once: this press closes them.
+        if (ft8Latched_ || wsjtxAlive()) {
+            ft8Latched_ = false;
+            ft8HeardSinceLatch_ = false;
+            ft8Closing_.start();
             const auto terminate = [](qint64 pid) {
 #ifdef Q_OS_WIN
                 QProcess::startDetached("taskkill", {"/PID", QString::number(pid)});
@@ -2690,10 +2697,32 @@ void MainWindow::setupWsjtxUi() {
             if (wsPid && !(wsjtx_ && wsjtx_->requestClose()))
                 terminate(wsPid);                   // never heard: plain TERM
             if (gtPid) terminate(gtPid);
-            statusBar()->showMessage("FT8: closing WSJT-X and GridTracker2", 6000);
+            panel_->showFt8(false);
+            if (wsjtxOwnsDig_) {                    // only the DIG FT8 turned on
+                wsjtxOwnsDig_ = false;
+                if (digital_ && !winlinkActive_) setDigitalMode(false);
+            }
+            statusBar()->showMessage("FT8 off: closing WSJT-X and GridTracker, DIG off", 6000);
             return;
         }
-        closeNext = true;
+        ft8Latched_ = true;
+        ft8HeardSinceLatch_ = false;
+        ft8Closing_.invalidate();
+        panel_->showFt8(true);
+        if (!digital_ && !winlinkActive_) {
+            if (liveMic_) setLiveMic(false);
+            wsjtxOwnsDig_ = true;
+            setDigitalMode(true);
+        }
+        // Say so if WSJT-X comes up but its reports never reach us: the
+        // light and DIG no longer need them, the FT8 logging still does.
+        QTimer::singleShot(45000, this, [this] {
+            if (!ft8Latched_ || ft8HeardSinceLatch_ || !findRunning(wsjtxExe())) return;
+            std::fprintf(stderr, "[wsjtx] WSJT-X is running but none of its UDP reports arrive\n");
+            statusBar()->showMessage("FT8: WSJT-X is running but its reports do not reach the console. "
+                                     "QSOs will not log here. WSJT-X Settings, Reporting: "
+                                     "UDP Server 224.0.0.1 port 2237", 15000);
+        });
         QStringList started, missing;
         const auto launch = [&](const QString& exe, const QString& name, qint64 pid) {
             if (pid) { raisePid(pid); return; }
@@ -2706,10 +2735,10 @@ void MainWindow::setupWsjtxUi() {
             started << name;
         };
         launch(wsjtxExe(), "WSJT-X", wsPid);
-        launch(gridTrackerLauncher(), "GridTracker2", gtPid);
-        QString msg = started.isEmpty() ? QStringLiteral("FT8: WSJT-X and GridTracker2 to the front"
-                                                         " (press again to close them)")
-                                        : "FT8: starting " + started.join(" + ");
+        launch(gridTrackerLauncher(), "GridTracker", gtPid);
+        QString msg = started.isEmpty() ? QStringLiteral("FT8 on: WSJT-X and GridTracker to the front, DIG on"
+                                                         " (press again to turn FT8 off)")
+                                        : "FT8 on: starting " + started.join(" + ") + ", DIG on";
         if (!missing.isEmpty()) msg += "  — not found: " + missing.join(", ");
         statusBar()->showMessage(msg, 8000);
     });
@@ -2722,6 +2751,20 @@ bool MainWindow::wsjtxTransmitting() const { return wsjtx_ && wsjtx_->transmitti
 // DIG on (rear line input) and LIVE off. Only the DIG it turned on itself
 // is turned back off. TX refusals key off transmitting() at the moment.
 void MainWindow::onWsjtxState(bool alive, bool transmitting) {
+    // Pressed off a moment ago: WSJT-X goes on reporting while it shuts
+    // down. That must not light the button and take DIG again.
+    if (alive && ft8Closing_.isValid() && ft8Closing_.elapsed() < 30000) return;
+    if (!alive) ft8Closing_.invalidate();
+    if (ft8Latched_) {
+        if (alive) {
+            ft8HeardSinceLatch_ = true;
+        } else if (!ft8HeardSinceLatch_) {
+            return;                 // never heard it: the press keeps it on
+        } else {
+            ft8Latched_ = false;    // heard it, and now it is gone: follow it
+            ft8HeardSinceLatch_ = false;
+        }
+    }
     panel_->showFt8(alive);
     if (alive && transmitting) stopVoicePlayback();
     if (alive && !wsjtxOwnsDig_ && !digital_ && !winlinkActive_) {

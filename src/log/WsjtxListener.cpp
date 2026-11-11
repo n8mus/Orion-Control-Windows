@@ -8,6 +8,8 @@
 #include <QRegularExpression>
 #include <QTimer>
 #include <QHostAddress>
+#include <QNetworkInterface>
+#include <cstdio>
 #include <QNetworkDatagram>
 #include <QSettings>
 #include <QUdpSocket>
@@ -44,6 +46,9 @@ bool WsjtxListener::alive() const {
 void WsjtxListener::noteState() {
     const bool a = alive(), t = transmitting();
     if (a == aliveSent_ && t == txSent_) return;
+    if (a != aliveSent_)            // into the session log: who, and when
+        std::fprintf(stderr, a ? "[wsjtx] WSJT-X heard (%s:%u)\n" : "[wsjtx] WSJT-X gone quiet%s\n",
+                     a ? qPrintable(peer_.toString()) : "", unsigned(peerPort_));
     aliveSent_ = a;
     txSent_ = t;
     emit stateChanged(a, t);
@@ -114,10 +119,34 @@ void WsjtxListener::start() {
     // Share the port: WSJT-X's own clients (GridTracker) listen too.
     if (!sock_->bind(QHostAddress::AnyIPv4, port,
                      QUdpSocket::ShareAddress
-                         | QUdpSocket::ReuseAddressHint))
+                         | QUdpSocket::ReuseAddressHint)) {
+        std::fprintf(stderr, "[wsjtx] cannot listen on UDP %u: %s\n", unsigned(port),
+                     qPrintable(sock_->errorString()));
         return;
+    }
     const QHostAddress group(addr);
-    if (group.isMulticast()) sock_->joinMulticastGroup(group);
+    if (group.isMulticast()) {
+        QStringList joined;
+        if (sock_->joinMulticastGroup(group)) joined << QStringLiteral("default");
+#ifdef Q_OS_WIN
+        // Windows: on every interface as well. Which one a plain join lands
+        // on is the system's pick, and WSJT-X sends on the one its own
+        // "Outgoing interface" names (loopback, as a rule): the two need
+        // not be the same.
+        for (const QNetworkInterface& nif : QNetworkInterface::allInterfaces()) {
+            if (!(nif.flags() & QNetworkInterface::IsUp)) continue;
+            bool v4 = false;
+            for (const QNetworkAddressEntry& e : nif.addressEntries())
+                if (e.ip().protocol() == QAbstractSocket::IPv4Protocol) v4 = true;
+            if (v4 && sock_->joinMulticastGroup(group, nif)) joined << nif.humanReadableName();
+        }
+#endif
+        std::fprintf(stderr, "[wsjtx] listening for WSJT-X on %s:%u (joined: %s)\n",
+                     qPrintable(addr), unsigned(port),
+                     joined.isEmpty() ? "NOTHING - the group join failed" : qPrintable(joined.join(", ")));
+    } else {
+        std::fprintf(stderr, "[wsjtx] listening for WSJT-X on UDP %u (unicast)\n", unsigned(port));
+    }
     connect(sock_, &QUdpSocket::readyRead, this,
             [this] { onDatagram(); });
 }

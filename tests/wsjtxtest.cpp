@@ -10,6 +10,7 @@
 #include <QNetworkDatagram>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QUdpSocket>
 #include <cstdio>
 
@@ -50,6 +51,26 @@ int main(int argc, char** argv) {
     QTemporaryDir cfg;
     qputenv("XDG_CONFIG_HOME", cfg.path().toUtf8());
     QCoreApplication app(argc, argv);
+    // wsjtxtest --listen [secs]: the real listener on the station's own
+    // WSJT-X feed (the default group and port), listening only. Says
+    // whether a running WSJT-X is heard: the FT8 light and the automatic
+    // DIG both hang on exactly that.
+    if (argc > 1 && QString::fromLocal8Bit(argv[1]) == QLatin1String("--listen")) {
+        QCoreApplication::setOrganizationName("ttc-test");
+        QCoreApplication::setApplicationName("wsjtxlisten");
+        QSettings().clear();
+        const int secs = argc > 2 ? QString::fromLocal8Bit(argv[2]).toInt() : 20;
+        WsjtxListener live(nullptr, nullptr);
+        QObject::connect(&live, &WsjtxListener::stateChanged, [](bool a, bool t) {
+            std::printf("  state: alive %d  transmitting %d\n", int(a), int(t));
+            std::fflush(stdout);
+        });
+        live.start();
+        QTimer::singleShot(secs * 1000, &app, &QCoreApplication::quit);
+        app.exec();
+        std::printf("listened %d s: WSJT-X %s\n", secs, live.alive() ? "HEARD" : "NOT heard");
+        return live.alive() ? 0 : 1;
+    }
     QCoreApplication::setOrganizationName("n8mus");
     QCoreApplication::setApplicationName("wsjtxtest");
 #ifdef Q_OS_WIN

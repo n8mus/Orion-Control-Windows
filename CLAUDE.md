@@ -103,6 +103,18 @@ Multimedia behind the same seams (`src/audio/AudioIo`):
   in `%APPDATA%\n8mus\tentec-console\fftw-wisdom`, which takes receive-audio
   start-up from about 14 s to about 2 s after the first run.
 
+## FT8 button (operator's ruling, 2026-11-11)
+
+The FT8 button is a switch, not a launcher with a status light. Press: it
+lights AT ONCE, DIG comes on with it (mic 0, speech off, line-in 100) and
+WSJT-X + GridTracker start or come to the front. Press again: both close,
+the light goes out, DIG goes off and the voice settings come back. RTTY
+takes and releases DIG the same way. Do not make the light wait on hearing
+WSJT-X over UDP again: it did, and on the operator's first Windows run it
+never lit. Hearing WSJT-X (multicast 224.0.0.1:2237, `[wsjtx]` lines in the
+session log) still matters for logging its QSOs, for a WSJT-X started by
+hand, and for following it out when it closes.
+
 ## Not applicable on Windows
 
 cqrlog and Not1MM integrations (Linux programs; the menu entries find

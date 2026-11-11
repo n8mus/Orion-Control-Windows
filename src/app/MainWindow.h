@@ -453,6 +453,12 @@ private:
     std::function<bool(bool)> sdrRxUserSetOn_;     // same, saved as the operator's choice
     bool winlinkActive_ = false, winlinkOwnsDig_ = false, winlinkStoppedLive_ = false;
     bool wsjtxOwnsDig_ = false;
+    // The FT8 button is a switch (operator's call, 2026-11-11): pressing it
+    // lights it and engages DIG at once, pressing it again undoes both. It
+    // no longer waits to HEAR WSJT-X before it lights.
+    bool ft8Latched_ = false;          // the operator pressed it on
+    bool ft8HeardSinceLatch_ = false;  // ...and WSJT-X has been heard since
+    QElapsedTimer ft8Closing_;         // pressed off; WSJT-X still winding down
     QPointer<QProcess> wsjtxProc_, gridTrackerProc_;
     QLabel* wlLabel_ = nullptr;
     QProcess* ardop_ = nullptr;

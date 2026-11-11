@@ -13,6 +13,7 @@ namespace ttc {
 //   wait <ms>                 pause
 //   click <text> [n]          click the n-th (0-based) visible button labelled
 //                             <text> ("_" in <text> stands for a space)
+//   state <text> [n]          print whether that button is lit (checked)
 //   tip <tooltip>             click the first visible button with exactly this
 //                             tooltip (the rest of the line; for unlabelled
 //                             cells like the routing grid)
