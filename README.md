@@ -128,6 +128,9 @@ SDR, or both were connected. Screenshots welcome.
 - **Winlink through Pat + ARDOP** needs `ardopcf.exe` installed separately
   and has not been flown on Windows yet.
 - Copy Assist wants a CPU with AVX2 to keep up in real time.
+- Keyboard PTT: the **Pause** key (MOX on/off) and **Space** in the phone
+  contest deck work. Holding **Right Ctrl** to talk does not work on Windows
+  yet.
 
 ## License
 
