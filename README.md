@@ -1,5 +1,12 @@
 # Orion Control
 
+> **This is Orion Control for Windows**, a standalone project with its own
+> repository, releases and version numbers. It is developed independently
+> of the Linux console and does not track it. Download the Windows zip from
+> [Releases](https://github.com/n8mus/Orion-Control-Windows/releases) and
+> follow [Install on Windows](#install-on-windows) below. Sections of this
+> document that describe Linux are kept for reference only.
+
 *(An independent project, not affiliated with or endorsed by Ten-Tec — Ten-Tec model numbers:
 Orion = 565, Orion II = 566, Omni VII = 588.)*
 
@@ -41,7 +48,7 @@ Prefer to build from source? See [Build and run](#build-and-run) below.
    finds your install by itself. Skip this step and the console runs
    radio-only with a dark panadapter.
 2. Download the latest `tentec-console-…-win64.zip` from
-   [Releases](https://github.com/n8mus/Orion-Control/releases), unzip it
+   [Releases](https://github.com/n8mus/Orion-Control-Windows/releases), unzip it
    anywhere, and run `tentec-console.exe`. The same Station setup dialog
    opens on first run; settings live per-user in the registry.
 
