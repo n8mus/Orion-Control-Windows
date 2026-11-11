@@ -29,6 +29,7 @@ class QVBoxLayout;
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
 #include "log/Not1mmLog.h"
+#include "log/StationLog.h"
 #include "net/FreeDvReporter.h"
 #include "net/PatMonitor.h"
 #include "net/PskReporter.h"
@@ -651,7 +652,7 @@ private:
     // what the other sees, and what the CW macros spend.
     QsoContext* qsoCtx_ = nullptr;
     QsoContext* qsoContext();                  // created on first use
-    CqrlogSync* cqrSync_ = nullptr;            // cqrlog -> console mirror
+    StationSync* cqrSync_ = nullptr;           // cqrlog / HRD <-> console
     QslUploader* uploader_ = nullptr;          // online-log push engine
     WsjtxListener* wsjtx_ = nullptr;           // FT8 QSOs into the log
     QrzLookup* qrz_ = nullptr;                 // callbook for the LOG window

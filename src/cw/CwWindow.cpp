@@ -195,8 +195,13 @@ CwWindow::CwWindow(RadioController* radio, QWidget* parent)
         "The station you're working — what %c sends.\n"
         "Filled by clicking a spot, a skimmer call, or double-clicking\n"
         "a call in the decode pane; type here when the copy is broken\n"
+#ifdef Q_OS_WIN
+        "up or there's nothing to click.\n"
+        "Amber = doesn't look like a callsign yet (sends anyway).");
+#else
         "up or there's nothing to click. Enter also hands it to cqrlog's\n"
         "New QSO. Amber = doesn't look like a callsign yet (sends anyway).");
+#endif
     memLay->addWidget(dxCall_);
     // The report both ways and a LOG button right here (2026-11-02): a
     // CW QSO is call + two reports, and the whole point is never opening

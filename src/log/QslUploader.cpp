@@ -17,6 +17,7 @@
 #include <QUdpSocket>
 #include <QUrl>
 
+#include "log/HrdSync.h"
 #include "log/LogDb.h"
 
 namespace ttc {
@@ -345,17 +346,11 @@ void QslUploader::mirrorToLoggers(const Qso& q) {
         const QString ip = cfg("hrd/ip", "127.0.0.1");
         const quint16 port =
             quint16(QSettings().value("up/hrd/port", 7826).toUInt());
-        AdifRecord r = LogDb::toAdif(q);
-        // HRD wants the frequency without the decimal point (Hz digits).
-        if (r.contains("FREQ"))
-            r["FREQ"] = r["FREQ"].remove('.');
-        QString cmd = "ver\rdb add {";
-        for (auto it = r.constBegin(); it != r.constEnd(); ++it)
-            cmd += it.key() + "=\"" + it.value() + "\" ";
-        cmd += "}\rexit\r";
+        // Same command HrdSync's catch-up sends.
+        const QByteArray cmd = HrdSync::dbAddCommand(q);
         auto* sock = new QTcpSocket(this);
         connect(sock, &QTcpSocket::connected, this, [sock, cmd] {
-            sock->write(cmd.toUtf8());
+            sock->write(cmd);
             sock->flush();
             sock->disconnectFromHost();
         });

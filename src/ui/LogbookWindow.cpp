@@ -84,7 +84,11 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     auto* editBtn = new QPushButton("Edit…", this);
     editBtn->setToolTip("Edit the selected QSO (or double-click its row)\n"
                         "and re-send the corrected record to the online\n"
+#ifdef Q_OS_WIN
+                        "logs and HRD Logbook");
+#else
                         "logs and cqrlog");
+#endif
     tools->addWidget(editBtn);
     auto* delBtn = new QPushButton("Delete", this);
     delBtn->setToolTip("Delete the selected QSOs from the station log\n"
@@ -94,11 +98,22 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     tools->addWidget(impBtn);
     auto* expBtn = new QPushButton("Export ADIF", this);
     tools->addWidget(expBtn);
+#ifdef Q_OS_WIN
+    // Windows: HRD Logbook holds cqrlog's seat (log/StationLog.h).
+    auto* cqrBtn = new QPushButton("→ HRD", this);
+    cqrBtn->setToolTip(
+        "Compare this log against HRD Logbook and send it whatever it's\n"
+        "missing (HRD Logbook must be open to receive).\n"
+        "Shows the count and asks before sending anything.\n"
+        "The other direction is automatic: contacts that land in HRD\n"
+        "first are read into this log every few minutes.");
+#else
     auto* cqrBtn = new QPushButton("→ cqrlog", this);
     cqrBtn->setToolTip(
         "Compare this log against cqrlog and send it whatever it's\n"
         "missing, through the bridge (cqrlog must be open).\n"
         "Shows the count and asks before sending anything.");
+#endif
     connect(cqrBtn, &QPushButton::clicked, this,
             [this] { emit cqrlogSyncRequested(); });
     tools->addWidget(cqrBtn);

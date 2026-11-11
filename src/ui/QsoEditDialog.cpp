@@ -88,10 +88,17 @@ QsoEditDialog::QsoEditDialog(const Qso& q, const CtyLookup* cty,
     v->addLayout(form);
 
     auto* note = new QLabel(
+#ifdef Q_OS_WIN
+        "Saving re-sends the corrected QSO to every online log that is on,\n"
+        "and to HRD Logbook. QRZ replaces its copy; where the call, time,\n"
+        "band or mode changed, the old record stays on the other services\n"
+        "(and in HRD) until you remove it there.", this);
+#else
         "Saving re-sends the corrected QSO to every online log that is on,\n"
         "and to cqrlog. QRZ replaces its copy; where the call, time, band\n"
         "or mode changed, the old record stays on the other services\n"
         "(and in cqrlog) until you remove it there.", this);
+#endif
     note->setStyleSheet("QLabel { color: #7e8fa1; font-size: 12px; }");
     v->addWidget(note);
 

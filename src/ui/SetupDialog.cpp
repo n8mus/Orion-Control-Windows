@@ -399,7 +399,11 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     rotorPort_->setRange(1, 65535);
     rotorPort_->setValue(s.value("rotor/port", 4533).toInt());
     rotorPort_->setToolTip(
+#ifdef Q_OS_WIN
+        "Serving on this port in DCU-3 mode (HRD and N1MM keep\n"
+#else
         "Serving on this port in DCU-3 mode (cqrlog and Not1MM keep\n"
+#endif
         "pointing at it), or the daemon's port in rotctld mode.");
     form->addRow("rotctld port", rotorPort_);
     const auto rotorModeChanged = [this] {

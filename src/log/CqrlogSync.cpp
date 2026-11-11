@@ -206,7 +206,7 @@ void CqrlogSync::sendMissing(const QList<qint64>& ids) {
         });
     }
     QTimer::singleShot(250 * i + 500, this,
-                       [this, i] { emit pushedToCqrlog(i); });
+                       [this, i] { emit pushed(i, QString()); });
 }
 
 void CqrlogSync::pull() {

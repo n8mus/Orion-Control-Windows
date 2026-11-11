@@ -225,7 +225,11 @@ void ContestWindow::buildUi() {
         h->addStretch(1);
         auto* adifBtn = new QPushButton("ADIF…", this);
         adifBtn->setToolTip("Write this contest's QSOs to a .adi file "
+#ifdef Q_OS_WIN
+                            "(HRD Logbook's File ▸ Import takes it whole)");
+#else
                             "(cqrlog's File ▸ Import takes it whole)");
+#endif
         connect(adifBtn, &QPushButton::clicked, this,
                 [this] { exportAdif(); });
         h->addWidget(adifBtn);

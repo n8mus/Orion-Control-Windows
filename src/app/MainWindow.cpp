@@ -817,6 +817,9 @@ MainWindow::MainWindow(QWidget* parent)
     n1Dupes->setToolTip("While Not1MM runs, stations already worked in its current contest\n"
                         "draw gray on the band map, by that contest's own dupe rule\n"
                         "(read-only from Not1MM's log; nothing to set up in Not1MM)");
+#ifdef Q_OS_WIN
+    n1Dupes->setVisible(false);    // Not1MM is a Linux program
+#endif
     // Spotter area: only show what's being heard in a chosen part of the
     // world (server-side CC Cluster spotter-origin filter); the same region
     // choice narrows POTA to that region's parks. Custom takes any CC
@@ -869,13 +872,13 @@ MainWindow::MainWindow(QWidget* parent)
             "cfmd  |  3 dots = country·band·mode");
         legend->setEnabled(false);
         legend->setToolTip(
-            "Spot callsigns are colored from your cqrlog logbook:\n"
+            "Spot callsigns are colored from your logbook:\n"
             "red = never worked, amber = worked but not on this band,\n"
             "green = worked this band, gray = confirmed (card/LoTW/eQSL).\n"
             "POTA spots color by the PARK (red = never hunted).\n"
             "A small edge bar keeps the source color (yellow DX / green "
             "POTA / cyan FT8 /\nviolet SKIM).\nPlain colors mean no logbook "
-            "data yet — start cqrlog once to load it.");
+            "data yet — start " TTC_STATION_LOG " once to load it.");
     }
     spotsMenu->addSeparator();
     {
@@ -1356,10 +1359,11 @@ MainWindow::MainWindow(QWidget* parent)
     // cqrlog -> console mirror: QSOs that land in cqrlog first (WSJT-X
     // digi, hand entries there) pull into this log too, so the needed-
     // dots agree across all modes. The other direction is the bridge.
-    cqrSync_ = new CqrlogSync(logDb_, &cty_, this);
-    connect(cqrSync_, &CqrlogSync::pulled, this, [this](int n) {
+    // (On Windows the same seat holds HRD Logbook — log/StationLog.h.)
+    cqrSync_ = new StationSync(logDb_, &cty_, this);
+    connect(cqrSync_, &StationSync::pulled, this, [this](int n) {
         statusBar()->showMessage(
-            QString("station log: %1 QSO%2 mirrored from cqrlog")
+            QString("station log: %1 QSO%2 mirrored from " TTC_STATION_LOG)
                 .arg(n).arg(n == 1 ? "" : "s"), 6000);
     });
     cqrSync_->start();

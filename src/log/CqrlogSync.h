@@ -62,7 +62,8 @@ signals:
     // checkMissing result. error nonempty = couldn't check (cqrlog
     // closed, query failed); ids empty + no error = logs are in sync.
     void missingReady(const QList<qint64>& ids, const QString& error);
-    void pushedToCqrlog(int sent);   // sendMissing finished scheduling
+    // sendMissing finished scheduling (error: same shape as HrdSync's).
+    void pushed(int sent, const QString& error);
 
 private:
     void pull();

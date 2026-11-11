@@ -184,6 +184,7 @@ add_executable(tentec-console
   src/contest/QtcDialog.cpp     src/contest/QtcDialog.h
   src/log/Adif.cpp              src/log/Adif.h
   src/log/CqrlogSync.cpp        src/log/CqrlogSync.h
+  src/log/HrdSync.cpp           src/log/HrdSync.h
   src/log/LogDb.cpp             src/log/LogDb.h
                                 src/log/QsoContext.h
   src/log/QslUploader.cpp       src/log/QslUploader.h
@@ -470,6 +471,17 @@ add_executable(synctest EXCLUDE_FROM_ALL
   src/util/CtyLookup.cpp src/util/LogbookIndex.cpp)
 target_include_directories(synctest PRIVATE src)
 target_link_libraries(synctest PRIVATE Qt6::Core Qt6::Network Qt6::Sql)
+
+# HRD Logbook <-> console: reads a COPY of an HRD Access log (path in
+# HRDTEST_MDB; never the live one), pulls it twice into a scratch station
+# log (the second pull must add nothing), checks the compare side, the
+# db-add command text, and that phone as USB/LSB lands on SSB.
+add_executable(hrdsynctest EXCLUDE_FROM_ALL
+  tests/hrdsynctest.cpp
+  src/log/HrdSync.cpp src/log/LogDb.cpp src/log/Adif.cpp
+  src/util/CtyLookup.cpp src/util/LogbookIndex.cpp)
+target_include_directories(hrdsynctest PRIVATE src)
+target_link_libraries(hrdsynctest PRIVATE Qt6::Core Qt6::Network Qt6::Sql)
 
 # Practice-mode engine: morse timing, the sim caller's QSO protocol,
 # per-contest exchange truth, adaptive speed — all on the deterministic

@@ -323,7 +323,8 @@ void MainWindow::openLogbookWindow() {
                     statusBar()->showMessage(
                         keyChanged
                             ? QString("%1 corrected and re-sent — the old %2 "
-                                      "record stays on eQSL / LoTW / cqrlog "
+                                      "record stays on eQSL / LoTW / "
+                                      TTC_STATION_LOG_SHORT " "
                                       "until removed there")
                                   .arg(now.call, before.call)
                             : QString("%1 corrected and re-sent").arg(now.call),
@@ -331,29 +332,30 @@ void MainWindow::openLogbookWindow() {
                 });
         // "→ cqrlog": compare, confirm with the count, then send —
         // cqrlog is the award log, nothing goes over without a yes.
+        // (HRD Logbook on Windows — the same yes-first rule holds there.)
         connect(logbookWin_, &LogbookWindow::cqrlogSyncRequested, this,
                 [this] {
-                    statusBar()->showMessage("comparing against cqrlog…");
+                    statusBar()->showMessage(
+                        "comparing against " TTC_STATION_LOG "…");
                     if (cqrSync_) cqrSync_->checkMissing();
                 });
-        connect(cqrSync_, &CqrlogSync::missingReady, this,
+        connect(cqrSync_, &StationSync::missingReady, this,
                 [this](const QList<qint64>& ids, const QString& err) {
                     if (!err.isEmpty()) {
-                        statusBar()->showMessage("cqrlog sync: " + err,
-                                                 8000);
+                        statusBar()->showMessage(
+                            TTC_STATION_LOG " sync: " + err, 8000);
                         return;
                     }
                     if (ids.isEmpty()) {
                         statusBar()->showMessage(
-                            "cqrlog has everything — logs are in sync",
-                            6000);
+                            TTC_STATION_LOG " has everything — logs are "
+                            "in sync", 6000);
                         return;
                     }
                     const auto a = QMessageBox::question(
-                        logbookWin_, "Sync to cqrlog",
+                        logbookWin_, "Sync to " TTC_STATION_LOG,
                         QString("%1 QSO%2 in the station log %3 not in "
-                                "cqrlog.\nSend %4 through the bridge "
-                                "now?")
+                                TTC_STATION_LOG ".\nSend %4 now?")
                             .arg(ids.size())
                             .arg(ids.size() == 1 ? "" : "s")
                             .arg(ids.size() == 1 ? "is" : "are")
@@ -361,12 +363,15 @@ void MainWindow::openLogbookWindow() {
                     if (a == QMessageBox::Yes && cqrSync_)
                         cqrSync_->sendMissing(ids);
                 });
-        connect(cqrSync_, &CqrlogSync::pushedToCqrlog, this,
-                [this](int n) {
+        connect(cqrSync_, &StationSync::pushed, this,
+                [this](int n, const QString& err) {
                     statusBar()->showMessage(
-                        QString("→ cqrlog: %1 QSO%2 sent through the "
-                                "bridge").arg(n).arg(n == 1 ? "" : "s"),
-                        8000);
+                        err.isEmpty()
+                            ? QString("→ " TTC_STATION_LOG ": %1 QSO%2 sent")
+                                  .arg(n).arg(n == 1 ? "" : "s")
+                            : QString("→ " TTC_STATION_LOG ": %1 sent, "
+                                      "then %2").arg(n).arg(err),
+                        err.isEmpty() ? 8000 : 15000);
                 });
     }
     logbookWin_->show();
@@ -822,7 +827,8 @@ void MainWindow::openContestWindow() {
                         for (const qint64 id : ids)
                             mirrorToCqrlog(logDb_->qso(id), 250 * i++);
                     statusBar()->showMessage(
-                        QString("%1 contest QSOs → online logs + cqrlog")
+                        QString("%1 contest QSOs → online logs + "
+                                TTC_STATION_LOG_SHORT)
                             .arg(ids.size()), 6000);
                 });
     }
@@ -945,6 +951,13 @@ void MainWindow::openSpotTable() {
 // One QSO -> cqrlog's bridge (builder shared with CqrlogSync — the
 // bridge drops anything that doesn't start with <CALL).
 void MainWindow::mirrorToCqrlog(const Qso& q, int delayMs) {
+#ifdef Q_OS_WIN
+    // No cqrlog on Windows. HRD Logbook gets every logged QSO through
+    // QslUploader::mirrorToLoggers (its command port), and HrdSync's
+    // catch-up covers what it missed while closed.
+    Q_UNUSED(q); Q_UNUSED(delayMs);
+    return;
+#endif
     if (!logUdp_ || q.id < 0) return;
     if (!QSettings().value("log/mirrorCqrlog", true).toBool()) return;
     const QByteArray d = CqrlogSync::bridgeDatagram(q);
@@ -998,7 +1011,11 @@ void MainWindow::ensureCwWindow() {
                 cwWin_->setHisCall(call);
                 sendCqrLookup(call);
                 statusBar()->showMessage(
+#ifdef Q_OS_WIN
+                    QString("DX call ← %1 (from CW copy)")
+#else
                     QString("cqrlog ← %1 (from CW copy)")
+#endif
                         .arg(call), 5000);
             });
     // Same rails for a call typed by hand in the DX box: the
@@ -1011,7 +1028,11 @@ void MainWindow::ensureCwWindow() {
             [this](const QString& call) {
                 sendCqrLookup(call);
                 statusBar()->showMessage(
+#ifdef Q_OS_WIN
+                    QString("DX call ← %1 (typed)").arg(call), 5000);
+#else
                     QString("cqrlog ← %1 (typed)").arg(call), 5000);
+#endif
             });
     if (cwDec_) {                  // SDR-fed CW reader plumbing
         connect(cwDec_, &CwDecoder::textDecoded,
@@ -1367,12 +1388,21 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
     skimSrv_->setSpotterCall(stationCall);
     connect(skim_, &SkimmerEngine::spotFound, skimSrv_, &SkimServer::announce);
     auto* skimTelnet = skimMenu->addAction(
+#ifdef Q_OS_WIN
+        QString("Telnet feed on localhost:%1 (for HRD / N1MM)")
+#else
         QString("Telnet feed on localhost:%1 (for cqrlog)")
+#endif
             .arg(QSettings().value("skim/telnetPort", 7300).toInt()));
     skimTelnet->setEnabled(false);
     skimTelnet->setToolTip(
         "While the skimmer runs, its finds are served in DX-cluster telnet\n"
+#ifdef Q_OS_WIN
+        "format. In HRD Logbook or N1MM: DX cluster -> connect to\n"
+        "localhost port 7300 —\n"
+#else
         "format. In cqrlog: DX cluster -> connect to localhost port 7300 —\n"
+#endif
         "your own receiver becomes a spotting node.");
     skimStatus_ = new QLabel(skimMenu);
     skimStatus_->setTextFormat(Qt::RichText);
