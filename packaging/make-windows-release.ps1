@@ -104,24 +104,33 @@ if (Test-Path $bld) { Remove-Item -Recurse -Force $bld }
 $sdrFlag = if ($Sdrplay) { "ON" } else { "OFF" }
 $prefix = (@($QtDir, $RnnoiseDir, $FftwDir, $WhisperDir) | ForEach-Object { $_ -replace '\\', '/' }) -join ";"
 $radeRoot = $RadeDir -replace '\\', '/'
+New-Item -ItemType Directory -Path $bld | Out-Null
+$cfgLog = Join-Path $bld "configure.log"
+# EAP=Continue around the redirect: with EAP=Stop, PS 5.1 turns a native
+# command's redirected stderr into a terminating error, and CMake prints its
+# warnings there (the optional Qt6GuiPrivate package always earns one).
+$ErrorActionPreference = "Continue"
 cmake -B $bld -G Ninja `
     -DCMAKE_BUILD_TYPE=RelWithDebInfo `
     "-DCMAKE_PREFIX_PATH=$prefix" `
     "-DRADE_WIN_ROOT=$radeRoot" `
-    -DBUILD_SDRPLAY=$sdrFlag 2>&1 | Tee-Object "$bld-configure.log"
-if ($LASTEXITCODE -ne 0) { Fail "configure failed" }
+    -DBUILD_SDRPLAY=$sdrFlag 2>&1 | ForEach-Object { "$_" } | Tee-Object $cfgLog
+$cfgExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($cfgExit -ne 0) { Fail "configure failed" }
 # The published build is the whole console. A zip that quietly fell back to a
 # lesser one is a bug, so stop instead.
 foreach ($must in "WDSP: SDR receive audio enabled", "RADE: prebuilt from",
                   "Copy Assist: whisper", "GPU panadapter: on") {
-    if (-not (Select-String -Quiet -SimpleMatch -Path "$bld-configure.log" -Pattern $must)) {
+    if (-not (Select-String -Quiet -SimpleMatch -Path $cfgLog -Pattern $must)) {
         Fail "configure did not report '$must' - not shipping a lesser build"
     }
 }
-if ($Sdrplay -and -not (Select-String -Quiet -SimpleMatch -Path "$bld-configure.log" -Pattern "SDRplay RSP source: ENABLED")) {
+if ($Sdrplay -and -not (Select-String -Quiet -SimpleMatch -Path $cfgLog -Pattern "SDRplay RSP source: ENABLED")) {
     Fail "SDRplay source not enabled"
 }
-cmake --build $bld -j
+cmake --build $bld -j 8
+if ($LASTEXITCODE -ne 0) { Fail "build failed" }
 if (-not (Test-Path "$bld\tentec-console.exe")) { Fail "build produced no exe" }
 
 # ---- Stage ------------------------------------------------------------------
