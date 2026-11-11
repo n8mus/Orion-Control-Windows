@@ -7,6 +7,7 @@
 #include <QStringList>
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -28,13 +29,24 @@ namespace ttc {
 // Both classes speak s16le MONO at the caller's rate regardless of what the
 // device actually runs: the device opens at whatever format it supports
 // (Int16/Float, mono/stereo, its own rate) and conversion happens here —
-// downmix, sample-format, and stateful linear resampling. That is what
+// downmix, sample-format, and stateful resampling. That is what
 // keeps the Omni's 7013 Hz RIP/TRIP rate and the decoder's 48 kHz honest
 // on backends that only do the shared-mix rate.
 
-// Stateful linear resampler for s16 mono streams (float accumulator, keeps
-// phase and the last sample across chunks).
-class LinearResampler {
+// Stateful resampler for s16 mono streams: 4-point cubic (Catmull-Rom)
+// interpolation. It keeps its phase and the few samples it still needs
+// across chunks, so the output never depends on how the stream was cut up.
+//
+// It was linear and had a chunk-boundary bug (2026-11-11, the operator's
+// first practice run on Windows: "a buzz on the audio"): the samples that
+// fall between the last sample of one chunk and the first of the next were
+// interpolated with the wrong sign, a click per chunk, ~100 a second. It
+// never showed before because Qt did the rate conversion; PcmSink opens the
+// device in its native format, so the 8 kHz practice audio comes through
+// here. Cubic rather than linear because 8 kHz -> 48 kHz is exactly where
+// linear's images (-44 dB at 7.4 kHz for a 600 Hz tone) are audible;
+// Catmull-Rom puts them near -67 dB. Costs two input samples of delay.
+class PcmResampler {
 public:
     void reset(double srcRate, double dstRate);
     // Append converted samples to out. Pass-through when rates match.
@@ -42,8 +54,12 @@ public:
 
 private:
     double step_ = 1.0;                    // src samples per dst sample
-    double pos_ = 0.0;                     // fractional read position
-    int16_t last_ = 0;                     // final sample of previous chunk
+    // The read position is never accumulated: output m sits at input
+    // position m * step_, computed fresh each time, so no rounding builds
+    // up over hours and the chunking cannot nudge it.
+    uint64_t made_ = 0;                    // outputs since reset()
+    uint64_t dropped_ = 0;                 // input samples already let go
+    std::vector<float> buf_;               // input still needed
     bool primed_ = false;
 };
 
@@ -81,7 +97,7 @@ private:
     int srcChannels_ = 1;
     int srcSampleFmt_ = 0;                 // QAudioFormat::SampleFormat
     QByteArray carry_;                     // partial frame between reads
-    LinearResampler resamp_;
+    PcmResampler resamp_;
     std::vector<int16_t> monoBuf_;         // scratch: downmixed input
     std::vector<int16_t> outBuf_;          // scratch: resampled output
 };
@@ -131,7 +147,7 @@ private:
     int dstChannels_ = 1;
     int dstSampleFmt_ = 0;
     QByteArray carry_;
-    LinearResampler resamp_;
+    PcmResampler resamp_;
     std::vector<int16_t> outBuf_;
 };
 

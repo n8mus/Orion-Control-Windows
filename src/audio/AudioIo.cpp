@@ -12,49 +12,66 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace ttc {
 
 // ---------------------------------------------------------------- resampler
 
-void LinearResampler::reset(double srcRate, double dstRate) {
+void PcmResampler::reset(double srcRate, double dstRate) {
     step_ = srcRate / dstRate;
-    pos_ = 0.0;
-    last_ = 0;
+    made_ = 0;
+    dropped_ = 0;
+    buf_.clear();
     primed_ = false;
 }
 
-void LinearResampler::process(const int16_t* in, size_t n,
-                              std::vector<int16_t>& out) {
+void PcmResampler::process(const int16_t* in, size_t n,
+                           std::vector<int16_t>& out) {
     if (n == 0) return;
     if (step_ == 1.0) {                    // rates match: pass through
         out.insert(out.end(), in, in + n);
         return;
     }
-    // Virtual source stream: last_ (index -1, once primed) then in[0..n).
-    // pos_ is the fractional read position relative to in[0].
-    while (true) {
-        const double p = pos_;
-        const long i = long(p);            // floor for p >= -1
-        if (p >= double(n - 1) + 1e-9) break;   // need next chunk
-        double a, b;
-        if (p < 0.0) {
-            if (!primed_) { pos_ = 0.0; continue; }
-            a = last_;
-            b = in[0];
-        } else {
-            a = in[i];
-            b = (size_t(i + 1) < n) ? in[i + 1] : in[i];
-        }
-        const double frac = p - double(i < 0 ? -1 : i);
-        const double v = a + (b - a) * frac;
-        out.push_back(int16_t(std::clamp(v, -32768.0, 32767.0)));
-        pos_ += step_;
+    // buf_ is the input not finished with yet. Index 0 is one sample BEFORE
+    // the stream's start, a copy of the first sample, so that the first
+    // real sample (index 1, where pos_ begins) has a left neighbour.
+    if (!primed_) {
+        buf_.push_back(float(in[0]));
+        primed_ = true;
     }
-    pos_ -= double(n);                     // rebase onto the next chunk
-    last_ = in[n - 1];
-    primed_ = true;
+    buf_.reserve(buf_.size() + n);
+    for (size_t k = 0; k < n; ++k) buf_.push_back(float(in[k]));
+
+    // One output per step while the four points around the read position
+    // are all here: i-1, i, i+1, i+2 with i = floor(pos) >= 1. What is
+    // missing at the end of this chunk arrives with the next one. pos is
+    // in buf_'s own index space: the stream position (+1 for the copy at
+    // index 0) less what has been dropped from the front.
+    const size_t size = buf_.size();
+    double pos = 0.0;
+    while (true) {
+        pos = 1.0 + double(made_) * step_ - double(dropped_);
+        const size_t i = size_t(pos);
+        if (i + 2 >= size) break;
+        const double t = pos - double(i);
+        const double p0 = buf_[i - 1], p1 = buf_[i], p2 = buf_[i + 1], p3 = buf_[i + 2];
+        // Catmull-Rom: through p1 (t=0) and p2 (t=1), slopes from the
+        // neighbours on either side.
+        const double v = p1 + 0.5 * t * ((p2 - p0)
+                       + t * ((2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3)
+                       + t * (3.0 * (p1 - p2) + p3 - p0)));
+        out.push_back(int16_t(std::clamp(std::lround(v), -32768L, 32767L)));
+        ++made_;
+    }
+    // Drop what no later output can need: everything before floor(pos)-1.
+    const size_t want = size_t(pos) - 1;
+    const size_t drop = std::min(want, buf_.size());
+    if (drop > 0) {
+        buf_.erase(buf_.begin(), buf_.begin() + std::ptrdiff_t(drop));
+        dropped_ += drop;
+    }
 }
 
 // ------------------------------------------------------------ device match

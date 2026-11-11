@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Windows audio endpoints behind the Linux pacat / parec seams:
 //   cmake --build build-win --target winaudiotest && build-win\winaudiotest
+//   winaudiotest --offline     the sample-rate converter only: no device opened
 //
+// - PcmResampler, pure arithmetic: a tone converted in ragged chunks must
+//   come out sample for sample what it does in one piece, stay a clean
+//   tone, and never step further than a sine can. (The first Windows
+//   practice run buzzed: a wrong sample or five at every chunk boundary.)
 // - PcmSink on the GUI thread (RTTY, the practice callers, the pickup tone)
 //   and on its own thread (SDR receive): fed in real time it must keep its
 //   queue bounded and play out to empty, which only happens when the sound
@@ -30,6 +35,60 @@ static int g_fail = 0;
 static void check(bool ok, const char* what) {
     std::printf("  %s  %s\n", ok ? "ok  " : "FAIL", what);
     if (!ok) ++g_fail;
+}
+
+// ---- the rate converter, offline ------------------------------------------
+
+static std::vector<int16_t> tone(double hz, int rate, double secs, double amp) {
+    std::vector<int16_t> x(static_cast<size_t>(rate * secs));
+    for (size_t i = 0; i < x.size(); ++i)
+        x[i] = int16_t(std::lround(amp * std::sin(2.0 * M_PI * hz * double(i) / rate)));
+    return x;
+}
+
+static void runResampler(const char* name, double hz, int from, int to) {
+    std::printf("%s\n", name);
+    const double amp = 16000.0;
+    const std::vector<int16_t> in = tone(hz, from, 2.0, amp);
+
+    PcmResampler whole;
+    whole.reset(from, to);
+    std::vector<int16_t> ref;
+    whole.process(in.data(), in.size(), ref);
+
+    // The same stream cut the way a 5 ms pump cuts it: uneven, down to
+    // single samples.
+    PcmResampler ragged;
+    ragged.reset(from, to);
+    std::vector<int16_t> cut;
+    static const size_t sizes[] = {1, 7, 40, 80, 3, 160, 33, 2, 480, 11};
+    size_t at = 0, k = 0;
+    while (at < in.size()) {
+        const size_t n = std::min(sizes[k++ % 10], in.size() - at);
+        ragged.process(in.data() + at, n, cut);
+        at += n;
+    }
+    check(cut == ref, "ragged chunks give the same samples as one piece");
+
+    // Against the ideal tone at the output rate (output m sits at input
+    // position m * from / to; the converter adds no shift of its own).
+    double sig = 0.0, err = 0.0, worstStep = 0.0;
+    const size_t skip = size_t(to) / 100;              // let the start settle
+    for (size_t m = skip; m < ref.size(); ++m) {
+        const double ideal = amp * std::sin(2.0 * M_PI * hz * double(m) / to);
+        sig += ideal * ideal;
+        err += (ref[m] - ideal) * (ref[m] - ideal);
+        worstStep = std::max(worstStep, std::fabs(double(ref[m]) - double(ref[m - 1])));
+    }
+    const double snr = 10.0 * std::log10(sig / std::max(err, 1e-9));
+    const double sineStep = amp * 2.0 * M_PI * hz / to;    // steepest a sine gets
+    std::printf("  %zu -> %zu samples, %.1f dB clean, largest step %.0f (a sine: %.0f)\n",
+                in.size(), ref.size(), snr, worstStep, sineStep);
+    check(std::llabs(static_cast<long long>(ref.size())
+                     - static_cast<long long>(double(in.size()) * to / from)) <= 16,
+          "the right number of samples come out");
+    check(snr > 45.0, "stays a clean tone (better than 45 dB)");
+    check(worstStep < sineStep * 1.15 + 2.0, "no click: never steps further than the tone can");
 }
 
 static void spin(int ms) {
@@ -97,6 +156,25 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setOrganizationName("winaudiotest");
     QCoreApplication::setApplicationName("winaudiotest");
+
+    runResampler("PcmResampler 8 kHz -> 48 kHz, 600 Hz (practice callers)", 600.0, 8000, 48000);
+    runResampler("PcmResampler 7013 Hz -> 48 kHz, 700 Hz (Omni RIP audio)", 700.0, 7013, 48000);
+    runResampler("PcmResampler 48 kHz -> 44.1 kHz, 1 kHz (a 44.1 kHz sound card)", 1000.0, 48000, 44100);
+    runResampler("PcmResampler 44.1 kHz -> 48 kHz, 1 kHz (capture from one)", 1000.0, 44100, 48000);
+    {
+        std::printf("PcmResampler, equal rates\n");
+        const std::vector<int16_t> in = tone(600.0, 48000, 0.1, 16000.0);
+        PcmResampler same;
+        same.reset(48000, 48000);
+        std::vector<int16_t> out;
+        same.process(in.data(), in.size(), out);
+        check(out == in, "passes the samples through untouched");
+    }
+    if (argc > 1 && QString::fromLocal8Bit(argv[1]) == QLatin1String("--offline")) {
+        std::printf(g_fail ? "winaudiotest (offline): %d FAILED\n"
+                           : "winaudiotest (offline): all checks passed\n", g_fail);
+        return g_fail ? 1 : 0;
+    }
 
     std::printf("outputs: %d   inputs: %d\n",
                 int(AudioPlayback::outputDescriptions().size()),
