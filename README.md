@@ -23,7 +23,7 @@ GridTracker keep working unchanged**: one serial port, no flrig.
 
 ## Downloads
 
-Two builds are published on the
+Three builds are published on the
 [Releases page](https://github.com/n8mus/Orion-Control-Windows/releases).
 **Neither is "the default".** Each is listed with the date it was built;
 pick the one you want. Older builds are never removed when a newer one
@@ -33,12 +33,17 @@ appears.
 |---|---|---|---|
 | **September 2026** | `v0.1.8-alpha` | 2026-09-04 | The first complete Windows console. Smaller, simpler, and the longest-flown build on Windows. |
 | **November 2026** | `v0.2.0-2026.11.11` | 2026-11-11 | Everything added since: SDR receive audio (WDSP noise blankers and noise reduction), FreeDV RADE digital voice, Copy Assist (speech to text), the contest deck with practice mode, the RTTY modem, the CW deck, logbook editing, the tuner box, the GPU panadapter, keyboard PTT. |
+| **November 2026, logbook fixes** | `v0.2.1-2026.11.11` | 2026-11-11 | The November build plus Ham Radio Deluxe Logbook sync (both directions), an ADIF import that no longer duplicates phone contacts, and LoTW confirmations that fill in after an import. |
 
 From `v0.2.0` on, the version number carries the build date
 (`v<version>-<yyyy>.<mm>.<dd>`).
 
-Both builds use the same settings and the same logbook, so you can go back
+All builds use the same settings and the same logbook, so you can go back
 and forth between them on one PC.
+
+**Windows may warn "Windows protected your PC"** when you first run the
+program, because it is not code-signed. Click **More info**, then **Run
+anyway**.
 
 ## Install
 
