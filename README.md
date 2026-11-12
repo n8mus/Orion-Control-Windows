@@ -34,6 +34,7 @@ appears.
 | **September 2026** | `v0.1.8-alpha` | 2026-09-04 | The first complete Windows console. Smaller, simpler, and the longest-flown build on Windows. |
 | **November 2026** | `v0.2.0-2026.11.11` | 2026-11-11 | Everything added since: SDR receive audio (WDSP noise blankers and noise reduction), FreeDV RADE digital voice, Copy Assist (speech to text), the contest deck with practice mode, the RTTY modem, the CW deck, logbook editing, the tuner box, the GPU panadapter, keyboard PTT. |
 | **November 2026, logbook fixes** | `v0.2.1-2026.11.11` | 2026-11-11 | The November build plus Ham Radio Deluxe Logbook sync (both directions), an ADIF import that no longer duplicates phone contacts, and LoTW confirmations that fill in after an import. |
+| **November 2026, setup fixes** | `v0.2.2-2026.11.12` | 2026-11-12 | The logbook-fixes build plus two setup fixes: the radio and wattmeter Test buttons work, and a radio COM port that will not open is reported on the status bar. |
 
 From `v0.2.0` on, the version number carries the build date
 (`v<version>-<yyyy>.<mm>.<dd>`).
