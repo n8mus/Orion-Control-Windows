@@ -178,12 +178,6 @@ that night's own capture).
 
 ## Hard rules
 
-  never appear in this repo (code, comments, docs, commits) — before
-  nothing; the pattern is split so this file itself stays clean). The
-  tree-only grep once let it reach public history — scrubbed by a full
-  rewrite 2026-07-27, so every commit hash dates from that rewrite.
-  Ideas from public manuals are fine; the name is not.
-  KE9NS/PowerSDR/Thetis attribution in comments is OK.
 - Never key the transmitter or send CW in unattended tests. RX-only use
   of the real SDR/cluster is fine.
 - The repo is PUBLIC (alpha since 2026-07-18); the operator (Jon, N8EM)
