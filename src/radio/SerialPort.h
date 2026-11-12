@@ -2,6 +2,7 @@
 #pragma once
 #include <QObject>
 #include <QByteArray>
+#include <QString>
 #include <string>
 
 class QSerialPort;
@@ -25,6 +26,9 @@ public:
     bool open(const std::string& device, int baud = 57600, bool hwHandshake = false);
     void close();
     bool isOpen() const;
+    // Why the last open() failed (QSerialPort's own words, e.g. "Access is
+    // denied." when another program holds the port); empty after a success.
+    QString lastError() const { return lastError_; }
 
     void write(const QByteArray& data);
     // Raw mode: emit bytesReceived with unframed chunks instead of CR-split
@@ -43,6 +47,7 @@ private:
     QSerialPort* port_ = nullptr;
     QByteArray rxBuf_;
     bool rawMode_ = false;
+    QString lastError_;
 };
 
 } // namespace ttc

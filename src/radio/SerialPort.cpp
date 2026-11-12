@@ -22,6 +22,7 @@ bool SerialPort::open(const std::string& device, int baud, bool hwHandshake) {
     port_->setFlowControl(hwHandshake ? QSerialPort::HardwareControl   // Omni VII: RTS/CTS
                                       : QSerialPort::NoFlowControl);   //   or replies truncate
     if (!port_->open(QIODevice::ReadWrite)) {
+        lastError_ = port_->errorString();
         emit ioError(QStringLiteral("open %1: %2")
                          .arg(device.c_str(), port_->errorString()));
         port_->deleteLater();
@@ -34,6 +35,7 @@ bool SerialPort::open(const std::string& device, int baud, bool hwHandshake) {
     // RS-232 side goes silent with DTR low (live-found on the Orion via the
     // FT4232H, 2026-08-31: probes answered with DTR up, nothing without).
     // Under HardwareControl RTS belongs to the driver; don't touch it there.
+    lastError_.clear();
     port_->setDataTerminalReady(true);
     if (!hwHandshake) port_->setRequestToSend(true);
     port_->clear();                                    // both queues, like tcflush

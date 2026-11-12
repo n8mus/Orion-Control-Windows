@@ -39,6 +39,7 @@ public:
     explicit TenTecOmni7(QObject* parent = nullptr);
 
     bool open(const std::string& device) override;
+    QString lastError() const override { return serial_.lastError(); }
 
     const CapabilityProfile& caps() const override { return caps_; }
     bool connected() const override { return serial_.isOpen() || udp_; }

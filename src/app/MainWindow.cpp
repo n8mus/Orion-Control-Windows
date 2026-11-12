@@ -3968,6 +3968,24 @@ MainWindow::MainWindow(QWidget* parent)
         : QSettings().value("radio/device").toString().toStdString();
     radioDevUsed_ = QString::fromStdString(radioDev);
     radioUp_ = radio_->open(radioDev);
+    if (!radioUp_ && !radioDev.empty()) {
+        // Say so. A failed open used to be silent — no log line, no status
+        // text, just a console that never followed the dial. Live-found
+        // 2026-11-12 on the first fresh-install run: closing the console and
+        // relaunching at once found the previous instance still holding the
+        // port while it shut down, and the operator had no way to tell.
+        const QString why = radio_->lastError();
+        const QString msg =
+            QString("Radio: can't open %1%2 — another program (or a console "
+                    "still closing) may have it. Close it and restart.")
+                .arg(radioDevUsed_, why.isEmpty() ? QString() : " (" + why + ")");
+        std::fprintf(stderr, "[radio] open %s failed: %s\n", radioDev.c_str(),
+                     why.isEmpty() ? "no detail" : why.toLocal8Bit().constData());
+        // Delayed and long-lived so the startup chatter can't paint over it.
+        QTimer::singleShot(1500, this, [this, msg] {
+            statusBar()->showMessage(msg, 60000);
+        });
+    }
     if (radioUp_) {
         radio_->queryFrequency(Rx::Main);            // one-shot sync at startup
         radio_->queryFrequency(Rx::Sub);             // VFO B readout

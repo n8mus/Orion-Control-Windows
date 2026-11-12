@@ -14,6 +14,7 @@ public:
     explicit TenTecOrion(QObject* parent = nullptr);
 
     bool open(const std::string& device) override;   // e.g. "/dev/ttyS0"
+    QString lastError() const override { return serial_.lastError(); }
     void close();
 
     const CapabilityProfile& caps() const override { return caps_; }

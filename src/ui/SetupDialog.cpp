@@ -541,6 +541,11 @@ void SetupDialog::testMeter() {
         lpTest_->setText("✗ " + p.errorString());
         return;
     }
+    // Same modem lines LpMeter/PmMeter get from SerialPort::open() — a probe
+    // that leaves DTR/RTS where Windows had them isn't testing what the
+    // console will actually do with this port.
+    p.setDataTerminalReady(true);
+    p.setRequestToSend(true);
     lpTest_->setText("probing…");
     lpTest_->repaint();
     QByteArray got;
@@ -738,11 +743,11 @@ void SetupDialog::applyConnMode(const QString& profile) {
 // only collide with our own exclusive lock — report the live connection.
 void SetupDialog::testRadio() {
     const QString dev = radioDev_->currentText().trimmed();
-    if (dev == liveRadioDev_) {
-        radioTest_->setText(radioConnected_
-                                ? "✓ in use by this console — connected"
-                                : "held by this console, not answering — "
-                                  "check cable/power");
+    // Only short-circuit when this console really holds the port. If its
+    // open failed (another program had it at startup), nothing holds it on
+    // our side — probe it for real instead of claiming we own it.
+    if (dev == liveRadioDev_ && radioConnected_) {
+        radioTest_->setText("✓ in use by this console — connected");
         return;
     }
     // Remote (Ethernet): a real UDP ?V probe — the same passcode-framed
@@ -792,6 +797,14 @@ void SetupDialog::testRadio() {
         radioTest_->setText("✗ " + p.errorString());
         return;
     }
+    // Raise the modem lines the way SerialPort::open() does for the real
+    // driver. Windows leaves DTR wherever the last owner put it, and the
+    // Orion stays silent with DTR low — live-found 2026-11-12 on the first
+    // fresh-install run: this Test said "no reply" on the right port while
+    // the console's own driver connected fine (?V answered only with DTR up).
+    p.setDataTerminalReady(true);
+    p.setRequestToSend(true);
+    p.clear();
     p.write("?V\r");
     p.flush();
     QByteArray got;

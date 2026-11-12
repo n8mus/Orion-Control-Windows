@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <QObject>
+#include <QString>
 #include <cstdint>
 #include <string>
 
@@ -40,6 +41,9 @@ public:
     virtual const CapabilityProfile& caps() const = 0;
     virtual bool connected() const = 0;
     virtual bool open(const std::string& device) = 0;
+    // Why open() last failed, in words fit for the status bar; empty when
+    // the driver has nothing more specific than "it failed".
+    virtual QString lastError() const { return {}; }
 
     // Tuning / mode / receive filter.
     virtual void setFrequencyHz(Rx, uint64_t) {}
