@@ -23,7 +23,7 @@ GridTracker keep working unchanged**: one serial port, no flrig.
 
 ## Downloads
 
-Three builds are published on the
+Four builds are published on the
 [Releases page](https://github.com/n8mus/Orion-Control-Windows/releases).
 **Neither is "the default".** Each is listed with the date it was built;
 pick the one you want. Older builds are never removed when a newer one
