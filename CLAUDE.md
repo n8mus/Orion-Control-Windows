@@ -30,8 +30,6 @@ and service names describe the Linux station, not this one.
   run shows nothing but `?` queries.
 - **Push and publish only after the operator's own on-air test.** Build,
   test, commit, then wait.
-- The callsign rule under "Hard rules" below applies here unchanged, with the
-  same three checks before every push.
 - Never renumber stored enums; settings are shared between builds.
 
 ## Versions and releases
@@ -626,7 +624,6 @@ QRN spike gate, measured on a live lightning night's own capture.
 
 ## Hard rules
 
-  open-source attribution (KE9NS/PowerSDR/Thetis) in comments is OK.
 - Never key the transmitter or send CW in unattended tests. RX-only use
   of the real SDR/cluster is fine.
 - The repo is PUBLIC (alpha since 2026-07-18); pushes happen only after
