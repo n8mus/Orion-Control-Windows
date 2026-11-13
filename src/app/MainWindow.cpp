@@ -59,6 +59,7 @@
 #include <QUdpSocket>
 #include <QFile>
 #include <QThread>
+#include <QSerialPortInfo>
 #include <cstring>
 #include "app/ClassicLayout.h"
 #include "app/PanelLayout.h"
@@ -3969,6 +3970,25 @@ MainWindow::MainWindow(QWidget* parent)
     radioDevUsed_ = QString::fromStdString(radioDev);
     radioUp_ = radio_->open(radioDev);
     if (!radioUp_ && !radioDev.empty()) {
+        // A port that EXISTS but will not open is almost always a console that
+        // is still shutting down (close, relaunch at once — live-found
+        // 2026-11-12, on camera). Wait it out instead of starting radio-less:
+        // up to 8 s, and only for a port Windows actually lists, so a wrong
+        // name or an unplugged adapter still fails at once.
+        bool listed = false;
+        for (const QSerialPortInfo& pi : QSerialPortInfo::availablePorts())
+            if (pi.portName().compare(radioDevUsed_, Qt::CaseInsensitive) == 0 ||
+                pi.systemLocation().compare(radioDevUsed_, Qt::CaseInsensitive) == 0)
+                listed = true;
+        for (int tryNo = 1; listed && !radioUp_ && tryNo <= 16; ++tryNo) {
+            QThread::msleep(500);
+            radioUp_ = radio_->open(radioDev);
+            if (radioUp_)
+                std::fprintf(stderr, "[radio] %s was busy, opened on retry %d\n",
+                             radioDev.c_str(), tryNo);
+        }
+    }
+    if (!radioUp_ && !radioDev.empty()) {
         // Say so. A failed open used to be silent — no log line, no status
         // text, just a console that never followed the dial. Live-found
         // 2026-11-12 on the first fresh-install run: closing the console and
@@ -3976,8 +3996,8 @@ MainWindow::MainWindow(QWidget* parent)
         // port while it shut down, and the operator had no way to tell.
         const QString why = radio_->lastError();
         const QString msg =
-            QString("Radio: can't open %1%2 — another program (or a console "
-                    "still closing) may have it. Close it and restart.")
+            QString("Radio: can't open %1%2 — another program has it. "
+                    "Close that program and restart the console.")
                 .arg(radioDevUsed_, why.isEmpty() ? QString() : " (" + why + ")");
         std::fprintf(stderr, "[radio] open %s failed: %s\n", radioDev.c_str(),
                      why.isEmpty() ? "no detail" : why.toLocal8Bit().constData());

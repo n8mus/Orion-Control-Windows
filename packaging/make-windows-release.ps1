@@ -18,7 +18,9 @@
 #      SDRplay API install provides it at run time.
 #   2. A published release is NEVER replaced. If a release for this tag
 #      already exists the script stops; it does not overwrite assets. A new
-#      build gets a new tag and sits BESIDE the older downloads.
+#      build gets a new tag. Two releases are kept (operator, 2026-11-12): the
+#      September 2026 build, always, and the latest. The previous latest
+#      release is removed by hand once the new one is published and verified.
 #
 # With -Draft the zip is attached to a new DRAFT release for a person to
 # review and publish. Without it the script stops after building the zip.
@@ -221,7 +223,11 @@ Older Windows builds stay available on the Releases page of the repository.
 Step "Zip"
 $zip = Join-Path $bld "$name.zip"
 if (Test-Path $zip) { Remove-Item $zip }
-Compress-Archive -Path $stage -DestinationPath $zip
+# The files go at the ROOT of the zip, not inside a folder: Windows' "Extract
+# All" already makes a folder named after the zip, and a second folder of the
+# same name inside it had new users hunting for the exe (seen on camera,
+# 2026-11-12).
+Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
 $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
 Write-Host "built: $zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB)"
 Write-Host "sha256: $sha"

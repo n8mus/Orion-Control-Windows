@@ -9,14 +9,16 @@ and service names describe the Linux station, not this one.
 
 ## Rules that are not negotiable
 
-- **Never delete, hide, move or replace anything published.** No release, no
-  tag, no branch, no release asset: not to tidy, not because it is "out of
-  date", not to re-cut a build. A newer build is a NEW tag published BESIDE
-  the older downloads. The September 2026 build (`v0.1.8-alpha`) must stay
-  downloadable forever. (It vanished once, when a Linux-side session decided
-  the Windows download was stale; a viewer of the operator's videos found the
-  link dead before the operator did.) GitHub rulesets on this repository
-  block tag deletion/moves and force-pushes to `master` and
+- **Two builds are published, and only two (operator, 2026-11-12): the
+  September 2026 build (`v0.1.8-alpha`) and the latest build.** The September
+  build must stay downloadable forever. (It vanished once, when a Linux-side
+  session decided the Windows download was stale; a viewer of the operator's
+  videos found the link dead before the operator did.) A newer build is a NEW
+  tag; once it is published and verified, the previous latest RELEASE is
+  removed so the Releases page shows two. Its git tag stays. Never re-cut a
+  build under an existing tag, and never delete, hide or move anything else:
+  no tag, no branch, and never the September release. GitHub rulesets on this
+  repository block tag deletion/moves and force-pushes to `master` and
   `september-2026`; do not remove or bypass them.
 - **This repository and `n8mus/Orion-Control` (Linux) never touch each
   other.** Do not add it as a remote here, push to it, or open issues/PRs
@@ -40,8 +42,8 @@ and service names describe the Linux station, not this one.
   `packaging/make-windows-release.ps1` (never by CI; GitHub Actions are
   disabled on this repository on purpose). The script refuses to upload to a
   tag that already has a release.
-- Every release title says when it was built. No build is "the default": the
-  README lists them all with their dates and the user picks.
+- Every release title says when it was built. Neither build is "the default":
+  the README lists the two with their dates and the user picks.
 - Branches: `master` is the current line. `september-2026` is the September
   build's source, kept for reference and for fixes to that build.
 

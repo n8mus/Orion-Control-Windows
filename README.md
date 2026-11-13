@@ -23,23 +23,21 @@ GridTracker keep working unchanged**: one serial port, no flrig.
 
 ## Downloads
 
-Four builds are published on the
-[Releases page](https://github.com/n8mus/Orion-Control-Windows/releases).
-**Neither is "the default".** Each is listed with the date it was built;
-pick the one you want. Older builds are never removed when a newer one
-appears.
+Two builds are published on the
+[Releases page](https://github.com/n8mus/Orion-Control-Windows/releases):
+the September 2026 build, which stays, and the latest build. **Neither is
+"the default".** Each is listed with the date it was built; pick the one you
+want. A newer build replaces the previous latest one.
 
 | Build | Version | Built | What it is |
 |---|---|---|---|
 | **September 2026** | `v0.1.8-alpha` | 2026-09-04 | The first complete Windows console. Smaller, simpler, and the longest-flown build on Windows. |
-| **November 2026** | `v0.2.0-2026.11.11` | 2026-11-11 | Everything added since: SDR receive audio (WDSP noise blankers and noise reduction), FreeDV RADE digital voice, Copy Assist (speech to text), the contest deck with practice mode, the RTTY modem, the CW deck, logbook editing, the tuner box, the GPU panadapter, keyboard PTT. |
-| **November 2026, logbook fixes** | `v0.2.1-2026.11.11` | 2026-11-11 | The November build plus Ham Radio Deluxe Logbook sync (both directions), an ADIF import that no longer duplicates phone contacts, and LoTW confirmations that fill in after an import. |
-| **November 2026, setup fixes** | `v0.2.2-2026.11.12` | 2026-11-12 | The logbook-fixes build plus two setup fixes: the radio and wattmeter Test buttons work, and a radio COM port that will not open is reported on the status bar. |
+| **November 2026 (latest)** | `v0.2.3-2026.11.12` | 2026-11-12 | Everything added since September: SDR receive audio (WDSP noise blankers and noise reduction), FreeDV RADE digital voice, Copy Assist (speech to text), the contest deck with practice mode, the RTTY modem, the CW deck, logbook editing, the tuner box, the GPU panadapter, keyboard PTT. Also Ham Radio Deluxe Logbook sync (both directions), an ADIF import that no longer duplicates phone contacts, LoTW confirmations that fill in after an import, working radio and wattmeter Test buttons in Station setup, and a radio COM port that is briefly busy at startup is waited for instead of leaving the console without its radio. |
 
 From `v0.2.0` on, the version number carries the build date
 (`v<version>-<yyyy>.<mm>.<dd>`).
 
-All builds use the same settings and the same logbook, so you can go back
+Both builds use the same settings and the same logbook, so you can go back
 and forth between them on one PC.
 
 **Windows may warn "Windows protected your PC"** when you first run the
@@ -55,8 +53,9 @@ anyway**.
    radio-only with a dark panadapter.
 2. Download the `tentec-console-...-win64.zip` you want from
    [Releases](https://github.com/n8mus/Orion-Control-Windows/releases).
-3. Unzip **the whole folder** anywhere and run `tentec-console.exe` inside
-   it. The files beside the exe are needed. If Windows reports a missing
+3. Right-click the zip and choose **Extract All**, then run
+   `tentec-console.exe` in the extracted folder. Do not run it from inside
+   the zip: the files beside the exe are needed. If Windows reports a missing
    runtime DLL, run `vc_redist.x64.exe` from the same folder once.
 4. The **Station setup** dialog opens on first run. Settings live per-user
    in the registry (`HKCU\Software\n8mus\tentec-console`).
