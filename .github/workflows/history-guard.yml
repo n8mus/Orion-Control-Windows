@@ -1,0 +1,18 @@
+# Puts a branch or tag back if a push re-adds history retired on
+# 2026-11-12 (see .github/history-guard/). Runs on every push.
+name: History guard
+on:
+  push:
+    branches: ['**']
+    tags: ['**']
+permissions:
+  contents: write
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git fetch --tags --force origin '+refs/heads/*:refs/remotes/origin/*'
+      - run: python3 .github/history-guard/guard.py
